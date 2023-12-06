@@ -69,6 +69,15 @@ let escaped =
          hex8;
        ]
 
+let string_of_char = String.make 1
+
+let string_parser =
+  seq (opt escaped) (sat (fun c -> c != '\"')) <$> fun (esc, str) ->
+  Option.fold ~none:(str :: []) ~some:(fun esc -> [ esc; str ]) esc
+
+let string_parser =
+  many string_parser <$> fun ss -> implode (List.concat_map Fun.id ss)
+
 let[@warnerror "-unused-value-declaration"] integer =
   many1 digit <$> fun ns -> Int64.of_string (implode ns)
 
