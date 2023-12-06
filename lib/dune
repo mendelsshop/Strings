@@ -1,0 +1,7 @@
+(library
+ (name strings)
+ (libraries AMPCL)
+ (modules Parser Ast))
+; (library
+;  (name ast)
+;  (modules Ast))
