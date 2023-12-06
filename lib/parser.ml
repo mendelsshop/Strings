@@ -21,6 +21,54 @@ let rec type_parser input =
     Option.fold ~none:t1 ~some:(fun t2 -> Ast.Function (t1, t2)) opt_t2 )
     input
 
+let octal_digit = sat (fun o -> '0' <= o && o <= '7')
+
+let escaped =
+  let slash = char '\\' in
+  let quote = char '\"' in
+  let newline = char 'n' <$> fun _ -> '\n' in
+  let carriage = char 'r' <$> fun _ -> '\r' in
+  let form_feed = char 'f' <$> fun _ -> '\x0c' in
+  let bell = char 'a' <$> fun _ -> '\x08' in
+  let backspace = char 'b' <$> fun _ -> '\b' in
+  let tab = char 't' <$> fun _ -> '\t' in
+  let vertical_tab = char 'v' <$> fun _ -> '\x09' in
+  let null = char '0' <$> fun _ -> '\x00' in
+  let octal =
+    count 3 octal_digit <$> fun o ->
+    "0o" ^ implode o |> int_of_string |> char_of_int
+  in
+  let hex2 =
+    char 'x' << count 2 alphanum <$> fun x ->
+    "0x" ^ implode x |> int_of_string |> char_of_int
+  in
+  let hex4 =
+    char 'u' << count 4 alphanum <$> fun x ->
+    "0x" ^ implode x |> int_of_string |> char_of_int
+  in
+  let hex8 =
+    char 'U' << count 8 alphanum <$> fun x ->
+    "0x" ^ implode x |> int_of_string |> char_of_int
+  in
+  char '\\'
+  << choice
+       [
+         slash;
+         quote;
+         newline;
+         carriage;
+         form_feed;
+         bell;
+         backspace;
+         tab;
+         vertical_tab;
+         null;
+         octal;
+         hex2;
+         hex4;
+         hex8;
+       ]
+
 let[@warnerror "-unused-value-declaration"] integer =
   many1 digit <$> fun ns -> Int64.of_string (implode ns)
 
