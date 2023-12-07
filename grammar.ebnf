@@ -25,7 +25,7 @@ infix symbol = infix_start | "!' | "?" | "~"
 infix = infix start, {infix symbol}
 infix as symbol = "(",junk, infix start,junk, ")"
 
-ident part = letter
+ident part = letter | "_"
 ident word = ident part, {ident part}
 ident = infix as symbol | ident word
 
@@ -44,7 +44,9 @@ escaped = "\\", ("\\" | "\"" | "n" | "r" | "f" | "a" | "b" | "t" | "v" | "0" | (
 string part = escaped | ?any character? - "\""
 string = {string part}
 
-application part = ident | (ident infix, garbage, application part)
-application = ident, garbage, application part ({ garbage, application part  })
+infix application = ident, garbage, infix, garbage, ident
+application = expr, garbage, expr, {garbage, expr}
 
-expr = number | float | ident | fun | let | application | ("\"", string, "\"") | if
+expr = "(", garbage,  expr, garbage ,")" |  number | float | ident | fun | let | infix application | application  | ("\"", string, "\"") | if
+
+program = {string | "\"", garbage, expr, garbage, "\""}
