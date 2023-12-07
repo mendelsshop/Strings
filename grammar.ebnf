@@ -1,0 +1,50 @@
+white space = "\n" | "\t | " "
+line comment = "#", ?any character? - "\n" 
+junk = {white space | line comment}
+
+letter = "A" | "B" | "C" | "D" | "E" | "F" | "G"
+       | "H" | "I" | "J" | "K" | "L" | "M" | "N"
+       | "O" | "P" | "Q" | "R" | "S" | "T" | "U"
+       | "V" | "W" | "X" | "Y" | "Z" | "a" | "b"
+       | "c" | "d" | "e" | "f" | "g" | "h" | "i"
+       | "j" | "k" | "l" | "m" | "n" | "o" | "p"
+       | "q" | "r" | "s" | "t" | "u" | "v" | "w"
+       | "x" | "y" | "z" 
+
+octal = "1" | "2" | "3" | "4" | "5" | "6" | "7"  "0"
+decimal = octal | "8" | "9"  
+hex = letter | decimal
+number = integer, {decimal}
+
+float = (number, ".", {decimal}) | ({decimal}, ".", number)
+
+infix start = "$" | "%"| "&" | "*" | "+" | "-" | "." | "/" | ":" | "<" | "=" | ">" | "@" | "^" | "|" 
+
+infix symbol = infix_start | "!' | "?" | "~"
+
+infix = infix start, {infix symbol}
+infix as symbol = "(",junk, infix start,junk, ")"
+
+ident part = letter
+ident word = ident part, {ident part}
+ident = infix as symbol | ident word
+
+type = (("(", garbage, type, garabe, ")") | ident word), [garbage, "->",garbage, type]
+type annotation = ":", garbage, type
+
+fun params = {garbage, ident, garbage, [type annotation]}
+fun = "fun", params, garbage, "->" expr
+
+let = ("let", garbage, ident), [fun params], garbage, "=", garbage, expr, [garbage, "in", garbage, expr]
+
+if = "if", garbage, expr, garbage, "then", garbage, expr, garbage, "else", garbage, expr
+
+escaped = "\\", ("\\" | "\"" | "n" | "r" | "f" | "a" | "b" | "t" | "v" | "0" | (octal, octal, octal) | ("x", hex, hex) |  ("x", hex, hex, hex, hex) | ("x", hex, hex, hex, hex, hex, hex, hex, hex) )
+
+string part = escaped | ?any character? - "\""
+string = {string part}
+
+application part = ident | (ident infix, garbage, application part)
+application = ident, garbage, application part ({ garbage, application part  })
+
+expr = number | float | ident | fun | let | application | ("\"", string, "\"") | if
