@@ -49,4 +49,4 @@ application = expr, garbage, expr, {garbage, expr}
 
 expr = "(", garbage,  expr, garbage ,")" |  number | float | ident | fun | let | infix application | application  | ("\"", string, "\"") | if
 
-program = {string | "\"", garbage, expr, garbage, "\""}
+program = {string | ("\"", garbage, expr, garbage, "\"")}
