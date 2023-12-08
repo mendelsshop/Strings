@@ -1,6 +1,5 @@
 open AMPCL
 
-let expr = return ""
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -77,7 +76,8 @@ let string_parser =
   Option.fold ~none:(str :: []) ~some:(fun esc -> [ esc; str ]) esc
 
 let string_parser =
-  many string_parser <$> fun ss -> implode (List.concat_map Fun.id ss)
+  many string_parser <$> fun ss ->
+  Ast.String (implode (List.concat_map Fun.id ss))
 
 let ident_parser =
   skip_garbage << seq letter (many (alphanum <|> char '_'))
@@ -102,35 +102,77 @@ let ident = ident_parser <|> infix_ident
 
 let fun_params =
   many1
-    (seq ident
-       (opt (skip_garbage << char ':' << (skip_garbage << type_parser))))
+    ( seq ident (opt (skip_garbage << char ':' << (skip_garbage << type_parser)))
+    <$> fun (p, ty) -> { Ast.value = p; ty } )
 
-let fun_parser =
-  seq (string "fun" << fun_params >> skip_garbage << string "->") expr
+let fun_parser expr =
+  seq (string "fun" << fun_params >> (skip_garbage << string "->")) expr
+  <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
 
-let let_parser =
+let let_parser expr =
   string "let"
-  << seq ident (seq fun_params (skip_garbage << (char '=' << expr)))
+  << seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
+  <$> fun (name, (params, exp)) ->
+  Ast.Let
+    {
+      name;
+      value =
+        (match params with
+        | Some params -> Ast.Function { parameters = params; abstraction = exp }
+        | None -> exp);
+    }
 
-let if_then_else =
+let if_then_else expr =
   seq
     (skip_garbage << string "if" << expr)
     (seq
        (skip_garbage << string "then" << expr)
        (skip_garbage << string "else" << expr))
+  <$> fun (condition, (consequent, alternative)) ->
+  Ast.If { condition; consequent; alternative }
 
-let application = seq expr (many expr)
-let infix_appliction = seq expr (seq infix expr)
+let application expr =
+  seq expr (many expr) <$> fun (func, arguements) ->
+  Ast.Application { func; arguements }
 
-let[@warnerror "-unused-value-declaration"] number =
-  many1 digit <$> fun ns -> Int64.of_string (implode ns)
+let infix_appliction expr =
+  seq expr (seq infix expr) <$> fun (exp1, (infix, exp2)) ->
+  Ast.Application { func = Ast.Ident infix; arguements = [ exp1; exp2 ] }
 
+let number = many1 digit <$> fun ns -> Ast.Int (implode ns |> int_of_string)
 let integer_opt = many digit
 let integer = many1 digit
 let decimal = char '.'
 
-let[@warnerror "-unused-value-declaration"] float =
+let float =
   let number_opt_dot_number = seq integer_opt (seq decimal integer)
   and number_dot_number_opt = seq integer (seq decimal integer_opt) in
   number_dot_number_opt <|> number_opt_dot_number
-  <$> fun (f, ((_ : char), s)) -> Float.of_string (implode (f @ ('.' :: s)))
+  <$> fun (f, ((_ : char), s)) ->
+  Ast.Float (Float.of_string (implode (f @ ('.' :: s))))
+
+let rec expr input =
+  choice
+    [
+      skip_garbage << char '(' << expr >> (skip_garbage << char ')');
+      number;
+      float;
+      infix_appliction expr;
+      application expr;
+      fun_parser expr;
+      if_then_else expr;
+      let_parser expr;
+      char '\"' << string_parser >> char '\"';
+    ]
+    input
+
+let if_then_else = if_then_else expr
+let infix_appliction = infix_appliction expr
+let let_parser = let_parser expr
+let fun_parser = fun_parser expr
+let application = application expr
+
+let parser =
+  many
+    (string_parser
+    <|> (char '\"' << skip_garbage << expr >> (skip_garbage << char '\"')))
