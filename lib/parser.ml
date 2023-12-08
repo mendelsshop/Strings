@@ -112,6 +112,16 @@ let let_parser =
   string "let"
   << seq ident (seq fun_params (skip_garbage << (char '=' << expr)))
 
+let if_then_else =
+  seq
+    (skip_garbage << string "if" << expr)
+    (seq
+       (skip_garbage << string "then" << expr)
+       (skip_garbage << string "else" << expr))
+
+let application = seq expr (many expr)
+let infix_appliction = seq expr (seq infix expr)
+
 let[@warnerror "-unused-value-declaration"] number =
   many1 digit <$> fun ns -> Int64.of_string (implode ns)
 
