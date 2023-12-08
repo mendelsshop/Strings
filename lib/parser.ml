@@ -1,5 +1,6 @@
 open AMPCL
 
+let expr = return ""
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -78,14 +79,47 @@ let string_parser =
 let string_parser =
   many string_parser <$> fun ss -> implode (List.concat_map Fun.id ss)
 
-let[@warnerror "-unused-value-declaration"] integer =
+let ident_parser =
+  skip_garbage << seq letter (many (alphanum <|> char '_'))
+  <$> fun (fst, snd) -> implode (fst :: snd)
+(* todo: dont allow if then else let ... *)
+
+let start_infix_symbols =
+  [ '$'; '%'; '&'; '*'; '+'; '-'; '.'; '/'; ':'; '<'; '='; '>'; '@'; '^'; '|' ]
+
+let infix_symbols = [ '!'; '?'; '~' ] @ start_infix_symbols
+
+let infix =
+  (fun c -> List.mem c start_infix_symbols)
+  |> sat |> many
+  |> seq (skip_garbage << sat (fun c -> List.mem c start_infix_symbols))
+  <$> fun (fst, rst) -> implode (fst :: rst)
+
+let infix_ident =
+  infix |> between (skip_garbage << char '(') (skip_garbage << char ')')
+
+let ident = ident_parser <|> infix_ident
+
+let fun_params =
+  many1
+    (seq ident
+       (opt (skip_garbage << char ':' << (skip_garbage << type_parser))))
+
+let fun_parser =
+  seq (string "fun" << fun_params >> skip_garbage << string "->") expr
+
+let let_parser =
+  string "let"
+  << seq ident (seq fun_params (skip_garbage << (char '=' << expr)))
+
+let[@warnerror "-unused-value-declaration"] number =
   many1 digit <$> fun ns -> Int64.of_string (implode ns)
 
 let integer_opt = many digit
 let integer = many1 digit
 let decimal = char '.'
 
-let[@warnerror "-unused-value-declaration"] number =
+let[@warnerror "-unused-value-declaration"] float =
   let number_opt_dot_number = seq integer_opt (seq decimal integer)
   and number_dot_number_opt = seq integer (seq decimal integer_opt) in
   number_dot_number_opt <|> number_opt_dot_number

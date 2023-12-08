@@ -14,7 +14,7 @@ letter = "A" | "B" | "C" | "D" | "E" | "F" | "G"
 octal = "1" | "2" | "3" | "4" | "5" | "6" | "7"  "0"
 decimal = octal | "8" | "9"  
 hex = letter | decimal
-number = integer, {decimal}
+number = decimal, {decimal}
 
 float = (number, ".", {decimal}) | ({decimal}, ".", number)
 
@@ -23,30 +23,30 @@ infix start = "$" | "%"| "&" | "*" | "+" | "-" | "." | "/" | ":" | "<" | "=" | "
 infix symbol = infix_start | "!' | "?" | "~"
 
 infix = infix start, {infix symbol}
-infix as symbol = "(",junk, infix start,junk, ")"
+infix as symbol = "(", junk, infix start, junk, ")"
 
 ident part = letter | "_"
-ident word = ident part, {ident part}
+ident word = ident part, {ident part | decimal}
 ident = infix as symbol | ident word
 
-type = (("(", garbage, type, garabe, ")") | ident word), [garbage, "->",garbage, type]
-type annotation = ":", garbage, type
+type = (("(", junk, type, junk, ")") | ident word), [junk, "->", junk, type]
+type annotation = ":", junk, type
 
-fun params = {garbage, ident, garbage, [type annotation]}
-fun = "fun", params, garbage, "->" expr
+fun params = {junk, ident, junk, [type annotation]}
+fun = "fun", params, junk, "->" expr
 
-let = ("let", garbage, ident), [fun params], garbage, "=", garbage, expr, [garbage, "in", garbage, expr]
+let = ("let", junk, ident), [fun params], junk, "=", junk, expr, [junk, "in", junk, expr]
 
-if = "if", garbage, expr, garbage, "then", garbage, expr, garbage, "else", garbage, expr
+if = "if", junk, expr, junk, "then", junk, expr, junk, "else", junk, expr
 
-escaped = "\\", ("\\" | "\"" | "n" | "r" | "f" | "a" | "b" | "t" | "v" | "0" | (octal, octal, octal) | ("x", hex, hex) |  ("x", hex, hex, hex, hex) | ("x", hex, hex, hex, hex, hex, hex, hex, hex) )
+escaped = "\\", ("\\" | "\"" | "n" | "r" | "f" | "a" | "b" | "t" | "v" | "0" | (octal, octal, octal) | ("x", hex, hex) |  ("u", hex, hex, hex, hex) | ("U", hex, hex, hex, hex, hex, hex, hex, hex) )
 
 string part = escaped | ?any character? - "\""
 string = {string part}
 
-infix application = ident, garbage, infix, garbage, ident
-application = expr, garbage, expr, {garbage, expr}
+infix application = expr, junk, infix, junk, expr
+application = expr, junk, expr, {junk, expr}
 
-expr = "(", garbage,  expr, garbage ,")" |  number | float | ident | fun | let | infix application | application  | ("\"", string, "\"") | if
+expr = ("(", junk, expr, junk, ")") | number | float | ident | fun | let | infix application | application  | ("\"", string, "\"") | if
 
-program = {string | ("\"", garbage, expr, garbage, "\"")}
+program = {string | ("\"", junk, expr, junk, "\"")}
