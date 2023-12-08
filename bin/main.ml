@@ -1,15 +1,10 @@
-let rec print_type ty =
-  let open Strings.Ast in
-  match ty with
-  | WildCard -> "_"
-  | Type t -> t
-  | Function (t1, t2) -> "(" ^ print_type t1 ^ ") -> (" ^ print_type t2 ^ ")"
-
 let () =
   let input = read_line () in
-  let type_parsed =
-    Strings.Parser.type_parser (List.of_seq (String.to_seq input))
-  in
+  let parsed = Strings.Parser.parser (List.of_seq (String.to_seq input)) in
   Option.value ~default:"bad type"
-    (Option.map (fun (t, _) -> print_type t) type_parsed)
+    (Option.map
+       (fun (t, _) ->
+         let _ = List.map Strings.Ast2.ast_to_ast2 t in
+         "")
+       parsed)
   |> print_endline

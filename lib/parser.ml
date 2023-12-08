@@ -105,11 +105,14 @@ let fun_params =
     ( seq ident (opt (skip_garbage << char ':' << (skip_garbage << type_parser)))
     <$> fun (p, ty) -> { Ast.value = p; ty } )
 
-let fun_parser expr =
+let fun_parser expr   =
   seq (string "fun" << fun_params >> (skip_garbage << string "->")) expr
   <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
 
+
+
 let let_parser expr =
+
   string "let"
   << seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
   <$> fun (name, (params, exp)) ->
