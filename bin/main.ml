@@ -2,7 +2,7 @@ let rec print_type ty =
   let open Strings.Ast in
   match ty with
   | WildCard -> "_"
-  | TypeIdent t -> t
+  | Type t -> t
   | Function (t1, t2) -> "(" ^ print_type t1 ^ ") -> (" ^ print_type t2 ^ ")"
 
 let () =

@@ -14,7 +14,7 @@ let skip_garbage =
 let rec type_parser input =
   let basic_type =
     between (skip_garbage << char '(') (skip_garbage << char ')') type_parser
-    <|> (skip_garbage << word1 <$> fun ty -> Ast.TypeIdent ty)
+    <|> (skip_garbage << word1 <$> fun ty -> Ast.Type ty)
     <|> (skip_garbage << char '_' <$> fun _ -> Ast.WildCard)
   and opt_fn = opt (skip_garbage << string "->" << type_parser) in
   let full_parser = seq basic_type opt_fn in
