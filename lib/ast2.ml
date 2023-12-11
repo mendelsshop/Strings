@@ -1,4 +1,4 @@
-  open Ast
+open Ast
 
 type ast2 =
   | Float of float
@@ -38,3 +38,25 @@ let rec ast_to_ast2 (ast : ast) =
   | Let { name; value } -> Let { name; value = ast_to_ast2 value }
   | Function { parameters; abstraction } ->
       curry_ify parameters (ast_to_ast2 abstraction)
+
+let rec ast_to_string ast =
+  match ast with
+  | Float f -> string_of_float f
+  | Int i -> string_of_int i
+  | String i -> i
+  | Ident i -> i
+  | Application { func; arguements } ->
+      "(" ^ ast_to_string func
+      ^ list_to_string (List.map ast_to_string arguements)
+  | If { condition; consequent; alternative } ->
+      "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
+      ^ " else " ^ ast_to_string alternative
+  | Let { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+  | Function { parameter; abstraction } ->
+      let param_to_string p =
+        Option.map (fun ty -> p.value ^ ":" ^ type_to_string ty) p.ty
+        |> Option.value ~default:p.value
+      in
+      "fun "
+      ^ (parameter |> Option.fold ~some:param_to_string ~none:"")
+      ^ "->" ^ ast_to_string abstraction

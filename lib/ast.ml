@@ -35,11 +35,11 @@ let rec ast_to_string ast =
       ^ " else " ^ ast_to_string alternative
   | Let { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
   | Function { parameters; abstraction } ->
+      let params_to_string =
+        List.map (fun p ->
+            Option.map (fun ty -> p.value ^ ":" ^ type_to_string ty) p.ty
+            |> Option.value ~default:p.value)
+      in
       "fun "
-      ^ (list_to_string
-          (List.map
-             (fun p ->
-               Option.map
-                 (fun ty -> ast_to_string p.value ^ ":" ^ type_to_string ty)
-                 p.ty)
-             parameters)) ^ "->" ^ ast_to_string abstraction
+      ^ list_to_string (params_to_string parameters)
+      ^ "->" ^ ast_to_string abstraction
