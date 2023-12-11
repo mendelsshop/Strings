@@ -4,7 +4,10 @@ let () =
   Option.value ~default:"bad type"
     (Option.map
        (fun (t, _) ->
-         let _ = List.map Strings.Ast2.ast_to_ast2 t in
-         "")
+         Strings.Ast.list_to_string
+           (List.map
+              (fun x ->
+                x |> Strings.Ast2.ast_to_ast2 |> Strings.Ast2.ast_to_string)
+              t))
        parsed)
   |> print_endline

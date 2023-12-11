@@ -1,2 +1,4 @@
-(test
- (name my_lang))
+(tests
+ (names strings_test parser)
+  (libraries alcotest strings))
+
