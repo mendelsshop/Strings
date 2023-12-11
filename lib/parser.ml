@@ -75,10 +75,13 @@ let string_parser =
   seq (opt escaped) (sat (fun c -> c != '\"')) <$> fun (esc, str) ->
   Option.fold ~none:(str :: []) ~some:(fun esc -> [ esc; str ]) esc
 
+let string_parser1 =
+  many1 string_parser <$> fun ss ->
+  Ast.String (implode (List.concat_map Fun.id ss))
+
 let string_parser =
   many string_parser <$> fun ss ->
   Ast.String (implode (List.concat_map Fun.id ss))
-
 let ident_parser =
   skip_garbage << seq letter (many (alphanum <|> char '_'))
   <$> fun (fst, snd) -> implode (fst :: snd)
@@ -102,17 +105,14 @@ let ident = ident_parser <|> infix_ident
 
 let fun_params =
   many1
-    ( seq ident (opt (skip_garbage << char ':' << (skip_garbage << type_parser)))
+    ( seq ident (opt (skip_garbage << char ':' << type_parser))
     <$> fun (p, ty) -> { Ast.value = p; ty } )
 
-let fun_parser expr   =
+let fun_parser expr =
   seq (string "fun" << fun_params >> (skip_garbage << string "->")) expr
   <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
 
-
-
 let let_parser expr =
-
   string "let"
   << seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
   <$> fun (name, (params, exp)) ->
@@ -157,11 +157,12 @@ let float =
 let rec expr input =
   choice
     [
-      skip_garbage << char '(' << expr >> (skip_garbage << char ')');
-      number;
-      float;
       infix_appliction expr;
       application expr;
+      skip_garbage << char '(' << expr >> (skip_garbage << char ')');
+      skip_garbage << float;
+      skip_garbage << number;
+      (ident <$> fun i -> Ast.Ident i);
       fun_parser expr;
       if_then_else expr;
       let_parser expr;
@@ -176,6 +177,4 @@ let fun_parser = fun_parser expr
 let application = application expr
 
 let parser =
-  many
-    (string_parser
-    <|> (char '\"' << skip_garbage << expr >> (skip_garbage << char '\"')))
+  many (string_parser <|> (char '\"' << expr >> (skip_garbage << char '\"')))
