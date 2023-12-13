@@ -5,7 +5,8 @@ type ast2 =
   | Int of int
   | String of string
   | Ident of ident
-  | Application of { func : ast2; arguements : ast2 list }
+  | InfixApplication of { infix : ident; arguements : ast2 * ast2 }
+  | Application of { func : ast2; arguement : ast2 }
   | Function of { parameter : ident typed_opt option; abstraction : ast2 }
   | If of { condition : ast2; consequent : ast2; alternative : ast2 }
   | Let of { name : ident; value : ast2 }
@@ -22,12 +23,10 @@ let rec ast_to_ast2 (ast : ast) =
   | Int f -> Int f
   | String f -> String f
   | Ident f -> Ident f
-  | Application { func; arguements } ->
-      Application
-        {
-          func = ast_to_ast2 func;
-          arguements = List.map ast_to_ast2 arguements;
-        }
+  | Application { func; arguement } ->
+      Application { func = ast_to_ast2 func; arguement = ast_to_ast2 arguement }
+  | InfixApplication { infix; arguements = e1, e2 } ->
+      InfixApplication { infix; arguements = (ast_to_ast2 e1, ast_to_ast2 e2) }
   | If { condition; consequent; alternative } ->
       If
         {
@@ -45,9 +44,10 @@ let rec ast_to_string ast =
   | Int i -> string_of_int i
   | String i -> i
   | Ident i -> i
-  | Application { func; arguements } ->
-      "(" ^ ast_to_string func
-      ^ list_to_string (List.map ast_to_string arguements)
+  | InfixApplication { infix; arguements = e1, e2 } ->
+      "( " ^ ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2 ^ " )"
+  | Application { func; arguement } ->
+      "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
   | If { condition; consequent; alternative } ->
       "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
       ^ " else " ^ ast_to_string alternative
@@ -59,4 +59,4 @@ let rec ast_to_string ast =
       in
       "fun "
       ^ (parameter |> Option.fold ~some:param_to_string ~none:"")
-      ^ "->" ^ ast_to_string abstraction
+      ^ "-> " ^ ast_to_string abstraction

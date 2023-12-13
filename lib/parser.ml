@@ -82,6 +82,7 @@ let string_parser1 =
 let string_parser =
   many string_parser <$> fun ss ->
   Ast.String (implode (List.concat_map Fun.id ss))
+
 let ident_parser =
   skip_garbage << seq letter (many (alphanum <|> char '_'))
   <$> fun (fst, snd) -> implode (fst :: snd)
@@ -134,14 +135,6 @@ let if_then_else expr =
   <$> fun (condition, (consequent, alternative)) ->
   Ast.If { condition; consequent; alternative }
 
-let application expr =
-  seq expr (many expr) <$> fun (func, arguements) ->
-  Ast.Application { func; arguements }
-
-let infix_appliction expr =
-  seq expr (seq infix expr) <$> fun (exp1, (infix, exp2)) ->
-  Ast.Application { func = Ast.Ident infix; arguements = [ exp1; exp2 ] }
-
 let number = many1 digit <$> fun ns -> Ast.Int (implode ns |> int_of_string)
 let integer_opt = many digit
 let integer = many1 digit
@@ -155,26 +148,33 @@ let float =
   Ast.Float (Float.of_string (implode (f @ ('.' :: s))))
 
 let rec expr input =
-  choice
-    [
-      infix_appliction expr;
-      application expr;
-      skip_garbage << char '(' << expr >> (skip_garbage << char ')');
-      skip_garbage << float;
-      skip_garbage << number;
-      (ident <$> fun i -> Ast.Ident i);
-      fun_parser expr;
-      if_then_else expr;
-      let_parser expr;
-      char '\"' << string_parser >> char '\"';
-    ]
-    input
-
-let if_then_else = if_then_else expr
-let infix_appliction = infix_appliction expr
-let let_parser = let_parser expr
-let fun_parser = fun_parser expr
-let application = application expr
+  let constant =
+    number <|> float <|> (char '\"' << string_parser >> char '\"')
+  in
+  let ident = ident <$> fun i -> Ast.Ident i in
+  let parens =
+    expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
+  in
+  let atom = parens <|> (skip_garbage << (constant <|> ident)) in
+  let basic_forms = if_then_else expr <|> fun_parser expr <|> atom in
+  let application =
+    let rec application_tail func input =
+      ( basic_forms >>= fun arguement ->
+        let new_func = Ast.Application { func; arguement } in
+        application_tail new_func <|> return new_func )
+        input
+    in
+    basic_forms >>= fun func -> application_tail func <|> return func
+  in
+  let rec infix_application input =
+    ( seq application (opt (seq infix infix_application)) <$> fun (e1, infix) ->
+      match infix with
+      | Some (infix, e2) ->
+          Ast.InfixApplication { infix; arguements = (e1, e2) }
+      | None -> e1 )
+      input
+  in
+  infix_application input
 
 let parser =
-  many (string_parser <|> (char '\"' << expr >> (skip_garbage << char '\"')))
+  many (string_parser1 <|> (char '\"' << expr >> (skip_garbage << char '\"')))

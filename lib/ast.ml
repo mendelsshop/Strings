@@ -7,7 +7,8 @@ type ast =
   | Int of int
   | String of string
   | Ident of ident
-  | Application of { func : ast; arguements : ast list }
+  | Application of { func : ast; arguement : ast }
+  | InfixApplication of { infix : ident; arguements : ast * ast }
   | Function of { parameters : ident typed_opt list; abstraction : ast }
   | If of { condition : ast; consequent : ast; alternative : ast }
   | Let of { name : ident; value : ast }
@@ -27,9 +28,10 @@ let rec ast_to_string ast =
   | Int i -> string_of_int i
   | String i -> i
   | Ident i -> i
-  | Application { func; arguements } ->
-      "(" ^ ast_to_string func
-      ^ list_to_string (List.map ast_to_string arguements)
+  | InfixApplication { infix; arguements = e1, e2 } ->
+      "( " ^ ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2 ^ " )"
+  | Application { func; arguement } ->
+      "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
   | If { condition; consequent; alternative } ->
       "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
       ^ " else " ^ ast_to_string alternative
