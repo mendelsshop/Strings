@@ -1,5 +1,6 @@
 open AMPCL
 
+let key_words = [ "if"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -84,8 +85,9 @@ let string_parser =
   Ast.String (implode (List.concat_map Fun.id ss))
 
 let ident_parser =
-  skip_garbage << seq letter (many (alphanum <|> char '_'))
-  <$> fun (fst, snd) -> implode (fst :: snd)
+  ( skip_garbage << seq letter (many (alphanum <|> char '_'))
+  <$> fun (fst, snd) -> implode (fst :: snd) )
+  >>= fun ident -> if not (List.mem ident key_words) then return ident else zero
 (* todo: dont allow if then else let ... *)
 
 let start_infix_symbols =
