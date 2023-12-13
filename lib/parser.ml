@@ -85,10 +85,10 @@ let string_parser =
   Ast.String (implode (List.concat_map Fun.id ss))
 
 let ident_parser =
-  ( skip_garbage << seq letter (many (alphanum <|> char '_'))
-  <$> fun (fst, snd) -> implode (fst :: snd) )
-  >>= fun ident -> if not (List.mem ident key_words) then return ident else zero
-(* todo: dont allow if then else let ... *)
+  check
+    (fun x -> not (List.mem x key_words))
+    ( skip_garbage << seq letter (many (alphanum <|> char '_'))
+    <$> fun (fst, snd) -> implode (fst :: snd) )
 
 let start_infix_symbols =
   [ '$'; '%'; '&'; '*'; '+'; '-'; '.'; '/'; ':'; '<'; '='; '>'; '@'; '^'; '|' ]
