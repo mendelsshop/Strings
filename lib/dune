@@ -1,7 +1,7 @@
 (library
  (name strings)
  (libraries AMPCL)
- (modules Parser Ast Ast2))
+ (modules Type_checker Parser Ast Ast2 Typed_ast))
 ; (library
 ;  (name ast)
 ;  (modules Ast))
