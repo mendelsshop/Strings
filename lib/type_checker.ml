@@ -7,7 +7,7 @@ let ( >>= ) (t : 's * 'm -> ('a * ('s * 'm)) option)
 
 let bind = ( >>= )
 let return a (s, m) = Some (a, (s, m))
-let new_meta (s, m) = Some (m, (s, m + 1))
+let new_meta (s, m) = Some (Meta m, (s, m + 1))
 let insert e (s, m) = Some ((), (e :: s, m))
 
 let scoped_insert e f s =
@@ -25,17 +25,37 @@ let rec typify expr =
   | Ast2.Ident i -> get i >>= fun ty -> return (Ident { ty; ident = i })
   | Ast2.Function { parameter = Some { value; ty = None }; abstraction } ->
       new_meta >>= fun m ->
-      scoped_insert (value, Meta m) (fun () ->
+      scoped_insert (value, m) (fun () ->
           typify abstraction >>= fun abstraction ->
           new_meta >>= fun a_ty ->
           return
             (Function
-               {
-                 abstraction;
-                 parameter = value;
-                 ty = TFunction (Meta m, Meta a_ty);
-               }))
-  | _ -> return (Unit { ty = TUnit })
+               { abstraction; parameter = value; ty = TFunction (m, a_ty) }))
+  | Ast2.If { condition; consequent; alternative } ->
+      typify condition >>= fun condition ->
+      typify consequent >>= fun consequent ->
+      typify alternative >>= fun alternative ->
+      new_meta >>= fun ty ->
+      return (If { consequent; condition; alternative; ty })
+  | Ast2.Application { func; arguement } ->
+      typify func >>= fun func ->
+      typify arguement >>= fun arguement ->
+      new_meta >>= fun ty -> return (Application { func; arguement; ty })
+  | Ast2.InfixApplication { infix; arguements = e1, e2 } ->
+      typify e1 >>= fun e1 ->
+      typify e2 >>= fun e2 ->
+      new_meta >>= fun ty ->
+      return (InfixApplication { infix; arguements = (e1, e2); ty })
+  | Ast2.Function { parameter = None; abstraction } ->
+      typify abstraction >>= fun abstraction ->
+      new_meta >>= fun a_ty ->
+      return
+        (Function
+           { abstraction; parameter = "()"; ty = TFunction (TUnit, a_ty) })
+  | Ast2.Function _ -> exit 1 (* rn we dont allow type annotations *)
+  | Ast2.Let { name; value } ->
+      typify value >>= fun value ->
+      insert (name, type_of value) >>= fun _ -> return value
 
 let typify exp context = typify exp (context, 0)
 
