@@ -151,7 +151,7 @@ let float =
 
 let rec expr input =
   let constant =
-    number <|> float <|> (char '\"' << string_parser >> char '\"')
+    float <|> number <|> (char '\"' << string_parser >> char '\"')
   in
   let ident = ident <$> fun i -> Ast.Ident i in
   let parens =
