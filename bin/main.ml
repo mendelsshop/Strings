@@ -7,7 +7,12 @@ let () =
          Strings.Ast.list_to_string
            (List.map
               (fun x ->
-                x |> Strings.Ast2.ast_to_ast2 |> Strings.Ast2.ast_to_string)
+                Strings.Typed_ast.ast_to_string
+                  (fst
+                     (Option.get
+                        (Strings.Type_checker.typify
+                           (x |> Strings.Ast2.ast_to_ast2)
+                           []))))
               t))
        parsed)
   |> print_endline

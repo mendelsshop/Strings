@@ -1,33 +1,40 @@
-type ty = Function of (ty * ty) | String | Float | Integer | Unit | Bool
-type 'a typed = { ty : ty; value : 'a }
 type ident = string
+
+type ty =
+  | Meta of int
+  | TFunction of (ty * ty)
+  | TUnit
+  | TBool
+  | TInteger
+  | TFloat
+  | TString
+
+type 'a typed = { ty : ty; value : 'a }
 
 let rec type_to_string ty =
   match ty with
-  | String -> "string"
-  | Float -> "float"
-  | Unit -> "()"
-  | Bool -> "bool"
-  | Integer -> "int"
-  | Function (t1, t2) ->
+  | Meta t -> "'" ^ string_of_int t
+  | TString -> "string"
+  | TFloat -> "float"
+  | TUnit -> "()"
+  | TBool -> "bool"
+  | TInteger -> "int"
+  | TFunction (t1, t2) ->
       "(" ^ type_to_string t1 ^ ") -> (" ^ type_to_string t2 ^ ")"
 
 type typed_ast =
-  | Float of float
-  | Int of int
-  | String of string
-  | Ident of ident typed
+  | Unit of { ty : ty }
+  | Float of { ty : ty; value : float }
+  | Int of { ty : ty; value : int }
+  | String of { ty : ty; value : string }
+  | Ident of { ty : ty; ident : ident }
   | InfixApplication of {
       ty : ty;
       infix : ident;
       arguements : typed_ast * typed_ast;
     }
   | Application of { ty : ty; func : typed_ast; arguement : typed_ast }
-  | Function of {
-      ty : ty;
-      parameter : ident typed option;
-      abstraction : typed_ast;
-    }
+  | Function of { ty : ty; parameter : ident; abstraction : typed_ast }
   | If of {
       ty : ty;
       condition : typed_ast;
@@ -36,14 +43,28 @@ type typed_ast =
     }
   | Let of { ty : ty; name : ident; value : typed_ast }
 
+let type_of expr =
+  match expr with
+  | Int a -> a.ty
+  | Float a -> a.ty
+  | String a -> a.ty
+  | Ident a -> a.ty
+  | Unit a -> a.ty
+  | If a -> a.ty
+  | Function a -> a.ty
+  | Application a -> a.ty
+  | InfixApplication a -> a.ty
+  | Let a -> a.ty
+
 let rec ast_to_string ast =
-  match ast with
-  | Float f -> string_of_float f
-  | Int i -> string_of_int i
-  | String i -> i
-  | Ident i -> "( " ^ i.value ^ " : " ^ type_to_string i.ty ^ " )"
+  (match ast with
+  | Unit _ -> "()"
+  | Float { value; _ } -> string_of_float value
+  | Int { value; _ } -> string_of_int value
+  | String { value; _ } -> value
+  | Ident { ident; _ } -> ident
   | InfixApplication { infix; arguements = e1, e2; _ } ->
-      "( " ^ ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2 ^ " )"
+      "( " ^ ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2 ^ " ) "
   | Application { func; arguement; _ } ->
       "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
   | If { condition; consequent; alternative; _ } ->
@@ -51,20 +72,5 @@ let rec ast_to_string ast =
       ^ " else " ^ ast_to_string alternative
   | Let { name; value; _ } -> "let " ^ name ^ " = " ^ ast_to_string value
   | Function { parameter; abstraction; _ } ->
-      let param_to_string p = p.value ^ ":" ^ type_to_string p.ty in
-      "fun "
-      ^ (parameter |> Option.fold ~some:param_to_string ~none:"")
-      ^ "-> " ^ ast_to_string abstraction
-
-(* assumes the expression has been type checked already ie there cannot be different types for if's consequent and alternative *)
-let type_of expr =
-  match expr with
-  | Int _ -> Integer
-  | Float _ -> Float
-  | String _ -> String
-  | Ident { ty; _ } -> ty
-  | If { ty; _ } -> ty
-  | Let { ty; _ } -> ty
-  | Function { ty; _ } -> ty
-  | Application { ty; _ } -> ty
-  | InfixApplication { ty; _ } -> ty
+      "fun " ^ parameter ^ " -> " ^ ast_to_string abstraction)
+  ^ ": " ^ (type_of ast |> type_to_string)
