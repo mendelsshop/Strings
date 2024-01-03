@@ -9,7 +9,7 @@ type ty =
   | TFloat
   | TString
 
-type 'a typed = { ty : ty; value : 'a }
+type  typed_ident = { ty : ty; ident : ident }
 
 let rec type_to_string ty =
   match ty with
@@ -30,11 +30,11 @@ type typed_ast =
   | Ident of { ty : ty; ident : ident }
   | InfixApplication of {
       ty : ty;
-      infix : ident;
+      infix : typed_ident;
       arguements : typed_ast * typed_ast;
     }
   | Application of { ty : ty; func : typed_ast; arguement : typed_ast }
-  | Function of { ty : ty; parameter : ident; abstraction : typed_ast }
+    | Function of { ty : ty; parameter : typed_ident; abstraction : typed_ast }
   | If of {
       ty : ty;
       condition : typed_ast;
@@ -64,7 +64,7 @@ let rec ast_to_string ast =
   | String { value; _ } -> value
   | Ident { ident; _ } -> ident
   | InfixApplication { infix; arguements = e1, e2; _ } ->
-      "( " ^ ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2 ^ " ) "
+      "( " ^ ast_to_string e1 ^ " " ^ infix.ident ^ " " ^ ast_to_string e2 ^ " ) "
   | Application { func; arguement; _ } ->
       "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
   | If { condition; consequent; alternative; _ } ->
@@ -72,5 +72,5 @@ let rec ast_to_string ast =
       ^ " else " ^ ast_to_string alternative
   | Let { name; value; _ } -> "let " ^ name ^ " = " ^ ast_to_string value
   | Function { parameter; abstraction; _ } ->
-      "fun " ^ parameter ^ " -> " ^ ast_to_string abstraction)
+      "fun " ^ parameter.ident ^ " -> " ^ ast_to_string abstraction)
   ^ ": " ^ (type_of ast |> type_to_string)

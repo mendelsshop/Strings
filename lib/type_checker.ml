@@ -30,7 +30,7 @@ let rec typify expr =
           new_meta >>= fun a_ty ->
           return
             (Function
-               { abstraction; parameter = value; ty = TFunction (m, a_ty) }))
+               { abstraction; parameter = { ident = value; ty = m }; ty = a_ty }))
   | Ast2.If { condition; consequent; alternative } ->
       typify condition >>= fun condition ->
       typify consequent >>= fun consequent ->
@@ -42,16 +42,24 @@ let rec typify expr =
       typify arguement >>= fun arguement ->
       new_meta >>= fun ty -> return (Application { func; arguement; ty })
   | Ast2.InfixApplication { infix; arguements = e1, e2 } ->
+      (* 1: we should get the lookup/use/have the type for infix which leads to 2: we should remove infix not from ast and make it expand to regular application. *)
       typify e1 >>= fun e1 ->
       typify e2 >>= fun e2 ->
+      get infix >>= fun f_ty ->
       new_meta >>= fun ty ->
-      return (InfixApplication { infix; arguements = (e1, e2); ty })
+      return
+        (InfixApplication
+           { infix = { ident = infix; ty = f_ty }; arguements = (e1, e2); ty })
   | Ast2.Function { parameter = None; abstraction } ->
       typify abstraction >>= fun abstraction ->
       new_meta >>= fun a_ty ->
       return
         (Function
-           { abstraction; parameter = "()"; ty = TFunction (TUnit, a_ty) })
+           {
+             abstraction;
+             parameter = { ident = "()"; ty = TUnit };
+             ty = TFunction (TUnit, a_ty);
+           })
   | Ast2.Function _ -> exit 1 (* rn we dont allow type annotations *)
   | Ast2.Let { name; value } ->
       typify value >>= fun value ->
@@ -59,4 +67,28 @@ let rec typify expr =
 
 let typify exp context = typify exp (context, 0)
 
-(* let generate_constraints expr = match expr with *)
+type constraints = (ty * ty) list
+
+let rec generate_constraints expr =
+  match expr with
+  | Int _ | Float _ | String _ | Unit _ | Ident _ -> []
+  | Application { func; arguement; ty } ->
+      [ (type_of func, TFunction (type_of arguement, ty)) ]
+      @ generate_constraints func
+      @ generate_constraints arguement
+  | If { condition; consequent; alternative; ty } ->
+      [
+        (type_of condition, TBool);
+        (type_of consequent, ty);
+        (type_of consequent, type_of alternative);
+      ]
+      @ generate_constraints condition
+      @ generate_constraints consequent
+      @ generate_constraints alternative
+  | Function { parameter = { ty = p_ty; _ }; ty; abstraction } ->
+      [ (ty, TFunction (p_ty, type_of abstraction)) ]
+      @ generate_constraints abstraction
+  | InfixApplication { ty; arguements = e1, e2; infix = { ty = f_ty; _ } } ->
+      [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
+      @ generate_constraints e1 @ generate_constraints e2
+  | Let { value; _ } -> generate_constraints value
