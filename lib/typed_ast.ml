@@ -57,7 +57,7 @@ let type_of expr =
   | Let a -> a.ty
 
 let rec ast_to_string ast =
-  (match ast with
+  "(" ^ (match ast with
   | Unit _ -> "()"
   | Float { value; _ } -> string_of_float value
   | Int { value; _ } -> string_of_int value
@@ -73,4 +73,4 @@ let rec ast_to_string ast =
   | Let { name; value; _ } -> "let " ^ name ^ " = " ^ ast_to_string value
   | Function { parameter; abstraction; _ } ->
       "fun " ^ parameter.ident ^ " -> " ^ ast_to_string abstraction)
-  ^ ": " ^ (type_of ast |> type_to_string)
+  ^ "): " ^ (type_of ast |> type_to_string)

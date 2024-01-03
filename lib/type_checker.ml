@@ -10,10 +10,11 @@ let return a (s, m) = Some (a, (s, m))
 let new_meta (s, m) = Some (Meta m, (s, m + 1))
 let insert e (s, m) = Some ((), (e :: s, m))
 
-let scoped_insert e f s =
+(* scoped insert allows temporary insertion, but the meta variable created are not temporary *)
+let scoped_insert e f (s, m) =
   Option.map
-    (fun (e', _) -> (e', s))
-    (((fun (s, m) -> Option.some ((), (e :: s, m))) >>= fun _ -> f ()) s)
+    (fun (e', (_, m')) -> (e', (s, m')))
+    (((fun (s, m) -> Option.some ((), (e :: s, m))) >>= fun _ -> f ()) (s, m))
 
 let get v (s, m) = Option.map (fun r -> (r, (s, m))) (List.assoc_opt v s)
 
@@ -25,9 +26,9 @@ let rec typify expr =
   | Ast2.Ident i -> get i >>= fun ty -> return (Ident { ty; ident = i })
   | Ast2.Function { parameter = Some { value; ty = None }; abstraction } ->
       new_meta >>= fun m ->
+      new_meta >>= fun a_ty ->
       scoped_insert (value, m) (fun () ->
           typify abstraction >>= fun abstraction ->
-          new_meta >>= fun a_ty ->
           return
             (Function
                { abstraction; parameter = { ident = value; ty = m }; ty = a_ty }))
@@ -92,3 +93,9 @@ let rec generate_constraints expr =
       [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
       @ generate_constraints e1 @ generate_constraints e2
   | Let { value; _ } -> generate_constraints value
+
+let print_constraints constraints =
+  List.fold_left
+    (fun first (c1, c2) ->
+      first ^ "\n" ^ type_to_string c1 ^ " = " ^ type_to_string c2)
+    "" constraints

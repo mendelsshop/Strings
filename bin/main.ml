@@ -7,12 +7,17 @@ let () =
          Strings.Ast.list_to_string
            (List.map
               (fun x ->
-                Strings.Typed_ast.ast_to_string
-                  (fst
-                     (Option.get
-                        (Strings.Type_checker.typify
-                           (x |> Strings.Ast2.ast_to_ast2)
-                           []))))
+                let typed =
+                  fst
+                    (Option.get
+                       (Strings.Type_checker.typify
+                          (x |> Strings.Ast2.ast_to_ast2)
+                          []))
+                in
+                Strings.Typed_ast.ast_to_string typed
+                ^ "\n"
+                ^ Strings.Type_checker.print_constraints
+                    (Strings.Type_checker.generate_constraints typed))
               t))
        parsed)
   |> print_endline
