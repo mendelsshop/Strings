@@ -9,7 +9,7 @@ type ty =
   | TFloat
   | TString
 
-type  typed_ident = { ty : ty; ident : ident }
+type typed_ident = { ty : ty; ident : ident }
 
 let rec type_to_string ty =
   match ty with
@@ -34,7 +34,7 @@ type typed_ast =
       arguements : typed_ast * typed_ast;
     }
   | Application of { ty : ty; func : typed_ast; arguement : typed_ast }
-    | Function of { ty : ty; parameter : typed_ident; abstraction : typed_ast }
+  | Function of { ty : ty; parameter : typed_ident; abstraction : typed_ast }
   | If of {
       ty : ty;
       condition : typed_ast;
@@ -57,20 +57,25 @@ let type_of expr =
   | Let a -> a.ty
 
 let rec ast_to_string ast =
-  "(" ^ (match ast with
-  | Unit _ -> "()"
-  | Float { value; _ } -> string_of_float value
-  | Int { value; _ } -> string_of_int value
-  | String { value; _ } -> value
-  | Ident { ident; _ } -> ident
-  | InfixApplication { infix; arguements = e1, e2; _ } ->
-      "( " ^ ast_to_string e1 ^ " " ^ infix.ident ^ " " ^ ast_to_string e2 ^ " ) "
-  | Application { func; arguement; _ } ->
-      "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
-  | If { condition; consequent; alternative; _ } ->
-      "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
-      ^ " else " ^ ast_to_string alternative
-  | Let { name; value; _ } -> "let " ^ name ^ " = " ^ ast_to_string value
-  | Function { parameter; abstraction; _ } ->
-      "fun " ^ parameter.ident ^ " -> " ^ ast_to_string abstraction)
-  ^ "): " ^ (type_of ast |> type_to_string)
+  "("
+  ^ (match ast with
+    | Unit _ -> "()"
+    | Float { value; _ } -> string_of_float value
+    | Int { value; _ } -> string_of_int value
+    | String { value; _ } -> value
+    | Ident { ident; _ } -> ident
+    | InfixApplication { infix; arguements = e1, e2; _ } ->
+        "( " ^ ast_to_string e1 ^ " " ^ infix.ident ^ " " ^ ast_to_string e2
+        ^ " ) "
+    | Application { func; arguement; _ } ->
+        "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
+    | If { condition; consequent; alternative; _ } ->
+        "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
+        ^ " else " ^ ast_to_string alternative
+    | Let { name; value; _ } -> "let " ^ name ^ " = " ^ ast_to_string value
+    | Function { parameter; abstraction; _ } ->
+        "fun (" ^ parameter.ident ^ ":"
+        ^ type_to_string parameter.ty
+        ^ ") -> " ^ ast_to_string abstraction)
+  ^ "): "
+  ^ (type_of ast |> type_to_string)

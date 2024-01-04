@@ -80,8 +80,8 @@ let rec generate_constraints expr =
   | If { condition; consequent; alternative; ty } ->
       [
         (type_of condition, TBool);
-        (type_of consequent, ty);
-        (type_of consequent, type_of alternative);
+        (ty, type_of consequent);
+        (ty, type_of alternative);
       ]
       @ generate_constraints condition
       @ generate_constraints consequent
@@ -93,6 +93,68 @@ let rec generate_constraints expr =
       [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
       @ generate_constraints e1 @ generate_constraints e2
   | Let { value; _ } -> generate_constraints value
+
+let rec mini_sub (m, s_ty) ty =
+  match ty with
+  | TFunction (t1, t2) ->
+      TFunction (mini_sub (m, s_ty) t1, mini_sub (m, s_ty) t2)
+  | Meta n when m = n -> s_ty
+  | _ -> ty
+
+let rec unify constraints =
+  match constraints with
+  | [] -> Some []
+  | (t1, t2) :: constraints -> (
+      match (t1, t2) with
+      | t1, t2 when t1 = t2 -> unify constraints
+      | TFunction (t1, t2), TFunction (t3, t4) ->
+          unify ((t1, t3) :: (t2, t4) :: constraints)
+      | Meta m, t | t, Meta m ->
+          Option.map
+            (fun subs -> (m, t) :: subs)
+            (unify
+               (List.map
+                  (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
+                  constraints))
+      | _ -> None)
+
+let rec subs substitutions ty =
+  match substitutions with
+  | [] -> ty
+  | sub :: substitutions -> subs substitutions (mini_sub sub ty)
+
+let rec substitute substitutions expr =
+  let substitute = substitute substitutions in
+  let ty = subs substitutions (type_of expr) in
+  match expr with
+  | Function { parameter = { ident; ty = p_ty }; abstraction; _ } ->
+      Function
+        {
+          parameter = { ident; ty = subs substitutions p_ty };
+          abstraction = substitute abstraction;
+          ty;
+        }
+  | Ident { ident; _ } -> Ident { ident; ty }
+  | If { condition; consequent; alternative; _ } ->
+      If
+        {
+          condition = substitute condition;
+          consequent = substitute consequent;
+          alternative = substitute alternative;
+          ty;
+        }
+  | Application { func; arguement; _ } ->
+      Application
+        { func = substitute func; arguement = substitute arguement; ty }
+  | InfixApplication { infix = { ident; ty = i_ty }; arguements = e1, e2; _ } ->
+      InfixApplication
+        {
+          infix = { ident; ty = subs substitutions i_ty };
+          arguements = (substitute e1, substitute e2);
+          ty;
+        }
+  | Let { name; value; _ } -> Let { name; value = substitute value; ty }
+  | _ -> expr
 
 let print_constraints constraints =
   List.fold_left
