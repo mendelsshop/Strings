@@ -30,19 +30,19 @@ let () =
          Strings.Ast.list_to_string
            (List.map
               (fun x ->
-                let typed =
-                  fst
-                    (Option.get
-                       (Strings.Type_checker.typify
-                          (x |> Strings.Ast2.ast_to_ast2)
-                          []))
+                let infered, (ctx, _) =
+                  Option.get
+                    (Strings.Type_checker.infer
+                       (Strings.Ast2.ast_to_ast2 x)
+                       ([], 0))
                 in
-                let constraits =
-                  Strings.Type_checker.generate_constraints typed
-                in
-                let subs = Option.get (Strings.Type_checker.unify constraits) in
-                Strings.Typed_ast.ast_to_string
-                  (Strings.Type_checker.substitute subs typed))
+                Strings.Typed_ast.ast_to_string infered
+                ^ "\n"
+                ^ Strings.Ast.list_to_string
+                    (List.map
+                       (fun (i, ty) ->
+                         i ^ ": " ^ Strings.Typed_ast.type_to_string ty)
+                       ctx))
               t))
        parsed)
   |> print_endline

@@ -66,7 +66,7 @@ let rec typify expr =
       typify value >>= fun value ->
       insert (name, type_of value) >>= fun _ -> return value
 
-let typify exp context = typify exp (context, 0)
+(* let typify exp context = typify exp (context, 0) *)
 
 type constraints = (ty * ty) list
 
@@ -155,6 +155,17 @@ let rec substitute substitutions expr =
         }
   | Let { name; value; _ } -> Let { name; value = substitute value; ty }
   | _ -> expr
+
+let infer expr =
+  ( typify expr >>= fun typed_expr s ->
+    let constraints = generate_constraints typed_expr in
+    Option.map
+      (fun substitutions -> (substitute substitutions typed_expr, s))
+      (unify constraints) )
+  >>= fun expr ->
+  match expr with
+  | Let { name; ty; _ } -> insert (name, ty) >>= fun _ -> return expr
+  | _ -> return expr
 
 let print_constraints constraints =
   List.fold_left
