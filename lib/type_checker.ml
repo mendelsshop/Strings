@@ -10,6 +10,9 @@ let return a (s, m) = Some (a, (s, m))
 let new_meta (s, m) = Some (Meta m, (s, m + 1))
 let insert e (s, m) = Some ((), (e :: s, m))
 
+let remove_fst (s, m) =
+  Some ((), match s with [] -> (s, m) | _ :: s' -> (s', m))
+
 (* scoped insert allows temporary insertion, but the meta variable created are not temporary *)
 let scoped_insert e f (s, m) =
   Option.map
@@ -64,7 +67,8 @@ let rec typify expr =
   | Ast2.Function _ -> exit 1 (* rn we dont allow type annotations *)
   | Ast2.Let { name; value } ->
       typify value >>= fun value ->
-      insert (name, type_of value) >>= fun _ -> return value
+      insert (name, type_of value) >>= fun _ ->
+      return (Let { name; ty = type_of value; value })
 
 (* let typify exp context = typify exp (context, 0) *)
 
@@ -164,7 +168,10 @@ let infer expr =
       (unify constraints) )
   >>= fun expr ->
   match expr with
-  | Let { name; ty; _ } -> insert (name, ty) >>= fun _ -> return expr
+  | Let { name; ty; _ } ->
+      (* we use remove_fst to take out the last inserted thing in the context, as typify will add a binding for this left with the partially guessed type *)
+      remove_fst >>= fun _ ->
+      insert (name, ty) >>= fun _ -> return expr
   | _ -> return expr
 
 let print_constraints constraints =
