@@ -1,6 +1,6 @@
 open AMPCL
 
-let key_words = [ "if"; "then"; "else"; "fun" ]
+let key_words = [ "let"; "if"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -158,7 +158,9 @@ let rec expr input =
     expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
   in
   let atom = parens <|> (skip_garbage << (constant <|> ident)) in
-  let basic_forms = if_then_else expr <|> fun_parser expr <|> atom in
+  let basic_forms =
+    let_parser expr <|> if_then_else expr <|> fun_parser expr <|> atom
+  in
   let application =
     let rec application_tail func input =
       ( basic_forms >>= fun arguement ->
