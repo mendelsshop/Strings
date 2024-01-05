@@ -158,9 +158,7 @@ let rec expr input =
     expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
   in
   let atom = parens <|> (skip_garbage << (constant <|> ident)) in
-  let basic_forms =
-    let_parser expr <|> if_then_else expr <|> fun_parser expr <|> atom
-  in
+  let basic_forms = if_then_else expr <|> fun_parser expr <|> atom in
   let application =
     let rec application_tail func input =
       ( basic_forms >>= fun arguement ->
@@ -181,4 +179,7 @@ let rec expr input =
   infix_application input
 
 let parser =
-  many (string_parser1 <|> (char '\"' << expr >> (skip_garbage << char '\"')))
+  many
+    (string_parser1
+    <|> (char '\"' << (let_parser expr <|> expr) >> (skip_garbage << char '\"'))
+    )

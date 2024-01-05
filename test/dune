@@ -1,4 +1,3 @@
 (tests
  (names strings_test parser)
-  (libraries alcotest strings))
-
+ (libraries alcotest strings))

@@ -2,6 +2,3 @@
  (name strings)
  (libraries AMPCL)
  (modules Type_checker Parser Ast Ast2 Typed_ast))
-; (library
-;  (name ast)
-;  (modules Ast))
