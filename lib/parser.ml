@@ -116,7 +116,7 @@ let fun_parser expr =
   <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
 
 let let_parser expr =
-  string "let"
+  skip_garbage << string "let"
   << seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
   <$> fun (name, (params, exp)) ->
   Ast.Let
@@ -181,5 +181,10 @@ let rec expr input =
 let parser =
   many
     (string_parser1
-    <|> (char '\"' << (let_parser expr <|> expr) >> (skip_garbage << char '\"'))
-    )
+    <$> (fun x -> x :: [])
+    <|> (char '\"'
+        << many (let_parser expr <|> expr)
+        >> (skip_garbage << char '\"')))
+  <$> List.concat
+
+let run = run

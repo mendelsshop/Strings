@@ -23,26 +23,21 @@
 (*   |> print_endline *)
 let () =
   let input = read_line () in
-  let parsed = Strings.Parser.parser (List.of_seq (String.to_seq input)) in
-  Option.value ~default:"bad type"
+  let parsed = Strings.Parser.run Strings.Parser.parser input in
+  Option.value ~default:"not parsed"
     (Option.map
-       (fun (t, _) ->
-         Strings.Ast.list_to_string
-           (List.map
-              (fun x ->
-                let infered, (ctx, _) =
-                  Option.get
-                    (Strings.Type_checker.infer
-                       (Strings.Ast2.ast_to_ast2 x)
-                       ([], 0))
-                in
-                Strings.Typed_ast.ast_to_string infered
-                ^ "\n"
-                ^ Strings.Ast.list_to_string
-                    (List.map
-                       (fun (i, ty) ->
-                         i ^ ": " ^ Strings.Typed_ast.type_to_string ty)
-                       ctx))
-              t))
+       (fun t ->
+         List.fold_left
+           (fun ((ctx, i), str) x ->
+             let infered, (ctx', i') =
+               Option.get
+                 (Strings.Type_checker.infer
+                    (Strings.Ast2.ast_to_ast2 x)
+                    (ctx, i))
+             in
+             ((ctx', i'), str ^ Strings.Typed_ast.ast_to_string infered ^ "\n"))
+           (([], 0), "")
+           t
+         |> snd)
        parsed)
-  |> print_endline
+  |> print_string
