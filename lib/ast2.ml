@@ -7,9 +7,15 @@ type ast2 =
   | Ident of ident
   | InfixApplication of { infix : ident; arguements : ast2 * ast2 }
   | Application of { func : ast2; arguement : ast2 }
-  | Function of { parameter : ident typed_opt option; abstraction : ast2 }
+  | Function of { parameter : ident option; abstraction : ast2 }
   | If of { condition : ast2; consequent : ast2; alternative : ast2 }
-  | Let of { name : ident; value : ast2 }
+  | Let of { name : ident; e1 : ast2; e2 : ast2 }
+
+type top_level =
+  | Bind of { name : ident; value : ast2 }
+  | PrintString of string
+
+type program = top_level list
 
 let rec curry_ify ps abs =
   match ps with
@@ -34,9 +40,16 @@ let rec ast_to_ast2 (ast : ast) =
           consequent = ast_to_ast2 consequent;
           alternative = ast_to_ast2 alternative;
         }
-  | Let { name; value } -> Let { name; value = ast_to_ast2 value }
+  | Let { name; e1; e2 } ->
+      Let { name; e1 = ast_to_ast2 e1; e2 = ast_to_ast2 e2 }
   | Function { parameters; abstraction } ->
       curry_ify parameters (ast_to_ast2 abstraction)
+
+let ast_to_ast2 =
+  List.map (fun (tl : Ast.top_level) ->
+      match tl with
+      | Bind { name; value } -> Bind { name; value = ast_to_ast2 value }
+      | PrintString s -> PrintString s)
 
 let rec ast_to_string ast =
   match ast with
@@ -51,12 +64,18 @@ let rec ast_to_string ast =
   | If { condition; consequent; alternative } ->
       "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
       ^ " else " ^ ast_to_string alternative
-  | Let { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+  | Let { name; e1; e2 } ->
+      "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Function { parameter; abstraction } ->
-      let param_to_string p =
-        Option.map (fun ty -> p.value ^ ":" ^ type_to_string ty) p.ty
-        |> Option.value ~default:p.value
-      in
       "fun "
-      ^ (parameter |> Option.fold ~some:param_to_string ~none:"")
+      ^ Option.value parameter ~default:""
       ^ "-> " ^ ast_to_string abstraction
+
+let print_program program =
+  String.concat "\n"
+    (List.map
+       (fun exp ->
+         match exp with
+         | Bind { name; value } -> name ^ " = " ^ ast_to_string value ^ "\n"
+         | PrintString s -> s)
+       program)

@@ -41,7 +41,13 @@ type typed_ast =
       consequent : typed_ast;
       alternative : typed_ast;
     }
-  | Let of { ty : ty; name : ident; value : typed_ast }
+  | Let of { ty : ty; name : ident; e1 : typed_ast; e2 : typed_ast }
+
+type top_level =
+  | Bind of { ty : ty; name : ident; value : typed_ast }
+  | PrintString of string
+
+type program = top_level list
 
 let type_of expr =
   match expr with
@@ -57,25 +63,31 @@ let type_of expr =
   | Let a -> a.ty
 
 let rec ast_to_string ast =
-  "("
-  ^ (match ast with
-    | Unit _ -> "()"
-    | Float { value; _ } -> string_of_float value
-    | Int { value; _ } -> string_of_int value
-    | String { value; _ } -> value
-    | Ident { ident; _ } -> ident
-    | InfixApplication { infix; arguements = e1, e2; _ } ->
-        "( " ^ ast_to_string e1 ^ " " ^ infix.ident ^ " " ^ ast_to_string e2
-        ^ " ) "
-    | Application { func; arguement; _ } ->
-        "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
-    | If { condition; consequent; alternative; _ } ->
-        "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
-        ^ " else " ^ ast_to_string alternative
-    | Let { name; value; _ } -> "let " ^ name ^ " = " ^ ast_to_string value
-    | Function { parameter; abstraction; _ } ->
-        "fun (" ^ parameter.ident ^ ":"
-        ^ type_to_string parameter.ty
-        ^ ") -> " ^ ast_to_string abstraction)
-  ^ "): "
-  ^ (type_of ast |> type_to_string)
+  match ast with
+  | Unit _ -> "()"
+  | Float { value; _ } -> string_of_float value
+  | Int { value; _ } -> string_of_int value
+  | String { value; _ } -> value
+  | Ident { ident; _ } -> ident
+  | InfixApplication { infix; arguements = e1, e2; _ } ->
+      "( " ^ ast_to_string e1 ^ " " ^ infix.ident ^ " " ^ ast_to_string e2
+      ^ " )"
+  | Application { func; arguement; _ } ->
+      "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
+  | If { condition; consequent; alternative; _ } ->
+      "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
+      ^ " else " ^ ast_to_string alternative
+  | Let { name; e1; e2; _ } ->
+      "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
+  | Function { parameter; abstraction; _ } ->
+      "fun (" ^ parameter.ident ^ ") -> " ^ ast_to_string abstraction
+
+let print_program program =
+  String.concat "\n"
+    (List.map
+       (fun exp ->
+         match exp with
+         | Bind { name; value; ty } ->
+             name ^ " : " ^ type_to_string ty ^ " = " ^ ast_to_string value
+         | PrintString s -> s)
+       program)

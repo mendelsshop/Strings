@@ -78,7 +78,7 @@ let string_parser =
 
 let string_parser1 =
   many1 string_parser <$> fun ss ->
-  Ast.String (implode (List.concat_map Fun.id ss))
+  Ast.PrintString (implode (List.concat_map Fun.id ss))
 
 let string_parser =
   many string_parser <$> fun ss ->
@@ -105,11 +105,7 @@ let infix_ident =
   infix |> between (skip_garbage << char '(') (skip_garbage << char ')')
 
 let ident = ident_parser <|> infix_ident
-
-let fun_params =
-  many1
-    ( seq ident (opt (skip_garbage << char ':' << type_parser))
-    <$> fun (p, ty) -> { Ast.value = p; ty } )
+let fun_params = many1 ident
 
 let fun_parser expr =
   seq (string "fun" << fun_params >> (skip_garbage << string "->")) expr
@@ -119,7 +115,7 @@ let let_parser expr =
   skip_garbage << string "let"
   << seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
   <$> fun (name, (params, exp)) ->
-  Ast.Let
+  Ast.Bind
     {
       name;
       value =
@@ -178,12 +174,14 @@ let rec expr input =
   in
   infix_application input
 
+let top_level = expr <$> fun exp -> Ast.Bind { name = "()"; value = exp }
+
 let parser =
   many
     (string_parser1
     <$> (fun x -> x :: [])
     <|> (char '\"'
-        << many (let_parser expr <|> expr)
+        << many (let_parser expr <|> top_level)
         >> (skip_garbage << char '\"')))
   <$> List.concat
 

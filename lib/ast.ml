@@ -9,9 +9,12 @@ type ast =
   | Ident of ident
   | Application of { func : ast; arguement : ast }
   | InfixApplication of { infix : ident; arguements : ast * ast }
-  | Function of { parameters : ident typed_opt list; abstraction : ast }
+  | Function of { parameters : ident list; abstraction : ast }
   | If of { condition : ast; consequent : ast; alternative : ast }
-  | Let of { name : ident; value : ast }
+  | Let of { name : ident; e1 : ast; e2 : ast }
+
+type top_level = Bind of { name : ident; value : ast } | PrintString of string
+type program = top_level list
 
 let rec type_to_string ty =
   match ty with
@@ -35,13 +38,16 @@ let rec ast_to_string ast =
   | If { condition; consequent; alternative } ->
       "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
       ^ " else " ^ ast_to_string alternative
-  | Let { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+  | Let { name; e1; e2 } ->
+      "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Function { parameters; abstraction } ->
-      let params_to_string =
-        List.map (fun p ->
-            Option.map (fun ty -> p.value ^ ":" ^ type_to_string ty) p.ty
-            |> Option.value ~default:p.value)
-      in
-      "fun "
-      ^ list_to_string (params_to_string parameters)
-      ^ "->" ^ ast_to_string abstraction
+      "fun " ^ list_to_string parameters ^ "->" ^ ast_to_string abstraction
+
+let print_program program =
+  String.concat "\n"
+    (List.map
+       (fun exp ->
+         match exp with
+         | Bind { name; value } -> name ^ " = " ^ ast_to_string value ^ "\n"
+         | PrintString s -> s)
+       program)

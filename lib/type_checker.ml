@@ -26,15 +26,16 @@ let rec typify expr =
   | Ast2.Int i -> return (Int { ty = TInteger; value = i })
   | Ast2.Float i -> return (Float { ty = TFloat; value = i })
   | Ast2.String i -> return (String { ty = TString; value = i })
-  | Ast2.Ident i -> get i >>= fun ty -> return (Ident { ty; ident = i })
-  | Ast2.Function { parameter = Some { value; ty = None }; abstraction } ->
+  | Ast2.Ident i ->
+      get i >>= fun ty -> return (Ident { ty; ident = i })
+      (* TODO: make ident type be adt of unit, wildcard or string if paramater = some unit insert follow parameter = non case *)
+  | Ast2.Function { parameter = Some ident; abstraction } ->
       new_meta >>= fun m ->
       new_meta >>= fun a_ty ->
-      scoped_insert (value, m) (fun () ->
+      scoped_insert (ident, m) (fun () ->
           typify abstraction >>= fun abstraction ->
           return
-            (Function
-               { abstraction; parameter = { ident = value; ty = m }; ty = a_ty }))
+            (Function { abstraction; parameter = { ident; ty = m }; ty = a_ty }))
   | Ast2.If { condition; consequent; alternative } ->
       typify condition >>= fun condition ->
       typify consequent >>= fun consequent ->
@@ -64,11 +65,10 @@ let rec typify expr =
              parameter = { ident = "()"; ty = TUnit };
              ty = TFunction (TUnit, a_ty);
            })
-  | Ast2.Function _ -> exit 1 (* rn we dont allow type annotations *)
-  | Ast2.Let { name; value } ->
-      typify value >>= fun value ->
-      insert (name, type_of value) >>= fun _ ->
-      return (Let { name; ty = type_of value; value })
+  | Ast2.Let { name; e1; e2 } ->
+      typify e1 >>= fun e1 ->
+      scoped_insert (name, type_of e1) (fun () -> typify e2) >>= fun e2 ->
+      return (Let { name; ty = type_of e1; e1; e2 })
 
 (* let typify exp context = typify exp (context, 0) *)
 
@@ -96,7 +96,10 @@ let rec generate_constraints expr =
   | InfixApplication { ty; arguements = e1, e2; infix = { ty = f_ty; _ } } ->
       [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
       @ generate_constraints e1 @ generate_constraints e2
-  | Let { value; _ } -> generate_constraints value
+  (* | Let { value; _ } -> generate_constraints value *)
+  | Let _ ->
+      print_endline "let polymorphism not supported yet";
+      exit 1
 
 let rec mini_sub (m, s_ty) ty =
   match ty with
@@ -157,22 +160,43 @@ let rec substitute substitutions expr =
           arguements = (substitute e1, substitute e2);
           ty;
         }
-  | Let { name; value; _ } -> Let { name; value = substitute value; ty }
+  (* | Let { name; value; _ } -> Let { name; value = substitute value; ty } *)
+  | Let _ ->
+      print_endline "let polymorphism not supported yet";
+      exit 1
   | _ -> expr
 
 let infer expr =
-  ( typify expr >>= fun typed_expr s ->
-    let constraints = generate_constraints typed_expr in
-    Option.map
-      (fun substitutions -> (substitute substitutions typed_expr, s))
-      (unify constraints) )
-  >>= fun expr ->
-  match expr with
-  | Let { name; ty; _ } ->
-      (* we use remove_fst to take out the last inserted thing in the context, as typify will add a binding for this left with the partially guessed type *)
-      remove_fst >>= fun _ ->
-      insert (name, ty) >>= fun _ -> return expr
-  | _ -> return expr
+  typify expr >>= fun typed_expr s ->
+  let constraints = generate_constraints typed_expr in
+  Option.map
+    (fun substitutions -> (substitute substitutions typed_expr, s))
+    (unify constraints)
+
+(* List.fold_left *)
+(*   (fun ((ctx, i), str) x -> *)
+(*     let infered, (ctx', i') = *)
+(*       Option.get (Strings.Type_checker.infer x (ctx, i)) *)
+(*     in *)
+(*     ((ctx', i'), str ^ Strings.Typed_ast.ast_to_string infered ^ "\n")) *)
+(*   (([], 0), "") *)
+
+let infer tl =
+  match tl with
+  | Ast2.Bind { name; value } ->
+      (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
+      infer value >>= fun value' ->
+      insert (name, type_of value') >>= fun () ->
+      return (Bind { name; value = value'; ty = type_of value' })
+  | Ast2.PrintString s -> return (PrintString s)
+
+(* TODO: static envoirment *)
+let infer tls =
+  List.fold_left
+    (fun i tl ->
+      i >>= fun tls ->
+      infer tl >>= fun tl' -> return (tls @ [ tl' ]))
+    (return []) tls ([], 0)
 
 let print_constraints constraints =
   List.fold_left
