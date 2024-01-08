@@ -1,6 +1,6 @@
 open AMPCL
 
-let key_words = [ "let"; "if"; "then"; "else"; "fun" ]
+let key_words = [ "in"; "let"; "if"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -124,6 +124,23 @@ let let_parser expr =
         | None -> exp);
     }
 
+let let_expr_parser expr =
+  skip_garbage << string "let"
+  << seq ident
+       (seq (opt fun_params)
+          (skip_garbage
+          << (char '=' << seq expr (skip_garbage << string "in" << expr))))
+  <$> fun (name, (params, (e1, e2))) ->
+  Ast.Let
+    {
+      name;
+      e1 =
+        (match params with
+        | Some params -> Ast.Function { parameters = params; abstraction = e1 }
+        | None -> e1);
+      e2;
+    }
+
 let if_then_else expr =
   seq
     (skip_garbage << string "if" << expr)
@@ -154,7 +171,9 @@ let rec expr input =
     expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
   in
   let atom = parens <|> (skip_garbage << (constant <|> ident)) in
-  let basic_forms = if_then_else expr <|> fun_parser expr <|> atom in
+  let basic_forms =
+    let_expr_parser expr <|> if_then_else expr <|> fun_parser expr <|> atom
+  in
   let application =
     let rec application_tail func input =
       ( basic_forms >>= fun arguement ->
@@ -181,7 +200,7 @@ let parser =
     (string_parser1
     <$> (fun x -> x :: [])
     <|> (char '\"'
-        << many (let_parser expr <|> top_level)
+        << many (top_level <|> let_parser expr)
         >> (skip_garbage << char '\"')))
   <$> List.concat
 

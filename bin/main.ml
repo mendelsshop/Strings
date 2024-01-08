@@ -4,7 +4,8 @@ let () =
   Option.value ~default:"not parsed"
     (Option.map
        (fun t ->
-         Strings.Ast2.ast_to_ast2 t |> Strings.Type_checker.infer |> Option.get
-         |> fst |> Strings.Typed_ast.print_program)
+         Strings.Ast2.ast_to_ast2 t |> Strings.Type_checker.infer
+         |> Option.fold ~none:"not type checked" ~some:(fun typed ->
+                typed |> fst |> Strings.Typed_ast.print_program))
        parsed)
   |> print_endline
