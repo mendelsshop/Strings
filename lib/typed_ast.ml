@@ -8,6 +8,7 @@ type ty =
   | TInteger
   | TFloat
   | TString
+  | TPoly of int list * ty
 
 type typed_ident = { ty : ty; ident : ident }
 
@@ -21,6 +22,10 @@ let rec type_to_string ty =
   | TInteger -> "int"
   | TFunction (t1, t2) ->
       "(" ^ type_to_string t1 ^ ") -> (" ^ type_to_string t2 ^ ")"
+  | TPoly (ms, t) ->
+      "∀"
+      ^ String.concat "," (List.map string_of_int ms)
+      ^ "." ^ type_to_string t
 
 type typed_ast =
   | Unit of { ty : ty }
@@ -42,6 +47,7 @@ type typed_ast =
       alternative : typed_ast;
     }
   | Let of { ty : ty; name : ident; e1 : typed_ast; e2 : typed_ast }
+  | Poly of { metas : int list; e : typed_ast }
 
 type top_level =
   | Bind of { ty : ty; name : ident; value : typed_ast }
@@ -49,7 +55,8 @@ type top_level =
 
 type program = top_level list
 
-let type_of expr =
+(* we can make this non recursive if we make poly ast node store their type *)
+let rec type_of expr =
   match expr with
   | Int a -> a.ty
   | Float a -> a.ty
@@ -61,6 +68,7 @@ let type_of expr =
   | Application a -> a.ty
   | InfixApplication a -> a.ty
   | Let a -> a.ty
+  | Poly p -> TPoly (p.metas, type_of p.e)
 
 let rec ast_to_string ast =
   match ast with
@@ -81,6 +89,10 @@ let rec ast_to_string ast =
       "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Function { parameter; abstraction; _ } ->
       "fun (" ^ parameter.ident ^ ") -> " ^ ast_to_string abstraction
+  | Poly p ->
+      "∀"
+      ^ String.concat "," (List.map string_of_int p.metas)
+      ^ "." ^ ast_to_string p.e
 
 let print_program program =
   String.concat "\n"

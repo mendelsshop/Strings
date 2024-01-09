@@ -27,14 +27,154 @@ let get v (s, m) =
     (fun r -> (r, (s, m)))
     (List.assoc_opt v s |> Option.to_result ~none:("unbound variable " ^ v))
 
+module IntMap = Map.Make (Int)
+
+let rec instantiate ty (tmap : ty IntMap.t) =
+  match ty with
+  | TPoly (ms, t) ->
+      List.fold_left
+        (fun ms' n ->
+          ms' >>= fun ms' ->
+          new_meta <$> fun nm -> IntMap.add n nm ms')
+        (return tmap) ms
+      >>= fun ms' -> instantiate t ms'
+  | Meta m -> return (Option.value (IntMap.find_opt m tmap) ~default:ty)
+  | TFunction (t1, t2) ->
+      instantiate t1 tmap >>= fun t1' ->
+      instantiate t2 tmap <$> fun t2' -> TFunction (t1', t2')
+  | _ -> return ty
+
 (* let typify exp context = typify exp (context, 0) *)
+
+type constraints = (ty * ty) list
+
+let rec generate_constraints expr =
+  match expr with
+  | Int _ | Float _ | String _ | Unit _ | Ident _ -> []
+  | Application { func; arguement; ty } ->
+      [ (type_of func, TFunction (type_of arguement, ty)) ]
+      @ generate_constraints func
+      @ generate_constraints arguement
+  | If { condition; consequent; alternative; ty } ->
+      [
+        (type_of condition, TBool);
+        (ty, type_of consequent);
+        (ty, type_of alternative);
+      ]
+      @ generate_constraints condition
+      @ generate_constraints consequent
+      @ generate_constraints alternative
+  | Function { parameter = { ty = p_ty; _ }; ty; abstraction } ->
+      [ (ty, TFunction (p_ty, type_of abstraction)) ]
+      @ generate_constraints abstraction
+  | InfixApplication { ty; arguements = e1, e2; infix = { ty = f_ty; _ } } ->
+      [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
+      @ generate_constraints e1 @ generate_constraints e2
+  | Let { e1; e2; _ } -> generate_constraints e1 @ generate_constraints e2
+  | Poly { e; _ } -> generate_constraints e
+
+let rec mini_sub (m, s_ty) ty =
+  match ty with
+  | TFunction (t1, t2) ->
+      TFunction (mini_sub (m, s_ty) t1, mini_sub (m, s_ty) t2)
+  | Meta n when m = n -> s_ty
+  | _ -> ty
+
+let rec unify constraints =
+  match constraints with
+  | [] -> Ok []
+  | (t1, t2) :: constraints -> (
+      match (t1, t2) with
+      | t1, t2 when t1 = t2 -> unify constraints
+      | TFunction (t1, t2), TFunction (t3, t4) ->
+          unify ((t1, t3) :: (t2, t4) :: constraints)
+      | Meta m, t | t, Meta m ->
+          Result.map
+            (fun subs -> (m, t) :: subs)
+            (unify
+               (List.map
+                  (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
+                  constraints))
+      | t1, t2 ->
+          Error
+            ("could not unify " ^ type_to_string t1 ^ " and "
+           ^ type_to_string t2))
+
+let rec subs substitutions ty =
+  match substitutions with
+  | [] -> ty
+  | sub :: substitutions -> subs substitutions (mini_sub sub ty)
+
+let rec substitute substitutions expr =
+  let substitute = substitute substitutions in
+  let ty = subs substitutions (type_of expr) in
+  match expr with
+  | Function { parameter = { ident; ty = p_ty }; abstraction; _ } ->
+      Function
+        {
+          parameter = { ident; ty = subs substitutions p_ty };
+          abstraction = substitute abstraction;
+          ty;
+        }
+  | Ident { ident; _ } -> Ident { ident; ty }
+  | If { condition; consequent; alternative; _ } ->
+      If
+        {
+          condition = substitute condition;
+          consequent = substitute consequent;
+          alternative = substitute alternative;
+          ty;
+        }
+  | Application { func; arguement; _ } ->
+      Application
+        { func = substitute func; arguement = substitute arguement; ty }
+  | InfixApplication { infix = { ident; ty = i_ty }; arguements = e1, e2; _ } ->
+      InfixApplication
+        {
+          infix = { ident; ty = subs substitutions i_ty };
+          arguements = (substitute e1, substitute e2);
+          ty;
+        }
+  | Let { name; e1; e2; _ } ->
+      Let { name; e1 = substitute e1; e2 = substitute e2; ty }
+  (* TODO: subsitite non polymorphic type variables in poly *)
+  | _ -> expr
+
+let rec metas ty =
+  match ty with
+  | Meta m -> MetaS.singleton m
+  | TFunction (t1, t2) -> metas t2 |> (metas t1 |> MetaS.union)
+  | _ -> MetaS.empty
+
+let find_free ms ty =
+  let ms' = metas ty in
+  MetaS.diff ms ms'
+
+let rec find_free_in_env ms env =
+  if MetaS.is_empty ms then ms
+  else
+    match env with
+    | [] -> ms
+    | (_, ty) :: env' ->
+        let ms' = find_free ms ty in
+        find_free_in_env ms' env'
+
+let generalize expr s =
+  Result.map
+    (fun subs ->
+      let exp = substitute subs expr in
+      let fv = find_free_in_env (type_of exp |> metas) (fst s) in
+      (Poly { e = exp; metas = MetaS.to_list fv }, s))
+    (unify (generate_constraints expr))
+
 let rec typify expr =
   match expr with
   | Ast2.Int i -> return (Int { ty = TInteger; value = i })
   | Ast2.Float i -> return (Float { ty = TFloat; value = i })
   | Ast2.String i -> return (String { ty = TString; value = i })
   | Ast2.Ident i ->
-      get i >>= fun ty -> return (Ident { ty; ident = i })
+      get i >>= fun ty ->
+      instantiate ty IntMap.empty <$> fun ty' -> Ident { ty = ty'; ident = i }
       (* TODO: make ident type be adt of unit, wildcard or string if paramater = some unit insert follow parameter = non case *)
   | Ast2.Function { parameter = Some ident; abstraction } ->
       new_meta >>= fun m ->
@@ -74,103 +214,9 @@ let rec typify expr =
            })
   | Ast2.Let { e1; e2; name } ->
       typify e1 >>= fun e1 ->
+      generalize e1 >>= fun e1 ->
       scoped_insert (name, type_of e1) (fun () -> typify e2) >>= fun e2 ->
       return (Let { name; ty = type_of e2; e1; e2 })
-
-type constraints = (ty * ty) list
-
-let rec generate_constraints expr =
-  match expr with
-  | Int _ | Float _ | String _ | Unit _ | Ident _ -> []
-  | Application { func; arguement; ty } ->
-      [ (type_of func, TFunction (type_of arguement, ty)) ]
-      @ generate_constraints func
-      @ generate_constraints arguement
-  | If { condition; consequent; alternative; ty } ->
-      [
-        (type_of condition, TBool);
-        (ty, type_of consequent);
-        (ty, type_of alternative);
-      ]
-      @ generate_constraints condition
-      @ generate_constraints consequent
-      @ generate_constraints alternative
-  | Function { parameter = { ty = p_ty; _ }; ty; abstraction } ->
-      [ (ty, TFunction (p_ty, type_of abstraction)) ]
-      @ generate_constraints abstraction
-  | InfixApplication { ty; arguements = e1, e2; infix = { ty = f_ty; _ } } ->
-      [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
-      @ generate_constraints e1 @ generate_constraints e2
-  | Let _ ->
-      print_endline "let polymorphism not supported yet";
-      exit 1
-
-let rec mini_sub (m, s_ty) ty =
-  match ty with
-  | TFunction (t1, t2) ->
-      TFunction (mini_sub (m, s_ty) t1, mini_sub (m, s_ty) t2)
-  | Meta n when m = n -> s_ty
-  | _ -> ty
-
-let rec unify constraints =
-  match constraints with
-  | [] -> Ok []
-  | (t1, t2) :: constraints -> (
-      match (t1, t2) with
-      | t1, t2 when t1 = t2 -> unify constraints
-      | TFunction (t1, t2), TFunction (t3, t4) ->
-          unify ((t1, t3) :: (t2, t4) :: constraints)
-      | Meta m, t | t, Meta m ->
-          Result.map
-            (fun subs -> (m, t) :: subs)
-            (unify
-               (List.map
-                  (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
-                  constraints))
-      | t1, t2 ->
-          Error
-            ("could not unify" ^ type_to_string t1 ^ " and " ^ type_to_string t2)
-      )
-
-let rec subs substitutions ty =
-  match substitutions with
-  | [] -> ty
-  | sub :: substitutions -> subs substitutions (mini_sub sub ty)
-
-let rec substitute substitutions expr =
-  let substitute = substitute substitutions in
-  let ty = subs substitutions (type_of expr) in
-  match expr with
-  | Function { parameter = { ident; ty = p_ty }; abstraction; _ } ->
-      Function
-        {
-          parameter = { ident; ty = subs substitutions p_ty };
-          abstraction = substitute abstraction;
-          ty;
-        }
-  | Ident { ident; _ } -> Ident { ident; ty }
-  | If { condition; consequent; alternative; _ } ->
-      If
-        {
-          condition = substitute condition;
-          consequent = substitute consequent;
-          alternative = substitute alternative;
-          ty;
-        }
-  | Application { func; arguement; _ } ->
-      Application
-        { func = substitute func; arguement = substitute arguement; ty }
-  | InfixApplication { infix = { ident; ty = i_ty }; arguements = e1, e2; _ } ->
-      InfixApplication
-        {
-          infix = { ident; ty = subs substitutions i_ty };
-          arguements = (substitute e1, substitute e2);
-          ty;
-        }
-  | Let _ ->
-      print_endline "let polymorphism not supported yet";
-      exit 1
-  | _ -> expr
 
 let infer expr =
   typify expr >>= fun typed_expr s ->
@@ -184,6 +230,7 @@ let infer tl =
   | Ast2.Bind { name; value } ->
       (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
       infer value >>= fun value' ->
+      generalize value' >>= fun value' ->
       insert (name, type_of value') >>= fun () ->
       return (Bind { name; value = value'; ty = type_of value' })
   | Ast2.PrintString s -> return (PrintString s)
