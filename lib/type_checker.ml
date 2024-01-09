@@ -167,6 +167,15 @@ let generalize expr s =
       (Poly { e = exp; metas = MetaS.to_list fv }, s))
     (unify (generate_constraints expr))
 
+let rec convert_ty (ty : Ast.ty) =
+  match ty with
+  | TBool -> TBool
+  | TString -> TString
+  | TUnit -> TUnit
+  | TFloat -> TFloat
+  | TInteger -> TInteger
+  | TFunction (t1, t2) -> TFunction (convert_ty t1, convert_ty t2)
+
 let rec typify expr =
   match expr with
   | Ast2.Int i -> return (Int { ty = TInteger; value = i })
@@ -176,13 +185,17 @@ let rec typify expr =
       get i >>= fun ty ->
       instantiate ty IntMap.empty <$> fun ty' -> Ident { ty = ty'; ident = i }
       (* TODO: make ident type be adt of unit, wildcard or string if paramater = some unit insert follow parameter = non case *)
-  | Ast2.Function { parameter = Some ident; abstraction } ->
-      new_meta >>= fun m ->
-      new_meta >>= fun a_ty ->
-      scoped_insert (ident, m) (fun () ->
+  | Ast2.Function { parameter = Some { ident; ty = ty_opt }; abstraction } ->
+      new_meta >>= fun f_ty ->
+      (match ty_opt with
+      | None -> new_meta
+      | Some ty -> convert_ty ty |> return)
+      >>= fun a_ty ->
+      scoped_insert (ident, a_ty) (fun () ->
           typify abstraction >>= fun abstraction ->
           return
-            (Function { abstraction; parameter = { ident; ty = m }; ty = a_ty }))
+            (Function
+               { abstraction; parameter = { ident; ty = a_ty }; ty = f_ty }))
   | Ast2.If { condition; consequent; alternative } ->
       typify condition >>= fun condition ->
       typify consequent >>= fun consequent ->

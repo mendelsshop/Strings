@@ -1,4 +1,5 @@
 open AMPCL
+open Ast
 
 let key_words = [ "in"; "let"; "if"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
@@ -14,12 +15,15 @@ let skip_garbage =
 let rec type_parser input =
   let basic_type =
     between (skip_garbage << char '(') (skip_garbage << char ')') type_parser
-    <|> (skip_garbage << word1 <$> fun ty -> Ast.Type ty)
-    <|> (skip_garbage << char '_' <$> fun _ -> Ast.WildCard)
+    <|> (skip_garbage << string "int" <$> fun _ -> Ast.TInteger)
+    <|> (skip_garbage << string "unit" <$> fun _ -> Ast.TUnit)
+    <|> (skip_garbage << string "float" <$> fun _ -> Ast.TFloat)
+    <|> (skip_garbage << string "bool" <$> fun _ -> Ast.TBool)
+    <|> (skip_garbage << string "string" <$> fun _ -> Ast.TString)
   and opt_fn = opt (skip_garbage << string "->" << type_parser) in
   let full_parser = seq basic_type opt_fn in
   ( full_parser <$> fun (t1, (opt_t2 : Ast.ty option)) ->
-    Option.fold ~none:t1 ~some:(fun t2 -> Ast.Function (t1, t2)) opt_t2 )
+    Option.fold ~none:t1 ~some:(fun t2 -> Ast.TFunction (t1, t2)) opt_t2 )
     input
 
 let octal_digit = sat (fun o -> '0' <= o && o <= '7')
@@ -104,7 +108,16 @@ let infix_ident =
   infix |> between (skip_garbage << char '(') (skip_garbage << char ')')
 
 let ident = ident_parser <|> infix_ident
-let fun_params = many1 ident
+
+let fun_params =
+  many1
+    (ident
+    <$> (fun i -> { ident = i; ty = None })
+    <|> ( seq
+            (skip_garbage << char '(' << ident)
+            (skip_garbage << char ':' << skip_garbage << type_parser
+            >> (skip_garbage << char ')'))
+        <$> fun (i, ty) -> { ident = i; ty = Some ty } ))
 
 let fun_parser expr =
   seq (string "fun" << fun_params >> (skip_garbage << string "->")) expr

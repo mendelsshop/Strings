@@ -7,7 +7,7 @@ type ast2 =
   | Ident of ident
   | InfixApplication of { infix : ident; arguements : ast2 * ast2 }
   | Application of { func : ast2; arguement : ast2 }
-  | Function of { parameter : ident option; abstraction : ast2 }
+  | Function of { parameter : typed_ident option; abstraction : ast2 }
   | If of { condition : ast2; consequent : ast2; alternative : ast2 }
   | Let of { name : ident; e1 : ast2; e2 : ast2 }
 
@@ -68,7 +68,7 @@ let rec ast_to_string ast =
       "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Function { parameter; abstraction } ->
       "fun "
-      ^ Option.value parameter ~default:""
+      ^ Option.fold parameter ~some:(fun p -> p.ident) ~none:""
       ^ "-> " ^ ast_to_string abstraction
 
 let print_top_level tl =

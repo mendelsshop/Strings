@@ -1,6 +1,6 @@
-type ty = Function of (ty * ty) | Type of string | WildCard
-type 'a typed_opt = { ty : ty option; value : 'a }
 type ident = string
+type ty = TFunction of (ty * ty) | TUnit | TBool | TInteger | TFloat | TString
+type typed_ident = { ident : ident; ty : ty option }
 
 type ast =
   | Float of float
@@ -9,7 +9,7 @@ type ast =
   | Ident of ident
   | Application of { func : ast; arguement : ast }
   | InfixApplication of { infix : ident; arguements : ast * ast }
-  | Function of { parameters : ident list; abstraction : ast }
+  | Function of { parameters : typed_ident list; abstraction : ast }
   | If of { condition : ast; consequent : ast; alternative : ast }
   | Let of { name : ident; e1 : ast; e2 : ast }
 
@@ -18,9 +18,12 @@ type program = top_level list
 
 let rec type_to_string ty =
   match ty with
-  | WildCard -> "_"
-  | Type t -> t
-  | Function (t1, t2) ->
+  | TUnit -> "()"
+  | TBool -> "bool"
+  | TInteger -> "int"
+  | TString -> "string"
+  | TFloat -> "float"
+  | TFunction (t1, t2) ->
       "(" ^ type_to_string t1 ^ ") -> (" ^ type_to_string t2 ^ ")"
 
 let list_to_string = String.concat ""
@@ -41,7 +44,9 @@ let rec ast_to_string ast =
   | Let { name; e1; e2 } ->
       "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Function { parameters; abstraction } ->
-      "fun " ^ list_to_string parameters ^ "->" ^ ast_to_string abstraction
+      "fun "
+      ^ list_to_string (List.map (fun p -> p.ident) parameters)
+      ^ "->" ^ ast_to_string abstraction
 
 let print_program program =
   String.concat "\n"
