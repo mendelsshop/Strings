@@ -71,11 +71,10 @@ let rec ast_to_string ast =
       ^ Option.value parameter ~default:""
       ^ "-> " ^ ast_to_string abstraction
 
+let print_top_level tl =
+  match tl with
+  | Bind { name; value } -> name ^ " = " ^ ast_to_string value ^ "\n"
+  | PrintString s -> s
+
 let print_program program =
-  String.concat "\n"
-    (List.map
-       (fun exp ->
-         match exp with
-         | Bind { name; value } -> name ^ " = " ^ ast_to_string value ^ "\n"
-         | PrintString s -> s)
-       program)
+  String.concat "\n" (List.map print_top_level program)

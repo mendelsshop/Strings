@@ -81,8 +81,7 @@ let string_parser1 =
   Ast.PrintString (implode (List.concat_map Fun.id ss))
 
 let string_parser =
-  many string_parser <$> fun ss ->
-  Ast.String (implode (List.concat_map Fun.id ss))
+  many string_parser <$> fun ss -> implode (List.concat_map Fun.id ss)
 
 let ident_parser =
   check
@@ -164,13 +163,19 @@ let float =
 
 let rec expr input =
   let constant =
-    float <|> number <|> (char '\"' << string_parser >> char '\"')
+    float <|> number
+    (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
+    <|> (char '\"'
+        << sat (fun c -> c <> '\n')
+        >>= (fun c ->
+              string_parser <$> fun str -> Ast.String (string_of_char c ^ str))
+        >> char '\"')
   in
   let ident = ident <$> fun i -> Ast.Ident i in
   let parens =
     expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
   in
-  let atom = parens <|> (skip_garbage << (constant <|> ident)) in
+  let atom = parens <|> (skip_garbage << constant) <|> ident in
   let basic_forms =
     let_expr_parser expr <|> if_then_else expr <|> fun_parser expr <|> atom
   in
@@ -200,6 +205,7 @@ let parser =
     (string_parser1
     <$> (fun x -> x :: [])
     <|> (char '\"'
+        (* top level has to be attempted before top level let b/c let will parse let .. in as let with the remaining in left unparsed *)
         << many (top_level <|> let_parser expr)
         >> (skip_garbage << char '\"')))
   <$> List.concat

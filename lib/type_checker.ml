@@ -1,26 +1,33 @@
 open Typed_ast
+module MetaS = Set.Make (Int)
 
-let ( >>= ) (t : 's * 'm -> ('a * ('s * 'm)) option)
-    (f : 'a -> 's * 'm -> ('b * ('s * 'm)) option) (s : 's * 'm) :
-    ('b * ('s * 'm)) option =
-  Option.bind (t s) (fun (a, s') -> f a s')
+let ( >>= ) (t : 's * 'm -> ('a * ('s * 'm), string) result)
+    (f : 'a -> 's * 'm -> ('b * ('s * 'm), string) result) (s : 's * 'm) :
+    ('b * ('s * 'm), string) result =
+  Result.bind (t s) (fun (a, s') -> f a s')
 
-let bind = ( >>= )
-let return a (s, m) = Some (a, (s, m))
-let new_meta (s, m) = Some (Meta m, (s, m + 1))
-let insert e (s, m) = Some ((), (e :: s, m))
+let return a (s, m) = Ok (a, (s, m))
 
-let remove_fst (s, m) =
-  Some ((), match s with [] -> (s, m) | _ :: s' -> (s', m))
+let ( <$> ) (t : 's * 'm -> ('a * ('s * 'm), string) result) (f : 'a -> 'b)
+    (s : 's * 'm) : ('b * ('s * 'm), string) result =
+  Result.map (fun (a, s') -> (f a, s')) (t s)
+
+let new_meta (s, m) = Ok (Meta m, (s, m + 1))
+let insert e (s, m) = Ok ((), (e :: s, m))
+let remove_fst (s, m) = Ok ((), match s with [] -> (s, m) | _ :: s' -> (s', m))
 
 (* scoped insert allows temporary insertion, but the meta variable created are not temporary *)
 let scoped_insert e f (s, m) =
-  Option.map
+  Result.map
     (fun (e', (_, m')) -> (e', (s, m')))
-    (((fun (s, m) -> Option.some ((), (e :: s, m))) >>= fun _ -> f ()) (s, m))
+    (((fun (s, m) -> Ok ((), (e :: s, m))) >>= fun _ -> f ()) (s, m))
 
-let get v (s, m) = Option.map (fun r -> (r, (s, m))) (List.assoc_opt v s)
+let get v (s, m) =
+  Result.map
+    (fun r -> (r, (s, m)))
+    (List.assoc_opt v s |> Option.to_result ~none:("unbound variable " ^ v))
 
+(* let typify exp context = typify exp (context, 0) *)
 let rec typify expr =
   match expr with
   | Ast2.Int i -> return (Int { ty = TInteger; value = i })
@@ -65,12 +72,10 @@ let rec typify expr =
              parameter = { ident = "()"; ty = TUnit };
              ty = TFunction (TUnit, a_ty);
            })
-  | Ast2.Let { name; e1; e2 } ->
+  | Ast2.Let { e1; e2; name } ->
       typify e1 >>= fun e1 ->
       scoped_insert (name, type_of e1) (fun () -> typify e2) >>= fun e2 ->
-      return (Let { name; ty = type_of e1; e1; e2 })
-
-(* let typify exp context = typify exp (context, 0) *)
+      return (Let { name; ty = type_of e2; e1; e2 })
 
 type constraints = (ty * ty) list
 
@@ -96,7 +101,6 @@ let rec generate_constraints expr =
   | InfixApplication { ty; arguements = e1, e2; infix = { ty = f_ty; _ } } ->
       [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
       @ generate_constraints e1 @ generate_constraints e2
-  (* | Let { value; _ } -> generate_constraints value *)
   | Let _ ->
       print_endline "let polymorphism not supported yet";
       exit 1
@@ -110,20 +114,23 @@ let rec mini_sub (m, s_ty) ty =
 
 let rec unify constraints =
   match constraints with
-  | [] -> Some []
+  | [] -> Ok []
   | (t1, t2) :: constraints -> (
       match (t1, t2) with
       | t1, t2 when t1 = t2 -> unify constraints
       | TFunction (t1, t2), TFunction (t3, t4) ->
           unify ((t1, t3) :: (t2, t4) :: constraints)
       | Meta m, t | t, Meta m ->
-          Option.map
+          Result.map
             (fun subs -> (m, t) :: subs)
             (unify
                (List.map
                   (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
                   constraints))
-      | _ -> None)
+      | t1, t2 ->
+          Error
+            ("could not unify" ^ type_to_string t1 ^ " and " ^ type_to_string t2)
+      )
 
 let rec subs substitutions ty =
   match substitutions with
@@ -160,7 +167,6 @@ let rec substitute substitutions expr =
           arguements = (substitute e1, substitute e2);
           ty;
         }
-  (* | Let { name; value; _ } -> Let { name; value = substitute value; ty } *)
   | Let _ ->
       print_endline "let polymorphism not supported yet";
       exit 1
@@ -169,17 +175,9 @@ let rec substitute substitutions expr =
 let infer expr =
   typify expr >>= fun typed_expr s ->
   let constraints = generate_constraints typed_expr in
-  Option.map
+  Result.map
     (fun substitutions -> (substitute substitutions typed_expr, s))
     (unify constraints)
-
-(* List.fold_left *)
-(*   (fun ((ctx, i), str) x -> *)
-(*     let infered, (ctx', i') = *)
-(*       Option.get (Strings.Type_checker.infer x (ctx, i)) *)
-(*     in *)
-(*     ((ctx', i'), str ^ Strings.Typed_ast.ast_to_string infered ^ "\n")) *)
-(*   (([], 0), "") *)
 
 let infer tl =
   match tl with

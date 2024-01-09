@@ -4,7 +4,7 @@ let () =
   let open Alcotest in
   let parse_result =
     string_parser [ 'f'; 'o'; 'o' ] |> function
-    | Some (Strings.Ast.String s, []) -> Some s
+    | Some (s, []) -> Some s
     | _ -> Some ""
   in
   let actual = Some "foo" in
