@@ -17,6 +17,17 @@ let () =
          Strings.Ast2.ast_to_ast2 t |> Strings.Type_checker.infer
          |> Result.fold
               ~error:(fun e -> "not type checked: " ^ e)
-              ~ok:(fun typed -> typed |> fst |> Strings.Typed_ast.print_program))
+              ~ok:(fun typed ->
+                let typed = fst typed in
+                Strings.Eval.eval typed
+                  [
+                    ( "print",
+                      Function
+                        (fun x ->
+                          Strings.Eval_ast.print_ast x |> print_endline;
+                          Unit) );
+                  ]
+                |> fst;
+                "evaled"))
        parsed)
   |> print_endline

@@ -254,7 +254,8 @@ let infer tls =
     (fun i tl ->
       i >>= fun tls ->
       infer tl >>= fun tl' -> return (tls @ [ tl' ]))
-    (return []) tls ([], 0)
+    (return []) tls
+    ([ ("print", TPoly ([ 1 ], TFunction (Meta 1, TUnit))) ], 0)
 
 let print_constraints constraints =
   List.fold_left
