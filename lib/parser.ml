@@ -1,5 +1,6 @@
 open AMPCL
 open Ast
+open Types
 
 let key_words = [ "in"; "let"; "if"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
@@ -15,15 +16,15 @@ let skip_garbage =
 let rec type_parser input =
   let basic_type =
     between (skip_garbage << char '(') (skip_garbage << char ')') type_parser
-    <|> (skip_garbage << string "int" <$> fun _ -> Ast.TInteger)
-    <|> (skip_garbage << string "unit" <$> fun _ -> Ast.TUnit)
-    <|> (skip_garbage << string "float" <$> fun _ -> Ast.TFloat)
-    <|> (skip_garbage << string "bool" <$> fun _ -> Ast.TBool)
-    <|> (skip_garbage << string "string" <$> fun _ -> Ast.TString)
+    <|> (skip_garbage << string "int" <$> fun _ -> TInteger)
+    <|> (skip_garbage << string "unit" <$> fun _ -> TUnit)
+    <|> (skip_garbage << string "float" <$> fun _ -> TFloat)
+    <|> (skip_garbage << string "bool" <$> fun _ -> TBool)
+    <|> (skip_garbage << string "string" <$> fun _ -> TString)
   and opt_fn = opt (skip_garbage << string "->" << type_parser) in
   let full_parser = seq basic_type opt_fn in
-  ( full_parser <$> fun (t1, (opt_t2 : Ast.ty option)) ->
-    Option.fold ~none:t1 ~some:(fun t2 -> Ast.TFunction (t1, t2)) opt_t2 )
+  ( full_parser <$> fun (t1, (opt_t2 : ty option)) ->
+    Option.fold ~none:t1 ~some:(fun t2 -> TFunction (t1, t2)) opt_t2 )
     input
 
 let octal_digit = sat (fun o -> '0' <= o && o <= '7')
@@ -120,38 +121,67 @@ let fun_params =
         <$> fun (i, ty) -> { ident = i; ty = Some ty } ))
 
 let fun_parser expr =
-  seq (string "fun" << fun_params >> (skip_garbage << string "->")) expr
+  seq (skip_garbage << string "fun" << fun_params >> (skip_garbage << string "->")) expr
   <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
 
 let let_parser expr =
-  skip_garbage << string "let"
-  << seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
-  <$> fun (name, (params, exp)) ->
-  Ast.Bind
-    {
-      name;
-      value =
-        (match params with
-        | Some params -> Ast.Function { parameters = params; abstraction = exp }
-        | None -> exp);
-    }
+  skip_garbage << string "let" << skip_garbage
+  << seq
+       (opt (string "rec"))
+       (seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr))))
+  <$> fun (is_rec, (name, (params, exp))) ->
+  if Option.is_some is_rec then
+    RecBind
+      {
+        name;
+        value =
+          (match params with
+          | Some params ->
+              Ast.Function { parameters = params; abstraction = exp }
+          | None -> exp);
+      }
+  else
+    Bind
+      {
+        name;
+        value =
+          (match params with
+          | Some params ->
+              Ast.Function { parameters = params; abstraction = exp }
+          | None -> exp);
+      }
 
 let let_expr_parser expr =
-  skip_garbage << string "let"
-  << seq ident
-       (seq (opt fun_params)
-          (skip_garbage
-          << (char '=' << seq expr (skip_garbage << string "in" << expr))))
-  <$> fun (name, (params, (e1, e2))) ->
-  Ast.Let
-    {
-      name;
-      e1 =
-        (match params with
-        | Some params -> Ast.Function { parameters = params; abstraction = e1 }
-        | None -> e1);
-      e2;
-    }
+  skip_garbage << string "let" << skip_garbage
+  << seq
+       (opt (string "rec"))
+       (seq ident
+          (seq (opt fun_params)
+             (skip_garbage
+             << (char '=' << seq expr (skip_garbage << string "in" << expr)))))
+  <$> fun (is_rec, (name, (params, (e1, e2)))) ->
+  if Option.is_some is_rec then
+    LetRec
+      {
+        name;
+        e1 =
+          (match params with
+          | Some params ->
+              Ast.Function { parameters = params; abstraction = e1 }
+          | None -> e1);
+        e2;
+      }
+  else
+    Let
+      {
+        name;
+        e1 =
+          (match params with
+          | Some params ->
+              Ast.Function { parameters = params; abstraction = e1 }
+          | None -> e1);
+        e2;
+      }
 
 let if_then_else expr =
   seq

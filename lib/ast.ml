@@ -1,5 +1,6 @@
+open Types
+
 type ident = string
-type ty = TFunction of (ty * ty) | TUnit | TBool | TInteger | TFloat | TString
 type typed_ident = { ident : ident; ty : ty option }
 
 type ast =
@@ -12,19 +13,14 @@ type ast =
   | Function of { parameters : typed_ident list; abstraction : ast }
   | If of { condition : ast; consequent : ast; alternative : ast }
   | Let of { name : ident; e1 : ast; e2 : ast }
+  | LetRec of { name : ident; e1 : ast; e2 : ast }
 
-type top_level = Bind of { name : ident; value : ast } | PrintString of string
+type top_level =
+  | Bind of { name : ident; value : ast }
+  | RecBind of { name : ident; value : ast }
+  | PrintString of string
+
 type program = top_level list
-
-let rec type_to_string ty =
-  match ty with
-  | TUnit -> "()"
-  | TBool -> "bool"
-  | TInteger -> "int"
-  | TString -> "string"
-  | TFloat -> "float"
-  | TFunction (t1, t2) ->
-      "(" ^ type_to_string t1 ^ ") -> (" ^ type_to_string t2 ^ ")"
 
 let list_to_string = String.concat ""
 
@@ -41,6 +37,8 @@ let rec ast_to_string ast =
   | If { condition; consequent; alternative } ->
       "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
       ^ " else " ^ ast_to_string alternative
+  | LetRec { name; e1; e2 } ->
+      "let rec  " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Let { name; e1; e2 } ->
       "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Function { parameters; abstraction } ->
@@ -54,5 +52,7 @@ let print_program program =
        (fun exp ->
          match exp with
          | Bind { name; value } -> name ^ " = " ^ ast_to_string value ^ "\n"
+         | RecBind { name; value } ->
+             "let rec " ^ name ^ " = " ^ ast_to_string value ^ "\n"
          | PrintString s -> s)
        program)

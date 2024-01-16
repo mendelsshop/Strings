@@ -1,4 +1,5 @@
 open Typed_ast
+open Types
 module MetaS = Set.Make (Int)
 
 let ( >>= ) (t : 's * 'm -> ('a * ('s * 'm), string) result)
@@ -7,6 +8,7 @@ let ( >>= ) (t : 's * 'm -> ('a * ('s * 'm), string) result)
   Result.bind (t s) (fun (a, s') -> f a s')
 
 let return a (s, m) = Ok (a, (s, m))
+let zero a _ = Error a
 
 let ( <$> ) (t : 's * 'm -> ('a * ('s * 'm), string) result) (f : 'a -> 'b)
     (s : 's * 'm) : ('b * ('s * 'm), string) result =
@@ -67,10 +69,8 @@ let rec generate_constraints expr =
   | Function { parameter = { ty = p_ty; _ }; ty; abstraction } ->
       [ (ty, TFunction (p_ty, type_of abstraction)) ]
       @ generate_constraints abstraction
-  | InfixApplication { ty; arguements = e1, e2; infix = { ty = f_ty; _ } } ->
-      [ (f_ty, TFunction (type_of e1, TFunction (type_of e2, ty))) ]
-      @ generate_constraints e1 @ generate_constraints e2
   | Let { e1; e2; _ } -> generate_constraints e1 @ generate_constraints e2
+  | Rec { expr; _ } -> generate_constraints expr
   | Poly { e; _ } -> generate_constraints e
 
 let rec mini_sub (m, s_ty) ty =
@@ -128,13 +128,8 @@ let rec substitute substitutions expr =
   | Application { func; arguement; _ } ->
       Application
         { func = substitute func; arguement = substitute arguement; ty }
-  | InfixApplication { infix = { ident; ty = i_ty }; arguements = e1, e2; _ } ->
-      InfixApplication
-        {
-          infix = { ident; ty = subs substitutions i_ty };
-          arguements = (substitute e1, substitute e2);
-          ty;
-        }
+  (* | LetRec { name; e1; e2; _ } -> *)
+  (*     LetRec { name; e1 = substitute e1; e2 = substitute e2; ty } *)
   | Let { name; e1; e2; _ } ->
       Let { name; e1 = substitute e1; e2 = substitute e2; ty }
   (* TODO: subsitite non polymorphic type variables in poly *)
@@ -167,14 +162,13 @@ let generalize expr s =
       (Poly { e = exp; metas = MetaS.to_list fv }, s))
     (unify (generate_constraints expr))
 
-let rec convert_ty (ty : Ast.ty) =
-  match ty with
-  | TBool -> TBool
-  | TString -> TString
-  | TUnit -> TUnit
-  | TFloat -> TFloat
-  | TInteger -> TInteger
-  | TFunction (t1, t2) -> TFunction (convert_ty t1, convert_ty t2)
+let rec_no_func expr =
+  match expr with
+  | Ast2.Function _ -> return expr
+  | _ ->
+      "expression " ^ Ast2.ast_to_string expr
+      ^ " is invalid on left hand side of let rec"
+      |> zero
 
 let rec typify expr =
   match expr with
@@ -187,9 +181,7 @@ let rec typify expr =
       (* TODO: make ident type be adt of unit, wildcard or string if paramater = some unit insert follow parameter = non case *)
   | Ast2.Function { parameter = Some { ident; ty = ty_opt }; abstraction } ->
       new_meta >>= fun f_ty ->
-      (match ty_opt with
-      | None -> new_meta
-      | Some ty -> convert_ty ty |> return)
+      (match ty_opt with None -> new_meta | Some ty -> return ty)
       >>= fun a_ty ->
       scoped_insert (ident, a_ty) (fun () ->
           typify abstraction >>= fun abstraction ->
@@ -206,15 +198,6 @@ let rec typify expr =
       typify func >>= fun func ->
       typify arguement >>= fun arguement ->
       new_meta >>= fun ty -> return (Application { func; arguement; ty })
-  | Ast2.InfixApplication { infix; arguements = e1, e2 } ->
-      (* 1: we should get the lookup/use/have the type for infix which leads to 2: we should remove infix not from ast and make it expand to regular application. *)
-      typify e1 >>= fun e1 ->
-      typify e2 >>= fun e2 ->
-      get infix >>= fun f_ty ->
-      new_meta >>= fun ty ->
-      return
-        (InfixApplication
-           { infix = { ident = infix; ty = f_ty }; arguements = (e1, e2); ty })
   | Ast2.Function { parameter = None; abstraction } ->
       typify abstraction >>= fun abstraction ->
       new_meta >>= fun a_ty ->
@@ -230,6 +213,20 @@ let rec typify expr =
       generalize e1 >>= fun e1 ->
       scoped_insert (name, type_of e1) (fun () -> typify e2) >>= fun e2 ->
       return (Let { name; ty = type_of e2; e1; e2 })
+  | Ast2.LetRec { e1; e2; name } ->
+      rec_no_func e1 >>= fun e1 ->
+      new_meta >>= fun e1_ty ->
+      scoped_insert (name, e1_ty) (fun () -> typify e1) >>= fun e1 ->
+      generalize e1 >>= fun e1 ->
+      scoped_insert (name, type_of e1) (fun () -> typify e2) >>= fun e2 ->
+      return
+        (Let
+           {
+             name;
+             ty = type_of e2;
+             e1 = Rec { ty = type_of e1; expr = e1; name };
+             e2;
+           })
 
 let infer expr =
   typify expr >>= fun typed_expr s ->
@@ -238,8 +235,27 @@ let infer expr =
     (fun substitutions -> (substitute substitutions typed_expr, s))
     (unify constraints)
 
+let inspect (s, m) =
+  String.concat "," (List.map (fun (b, ty) -> b ^ ":" ^ type_to_string ty) s)
+  |> print_endline;
+  return () (s, m)
+
 let infer tl =
   match tl with
+  | Ast2.RecBind { name; value } ->
+      rec_no_func value >>= fun value ->
+      (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
+      new_meta >>= fun value_ty ->
+      scoped_insert (name, value_ty) (fun () -> infer value) >>= fun value' ->
+      generalize value' >>= fun value' ->
+      insert (name, type_of value') >>= fun () ->
+      return
+        (Bind
+           {
+             name;
+             value = Rec { expr = value'; ty = type_of value'; name };
+             ty = type_of value';
+           })
   | Ast2.Bind { name; value } ->
       (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
       infer value >>= fun value' ->
@@ -255,7 +271,13 @@ let infer tls =
       i >>= fun tls ->
       infer tl >>= fun tl' -> return (tls @ [ tl' ]))
     (return []) tls
-    ([ ("print", TPoly ([ 1 ], TFunction (Meta 1, TUnit))) ], 0)
+    ( [
+        ("print", TPoly ([ 1 ], TFunction (Meta 1, TUnit)));
+        ("=", TPoly ([ 1 ], TFunction (Meta 1, TFunction (Meta 1, TBool))));
+        ("-", TFunction (TInteger, TFunction (TInteger, TInteger)));
+        ("*", TFunction (TInteger, TFunction (TInteger, TInteger)));
+      ],
+      0 )
 
 let print_constraints constraints =
   List.fold_left

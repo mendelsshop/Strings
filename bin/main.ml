@@ -19,15 +19,8 @@ let () =
               ~error:(fun e -> "not type checked: " ^ e)
               ~ok:(fun typed ->
                 let typed = fst typed in
-                Strings.Eval.eval typed
-                  [
-                    ( "print",
-                      Function
-                        (fun x ->
-                          Strings.Eval_ast.print_ast x |> print_endline;
-                          Unit) );
-                  ]
-                |> fst;
+                Strings.Typed_ast.print_program typed |> print_string;
+                Strings.Eval.eval typed Strings.Eval.env |> fst;
                 "evaled"))
        parsed)
   |> print_endline

@@ -6,6 +6,7 @@ type eval_expr =
   | Float of float
   | String of string
   | Function of (eval_expr -> eval_expr)
+  | Rec of (eval_expr -> eval_expr)
   | Unit
 
 let print_ast expr =
@@ -16,3 +17,4 @@ let print_ast expr =
   | Float f -> string_of_float f
   | String s -> s
   | Function _ -> "function"
+  | Rec _ -> "rec"

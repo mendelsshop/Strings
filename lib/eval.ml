@@ -17,6 +17,10 @@ let map = ( <$> )
 let get e s = (List.assoc e s, s)
 let insert v s = v :: s |> return ()
 
+let error msg =
+  print_endline msg;
+  exit 1
+
 (* needed for let in *)
 let scoped_insert v f s =
   let _, s' = insert v s in
@@ -24,21 +28,14 @@ let scoped_insert v f s =
   (e, s)
 
 let apply f a =
-  match f with
-  | Function f' -> f' a
-  | _ ->
-      print_endline "cannot apply non function";
-      exit 1
+  match f with Function f' -> f' a | _ -> error "cannot apply non function"
 
-let get_bool b =
-  match b with
-  | Bool b -> b
-  | _ ->
-      print_endline "not bool";
-      exit 1
+let get_bool b = match b with Bool b -> b | _ -> error "not bool"
+let get_int n = match n with Int n -> n | _ -> error "not int"
 
 let rec eval (expr : typed_ast) =
   match expr with
+  | Rec _ -> error "rec form not supported yet"
   | Unit _ -> return Unit
   | Float { value; _ } -> Float value |> return
   | Int { value; _ } -> Int value |> return
@@ -56,10 +53,6 @@ let rec eval (expr : typed_ast) =
       eval func >>= fun func' ->
       eval arguement <$> fun arguement' -> apply func' arguement'
   | Poly { e; _ } -> eval e
-  | InfixApplication { infix = { ident; _ }; arguements = e1, e2; _ } ->
-      get ident >>= fun infix ->
-      eval e1 >>= fun e1' ->
-      eval e2 <$> fun e2' -> apply infix e1' |> apply e2'
   | If { condition; consequent; alternative; _ } ->
       eval condition >>= fun cond' ->
       if get_bool cond' then eval consequent else eval alternative
@@ -70,6 +63,18 @@ let eval expr =
   | PrintString s ->
       print_string s;
       return ()
+
+let env =
+  [
+    ( "print",
+      Function
+        (fun x ->
+          print_ast x |> print_endline;
+          Unit) );
+    ("=", Function (fun x -> Function (fun y -> Bool (x = y))));
+    ("*", Function (fun x -> Function (fun y -> Int (get_int x * get_int y))));
+    ("-", Function (fun x -> Function (fun y -> Int (get_int x - get_int y))));
+  ]
 
 let eval tls =
   List.fold_left (fun i tl -> i >>= fun _ -> eval tl) (return ()) tls
