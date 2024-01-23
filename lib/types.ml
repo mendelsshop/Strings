@@ -8,7 +8,6 @@ type ty =
   | TString
   | TPoly of int list * ty
 
-
 let rec type_to_string ty =
   match ty with
   | TUnit -> "()"

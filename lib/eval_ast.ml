@@ -1,13 +1,11 @@
-(* open Typed_ast *)
-
 type eval_expr =
   | Int of int
   | Bool of bool
   | Float of float
   | String of string
-  | Function of (eval_expr -> eval_expr)
-  | Rec of (eval_expr -> eval_expr)
+  | Function of ((string * eval_expr) list -> eval_expr -> eval_expr)
   | Unit
+  | Rec of { name : string; expr : eval_expr }
 
 let print_ast expr =
   match expr with

@@ -121,7 +121,9 @@ let fun_params =
         <$> fun (i, ty) -> { ident = i; ty = Some ty } ))
 
 let fun_parser expr =
-  seq (skip_garbage << string "fun" << fun_params >> (skip_garbage << string "->")) expr
+  seq
+    (skip_garbage << string "fun" << fun_params >> (skip_garbage << string "->"))
+    expr
   <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
 
 let let_parser expr =
