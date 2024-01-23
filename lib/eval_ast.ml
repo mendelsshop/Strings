@@ -3,7 +3,9 @@ type eval_expr =
   | Bool of bool
   | Float of float
   | String of string
-  | Function of ((string * eval_expr) list -> eval_expr -> eval_expr)
+  | Function of
+      ((string * eval_expr) list
+      * ((string * eval_expr) list -> eval_expr -> eval_expr))
   | Unit
   | Rec of { name : string; expr : eval_expr }
 
