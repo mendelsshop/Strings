@@ -7,6 +7,8 @@ type ty =
   | TFloat
   | TString
   | TPoly of int list * ty
+  | TRecord of (string * ty) list
+  | TVariant of (string * ty) list
 
 let rec type_to_string ty =
   match ty with
@@ -22,3 +24,15 @@ let rec type_to_string ty =
       "∀"
       ^ String.concat "," (List.map string_of_int ms)
       ^ "." ^ type_to_string t
+  | TRecord fields ->
+      "{ "
+      ^ String.concat " "
+          (List.map
+             (fun (field, ty) -> field ^ ": " ^ type_to_string ty)
+             fields)
+      ^ " }"
+  | TVariant fields ->
+      String.concat " "
+        (List.map
+           (fun (field, ty) -> "| " ^ field ^ "of " ^ type_to_string ty)
+           fields)

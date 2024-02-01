@@ -2,7 +2,7 @@ open AMPCL
 open Ast
 open Types
 
-let key_words = [ "in"; "let"; "if"; "then"; "else"; "fun" ]
+let key_words = [ "type"; "in"; "let"; "if"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -93,6 +93,35 @@ let ident_parser =
     (fun x -> not (List.mem x key_words))
     ( skip_garbage << seq letter (many (alphanum <|> char '_'))
     <$> fun (fst, snd) -> implode (fst :: snd) )
+
+let record_type_parser =
+  let record = seq ident_parser (skip_garbage << char ':' << type_parser) in
+  let record_mid = record >> (skip_garbage << char ';') in
+  skip_garbage << char '{'
+  << (many1 record_mid
+     <|> (seq (record_mid |> many) record <$> fun (rs, r) -> rs @ [ r ]))
+  >> (skip_garbage << char '}')
+  <$> fun rs -> TRecord rs
+
+let variant_ident_parser =
+  skip_garbage << seq upper (alphanum |> many) <$> fun (c, cs) ->
+  implode (c :: cs)
+
+let variant_type_parser =
+  let variant =
+    seq variant_ident_parser
+      (string "of" << (record_type_parser <|> type_parser))
+  in
+  let variant_with_sep f = skip_garbage << char '|' |> f << variant in
+  seq (variant_with_sep opt) (variant_with_sep Fun.id |> many)
+  <$> fun (v, vs) -> TVariant (v :: vs)
+
+let type_def_parser =
+  seq
+    (string "type" << skip_garbage << ident_parser)
+    (skip_garbage << char '='
+    << (variant_type_parser <|> record_type_parser <|> type_parser))
+  <$> fun (name, ty) -> Ast.TypeBind { name; ty }
 
 let start_infix_symbols =
   [ '$'; '%'; '&'; '*'; '+'; '-'; '.'; '/'; ':'; '<'; '='; '>'; '@'; '^'; '|' ]
@@ -251,7 +280,7 @@ let parser =
     <$> (fun x -> x :: [])
     <|> (char '\"'
         (* top level has to be attempted before top level let b/c let will parse let .. in as let with the remaining in left unparsed *)
-        << many (top_level <|> let_parser expr)
+        << many (top_level <|> let_parser expr <|> type_def_parser)
         >> (skip_garbage << char '\"')))
   <$> List.concat
 

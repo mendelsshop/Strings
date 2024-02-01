@@ -63,10 +63,11 @@ let rec eval (expr : typed_ast) =
   | If { condition; consequent; alternative; _ } ->
       eval condition >>= fun cond' ->
       eval (if get_bool cond' then consequent else alternative)
-  | Poly {e; _} -> eval e
+  | Poly { e; _ } -> eval e
 
 let eval expr =
   match expr with
+  | TypeBind _ -> return ()
   | Bind { name; value; _ } -> eval value >>= fun value' -> insert (name, value')
   | PrintString s ->
       print_string s;

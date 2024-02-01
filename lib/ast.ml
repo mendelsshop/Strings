@@ -16,6 +16,7 @@ type ast =
   | LetRec of { name : ident; e1 : ast; e2 : ast }
 
 type top_level =
+  | TypeBind of { name : string; ty : ty }
   | Bind of { name : ident; value : ast }
   | RecBind of { name : ident; value : ast }
   | PrintString of string
@@ -51,8 +52,9 @@ let print_program program =
     (List.map
        (fun exp ->
          match exp with
-         | Bind { name; value } -> name ^ " = " ^ ast_to_string value ^ "\n"
+         | Bind { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+         | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
          | RecBind { name; value } ->
-             "let rec " ^ name ^ " = " ^ ast_to_string value ^ "\n"
+             "let rec " ^ name ^ " = " ^ ast_to_string value
          | PrintString s -> s)
        program)

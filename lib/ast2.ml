@@ -1,4 +1,5 @@
 open Ast
+open Types
 
 type ast2 =
   | Float of float
@@ -12,6 +13,7 @@ type ast2 =
   | LetRec of { name : ident; e1 : ast2; e2 : ast2 }
 
 type top_level =
+  | TypeBind of { name : string; ty : ty }
   | Bind of { name : ident; value : ast2 }
   | RecBind of { name : ident; value : ast2 }
   | PrintString of string
@@ -56,6 +58,7 @@ let ast_to_ast2 =
   List.map (fun (tl : Ast.top_level) ->
       match tl with
       | Bind { name; value } -> Bind { name; value = ast_to_ast2 value }
+      | TypeBind { name; ty } -> TypeBind { name; ty }
       | RecBind { name; value } -> RecBind { name; value = ast_to_ast2 value }
       | PrintString s -> PrintString s)
 
@@ -81,9 +84,9 @@ let rec ast_to_string ast =
 
 let print_top_level tl =
   match tl with
-  | Bind { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value ^ "\n"
-  | RecBind { name; value } ->
-      "let rec " ^ name ^ " = " ^ ast_to_string value ^ "\n"
+  | Bind { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+  | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
+  | RecBind { name; value } -> "let rec " ^ name ^ " = " ^ ast_to_string value
   | PrintString s -> s
 
 let print_program program =

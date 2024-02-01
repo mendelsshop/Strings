@@ -23,6 +23,7 @@ type typed_ast =
 
 type top_level =
   | Bind of { ty : ty; name : ident; value : typed_ast }
+  | TypeBind of { name : string; ty : ty }
   | PrintString of string
 
 type program = top_level list
@@ -69,6 +70,7 @@ let print_program program =
     (List.map
        (fun exp ->
          match exp with
+         | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
          | Bind { name; value; ty } ->
              "let " ^ name ^ " : " ^ type_to_string ty ^ " = "
              ^ ast_to_string value
