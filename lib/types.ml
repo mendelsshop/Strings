@@ -26,13 +26,13 @@ let rec type_to_string ty =
       ^ "." ^ type_to_string t
   | TRecord fields ->
       "{ "
-      ^ String.concat " "
+      ^ String.concat "; "
           (List.map
              (fun (field, ty) -> field ^ ": " ^ type_to_string ty)
              fields)
       ^ " }"
   | TVariant fields ->
-      String.concat " "
+      String.concat " | "
         (List.map
-           (fun (field, ty) -> "| " ^ field ^ "of " ^ type_to_string ty)
+           (fun (field, ty) -> field ^ " of " ^ type_to_string ty)
            fields)

@@ -256,7 +256,7 @@ let infer tl =
              value = Rec { expr = value'; ty = type_of value'; name };
              ty = type_of value';
            })
-      | Ast2.TypeBind {name; ty} ->  TypeBind {name;ty} |> return
+  | Ast2.TypeBind { name; ty } -> TypeBind { name; ty } |> return
   | Ast2.Bind { name; value } ->
       (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
       infer value >>= fun value' ->

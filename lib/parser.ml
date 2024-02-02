@@ -94,13 +94,19 @@ let ident_parser =
     ( skip_garbage << seq letter (many (alphanum <|> char '_'))
     <$> fun (fst, snd) -> implode (fst :: snd) )
 
+let inspect chars =
+  implode chars |> print_endline;
+  Some ((), chars)
+
 let record_type_parser =
   let record = seq ident_parser (skip_garbage << char ':' << type_parser) in
   let record_mid = record >> (skip_garbage << char ';') in
   skip_garbage << char '{'
   << (many1 record_mid
-     <|> (seq (record_mid |> many) record <$> fun (rs, r) -> rs @ [ r ]))
-  >> (skip_garbage << char '}')
+     >> (skip_garbage << char '}')
+     <|> (seq (many record_mid) record
+         <$> (fun (rs, r) -> rs @ [ r ])
+         >> (skip_garbage >> char '}')))
   <$> fun rs -> TRecord rs
 
 let variant_ident_parser =
@@ -110,7 +116,7 @@ let variant_ident_parser =
 let variant_type_parser =
   let variant =
     seq variant_ident_parser
-      (string "of" << (record_type_parser <|> type_parser))
+      (skip_garbage << string "of" << (record_type_parser <|> type_parser))
   in
   let variant_with_sep f = skip_garbage << char '|' |> f << variant in
   seq (variant_with_sep opt) (variant_with_sep Fun.id |> many)
