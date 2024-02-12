@@ -8,6 +8,7 @@ type ty =
   | TString
   | TPoly of int list * ty
   | TRecord of (string * ty) list
+  | TTuple of ty list
   | TVariant of (string * ty) list
 
 let rec type_to_string ty =
@@ -36,3 +37,5 @@ let rec type_to_string ty =
         (List.map
            (fun (field, ty) -> field ^ " of " ^ type_to_string ty)
            fields)
+  | TTuple fields ->
+      String.concat " * " (List.map (fun ty -> type_to_string ty) fields)

@@ -21,8 +21,12 @@ let rec type_parser input =
     <|> (skip_garbage << string "float" <$> fun _ -> TFloat)
     <|> (skip_garbage << string "bool" <$> fun _ -> TBool)
     <|> (skip_garbage << string "string" <$> fun _ -> TString)
-  and opt_fn = opt (skip_garbage << string "->" << type_parser) in
-  let full_parser = seq basic_type opt_fn in
+  in
+  let tuple_type =
+    skip_garbage << char '*' << basic_type |> many1 |> opt |> seq basic_type <$> function | (ty, None) -> ty | (ty, Some tys) -> TTuple (ty :: tys)
+  in
+  let opt_fn = opt (skip_garbage << string "->" << type_parser) in
+  let full_parser = seq tuple_type opt_fn in
   ( full_parser <$> fun (t1, (opt_t2 : ty option)) ->
     Option.fold ~none:t1 ~some:(fun t2 -> TFunction (t1, t2)) opt_t2 )
     input
@@ -91,7 +95,7 @@ let string_parser =
 let ident_parser =
   check
     (fun x -> not (List.mem x key_words))
-    ( skip_garbage << seq letter (many (alphanum <|> char '_'))
+    ( skip_garbage << seq lower (many (alphanum <|> char '_'))
     <$> fun (fst, snd) -> implode (fst :: snd) )
 
 let inspect chars =
@@ -251,6 +255,27 @@ let rec expr input =
               string_parser <$> fun str -> Ast.String (string_of_char c ^ str))
         >> char '\"')
   in
+  (* TODO: differtiate between tuple and record projection *)
+  let _project =
+    skip_garbage << char '.' << ident
+    <|> (skip_garbage << many1 digit <$> implode)
+    |> seq expr
+  in
+  let _record =
+    let record = seq ident_parser (skip_garbage << char '=' << expr) in
+    let record_mid = record >> (skip_garbage << char ';') in
+    skip_garbage << char '{'
+    << (many1 record_mid
+       >> (skip_garbage << char '}')
+       <|> (seq (many record_mid) record
+           <$> (fun (rs, r) -> rs @ [ r ])
+           >> (skip_garbage >> char '}')))
+  in
+  let _tuple =
+    skip_garbage << char ',' << expr |> many1 |> seq expr <$> fun (x, xs) ->
+    x :: xs
+  in
+  let _variant = seq variant_ident_parser expr in
   let ident = ident <$> fun i -> Ast.Ident i in
   let parens =
     expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
