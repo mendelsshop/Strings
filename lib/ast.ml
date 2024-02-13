@@ -2,10 +2,18 @@ open Types
 
 type ident = string
 type typed_ident = { ident : ident; ty : ty option }
+type 'b field = { name : string; value : 'b }
+type ('a, 'b) projection = { value : 'a; projector : 'b }
 
 type ast =
   | Float of float
   | Int of int
+  (* tuples and record can be made into one form *)
+  | Tuple of ast list
+  | Record of ast field list
+  | TupleAcces of (ast, int) projection
+  | RecordAcces of (ast, string) projection
+  | Constructor of { name : string; value : ast }
   | String of string
   | Ident of ident
   | Application of { func : ast; arguement : ast }
@@ -46,6 +54,19 @@ let rec ast_to_string ast =
       "fun "
       ^ list_to_string (List.map (fun p -> p.ident) parameters)
       ^ "->" ^ ast_to_string abstraction
+  | Tuple tuple ->
+      "( " ^ (tuple |> List.map ast_to_string |> String.concat " , ") ^ " )"
+  | Record record ->
+      "{ "
+      ^ (record
+        |> List.map (function { name; value } ->
+               name ^ ": " ^ ast_to_string value)
+        |> String.concat " , ")
+      ^ " }"
+  | TupleAcces { value; projector } ->
+      ast_to_string value ^ "." ^ string_of_int projector
+  | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
+  | Constructor { name; value } -> name ^ " " ^ ast_to_string value
 
 let print_program program =
   String.concat "\n"

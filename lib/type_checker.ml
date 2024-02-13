@@ -50,6 +50,10 @@ let rec instantiate ty (tmap : ty IntMap.t) =
 
 type constraints = (ty * ty) list
 
+let todo string =
+  print_endline string;
+  exit 1
+
 let rec generate_constraints expr =
   match expr with
   | Int _ | Float _ | String _ | Unit _ | Ident _ -> []
@@ -72,6 +76,7 @@ let rec generate_constraints expr =
   | Let { e1; e2; _ } -> generate_constraints e1 @ generate_constraints e2
   | Rec { expr; _ } -> generate_constraints expr
   | Poly { e; _ } -> generate_constraints e
+  | e -> todo ("generate constraints for " ^ ast_to_string e)
 
 let rec mini_sub (m, s_ty) ty =
   match ty with
@@ -128,8 +133,7 @@ let rec substitute substitutions expr =
   | Application { func; arguement; _ } ->
       Application
         { func = substitute func; arguement = substitute arguement; ty }
-  (* | LetRec { name; e1; e2; _ } -> *)
-  (*     LetRec { name; e1 = substitute e1; e2 = substitute e2; ty } *)
+  | Rec { name; expr; _ } -> Rec { name; expr = substitute expr; ty }
   | Let { name; e1; e2; _ } ->
       Let { name; e1 = substitute e1; e2 = substitute e2; ty }
   (* TODO: subsitite non polymorphic type variables in poly *)
@@ -227,6 +231,31 @@ let rec typify expr =
              e1 = Rec { ty = type_of e1; expr = e1; name };
              e2;
            })
+  | Ast2.Tuple tuple ->
+      new_meta >>= fun ty ->
+      List.fold_right
+        (fun expr tuple ->
+          typify expr >>= fun expr' ->
+          tuple <$> fun tuple' -> expr' :: tuple')
+        tuple (return [])
+      <$> fun pair -> Tuple { pair; ty }
+  | Ast2.Record record ->
+      new_meta >>= fun ty ->
+      List.fold_left
+        (fun tuple (expr : Ast2.ast2 Ast.field) ->
+          typify expr.value >>= fun expr' ->
+          tuple <$> fun tuple' -> { value = expr'; name = expr.name } :: tuple')
+        (return []) record
+      <$> fun fields -> Record { fields; ty }
+  | Ast2.Constructor { name; value } ->
+      new_meta >>= fun ty ->
+      typify value <$> fun value -> Constructor { name; value; ty }
+  | Ast2.RecordAcces { projector; value } ->
+      new_meta >>= fun ty ->
+      typify value <$> fun value -> RecordAcces { projector; value; ty }
+  | Ast2.TupleAcces { projector; value } ->
+      new_meta >>= fun ty ->
+      typify value <$> fun value -> TupleAcces { projector; value; ty }
 
 let infer expr =
   typify expr >>= fun typed_expr s ->

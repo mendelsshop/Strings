@@ -64,6 +64,7 @@ let rec eval (expr : typed_ast) =
       eval condition >>= fun cond' ->
       eval (if get_bool cond' then consequent else alternative)
   | Poly { e; _ } -> eval e
+  | e -> print_endline ("todo: " ^ ast_to_string e); exit 1
 
 let eval expr =
   match expr with

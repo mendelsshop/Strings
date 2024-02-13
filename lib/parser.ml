@@ -15,7 +15,12 @@ let skip_garbage =
 
 let rec type_parser input =
   let basic_type =
-    between (skip_garbage << char '(') (skip_garbage << char ')') type_parser
+    skip_garbage << char '(' << skip_garbage << char ')'
+    <$> (fun _ -> TUnit)
+    <|> between
+          (skip_garbage << char '(')
+          (skip_garbage << char ')')
+          type_parser
     <|> (skip_garbage << string "int" <$> fun _ -> TInteger)
     <|> (skip_garbage << string "unit" <$> fun _ -> TUnit)
     <|> (skip_garbage << string "float" <$> fun _ -> TFloat)
@@ -23,7 +28,10 @@ let rec type_parser input =
     <|> (skip_garbage << string "string" <$> fun _ -> TString)
   in
   let tuple_type =
-    skip_garbage << char '*' << basic_type |> many1 |> opt |> seq basic_type <$> function | (ty, None) -> ty | (ty, Some tys) -> TTuple (ty :: tys)
+    skip_garbage << char '*' << basic_type |> many1 |> opt |> seq basic_type
+    <$> function
+    | ty, None -> ty
+    | ty, Some tys -> TTuple (ty :: tys)
   in
   let opt_fn = opt (skip_garbage << string "->" << type_parser) in
   let full_parser = seq tuple_type opt_fn in
@@ -147,7 +155,10 @@ let infix =
 let infix_ident =
   infix |> between (skip_garbage << char '(') (skip_garbage << char ')')
 
-let ident = ident_parser <|> infix_ident
+let ident =
+  ident_parser <|> infix_ident
+  (* TODO: make unit expression instead of "()"*)
+  <|> (skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ -> "()")
 
 let fun_params =
   many1
@@ -256,13 +267,24 @@ let rec expr input =
         >> char '\"')
   in
   (* TODO: differtiate between tuple and record projection *)
-  let _project =
-    skip_garbage << char '.' << ident
-    <|> (skip_garbage << many1 digit <$> implode)
-    |> seq expr
+  let project expr =
+    skip_garbage << char '.'
+    << (ident_parser <|> infix_ident
+       <|> (skip_garbage << many1 digit <$> implode))
+    |> opt |> seq expr
+    <$> function
+    | value, Some projector ->
+        Option.fold
+          ~none:(RecordAcces { value; projector })
+          ~some:(fun projector -> TupleAcces { value; projector })
+          (int_of_string_opt projector)
+    | value, None -> value
   in
-  let _record =
-    let record = seq ident_parser (skip_garbage << char '=' << expr) in
+  let record =
+    let record =
+      seq ident_parser (skip_garbage << char '=' << expr)
+      <$> fun (name, value) -> { name; value }
+    in
     let record_mid = record >> (skip_garbage << char ';') in
     skip_garbage << char '{'
     << (many1 record_mid
@@ -270,20 +292,27 @@ let rec expr input =
        <|> (seq (many record_mid) record
            <$> (fun (rs, r) -> rs @ [ r ])
            >> (skip_garbage >> char '}')))
+    <$> fun r -> Record r
   in
-  let _tuple =
-    skip_garbage << char ',' << expr |> many1 |> seq expr <$> fun (x, xs) ->
-    x :: xs
+  let tuple expr =
+    skip_garbage << char ',' << expr |> many |> seq expr <$> function
+    | x, [] -> x
+    | x, xs -> Tuple (x :: xs)
   in
-  let _variant = seq variant_ident_parser expr in
+  let variant =
+    seq variant_ident_parser expr <$> fun (name, value) ->
+    Constructor { name; value }
+  in
   let ident = ident <$> fun i -> Ast.Ident i in
   let parens =
     expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
   in
   let atom = parens <|> (skip_garbage << constant) <|> ident in
   let basic_forms =
-    let_expr_parser expr <|> if_then_else expr <|> fun_parser expr <|> atom
+    let_expr_parser expr <|> if_then_else expr <|> fun_parser expr <|> variant
+    <|> record <|> atom
   in
+  let basic_forms = tuple (project basic_forms) in
   let application =
     let rec application_tail func input =
       ( basic_forms >>= fun arguement ->
