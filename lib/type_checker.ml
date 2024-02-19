@@ -48,6 +48,7 @@ let rec instantiate ty (tmap : ty IntMap.t) =
 
 (* let typify exp context = typify exp (context, 0) *)
 
+(* TODO: might need constarints besides for type equaility (more like subtyping) for infering tuple and record projections *)
 type constraints = (ty * ty) list
 
 let todo string =
@@ -75,8 +76,15 @@ let rec generate_constraints expr =
       @ generate_constraints abstraction
   | Let { e1; e2; _ } -> generate_constraints e1 @ generate_constraints e2
   | Rec { expr; _ } -> generate_constraints expr
-  | Poly { e; _ } -> generate_constraints e
-  | e -> todo ("generate constraints for " ^ ast_to_string e)
+  | Poly { e; _ } -> generate_constraints e (* | e -> *)
+  | Record _r -> todo "generate constraints for record"
+  | TupleAcces { ty = _ty; value = _value; _ } ->
+      todo "generate constraints for tuple access"
+  | RecordAcces _ra -> todo "generate constraints for record access"
+  | Constructor _c -> todo "generate constraints for variant constructors"
+  | Tuple t ->
+      (t.ty, TTuple (List.map type_of t.pair))
+      :: List.concat_map generate_constraints t.pair
 
 let rec mini_sub (m, s_ty) ty =
   match ty with
