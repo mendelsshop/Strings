@@ -2,31 +2,44 @@ open Typed_ast
 open Types
 module MetaS = Set.Make (Int)
 
-let ( >>= ) (t : 's * 'm -> ('a * ('s * 'm), string) result)
-    (f : 'a -> 's * 'm -> ('b * ('s * 'm), string) result) (s : 's * 'm) :
-    ('b * ('s * 'm), string) result =
+let ( >>= )
+    (t :
+      (string * ty) list * int * (string * ty) list ->
+      ('a * ((string * ty) list * int * (string * ty) list), string) result)
+    (f :
+      'a ->
+      (string * ty) list * int * (string * ty) list ->
+      ('b * ((string * ty) list * int * (string * ty) list), string) result)
+    (s : (string * ty) list * int * (string * ty) list) :
+    ('b * ((string * ty) list * int * (string * ty) list), string) result =
   Result.bind (t s) (fun (a, s') -> f a s')
 
-let return a (s, m) = Ok (a, (s, m))
+let return a (s, m, t) = Ok (a, (s, m, t))
 let zero a _ = Error a
 
-let ( <$> ) (t : 's * 'm -> ('a * ('s * 'm), string) result) (f : 'a -> 'b)
-    (s : 's * 'm) : ('b * ('s * 'm), string) result =
+let ( <$> )
+    (t :
+      (string * ty) list * int * (string * ty) list ->
+      ('a * ((string * ty) list * int * (string * ty) list), string) result)
+    (f : 'a -> 'b) (s : (string * ty) list * int * (string * ty) list) :
+    ('b * ((string * ty) list * int * (string * ty) list), string) result =
   Result.map (fun (a, s') -> (f a, s')) (t s)
 
-let new_meta (s, m) = Ok (Meta m, (s, m + 1))
-let insert e (s, m) = Ok ((), (e :: s, m))
-let remove_fst (s, m) = Ok ((), match s with [] -> (s, m) | _ :: s' -> (s', m))
+let new_meta (s, m, t) = return (Meta m) (s, m + 1, t)
+let insert e (s, m, t) = return () (e :: s, m, t)
+
+let remove_fst (s, m, t) =
+  return () (match s with [] -> (s, m, t) | _ :: s' -> (s', m, t))
 
 (* scoped insert allows temporary insertion, but the meta variable created are not temporary *)
-let scoped_insert e f (s, m) =
+let scoped_insert e f (s, m, t) =
   Result.map
-    (fun (e', (_, m')) -> (e', (s, m')))
-    (((fun (s, m) -> Ok ((), (e :: s, m))) >>= fun _ -> f ()) (s, m))
+    (fun (e', (_, m', _)) -> (e', (s, m', t)))
+    (((fun (s, m, t) -> Ok ((), (e :: s, m, t))) >>= fun _ -> f ()) (s, m, t))
 
-let get v (s, m) =
+let get v (s, m, t) =
   Result.map
-    (fun r -> (r, (s, m)))
+    (fun r -> (r, (s, m, t)))
     (List.assoc_opt v s |> Option.to_result ~none:("unbound variable " ^ v))
 
 module IntMap = Map.Make (Int)
@@ -166,11 +179,16 @@ let rec find_free_in_env ms env =
         let ms' = find_free ms ty in
         find_free_in_env ms' env'
 
-let generalize expr s =
+let generalize expr (s : (string * ty) list * int * (string * ty) list) =
   Result.map
     (fun subs ->
       let exp = substitute subs expr in
-      let fv = find_free_in_env (type_of exp |> metas) (fst s) in
+      let fv =
+        find_free_in_env
+          (type_of exp |> metas)
+          (let s, _, _ = s in
+           s)
+      in
       (Poly { e = exp; metas = MetaS.to_list fv }, s))
     (unify (generate_constraints expr))
 
@@ -272,10 +290,10 @@ let infer expr =
     (fun substitutions -> (substitute substitutions typed_expr, s))
     (unify constraints)
 
-let inspect (s, m) =
+let inspect (s, m, t) =
   String.concat "," (List.map (fun (b, ty) -> b ^ ":" ^ type_to_string ty) s)
   |> print_endline;
-  return () (s, m)
+  return () (s, m, t)
 
 let infer tl =
   match tl with
@@ -315,7 +333,8 @@ let infer tls =
         ("-", TFunction (TInteger, TFunction (TInteger, TInteger)));
         ("*", TFunction (TInteger, TFunction (TInteger, TInteger)));
       ],
-      0 )
+      0,
+      [] )
 
 let print_constraints constraints =
   List.fold_left
