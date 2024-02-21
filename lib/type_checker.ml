@@ -27,6 +27,7 @@ let ( <$> )
 
 let new_meta (s, m, t) = return (Meta m) (s, m + 1, t)
 let insert e (s, m, t) = return () (e :: s, m, t)
+let insert_type e (s, m, t) = return () (s, m, e :: t)
 
 let remove_fst (s, m, t) =
   return () (match s with [] -> (s, m, t) | _ :: s' -> (s', m, t))
@@ -68,36 +69,97 @@ let todo string =
   print_endline string;
   exit 1
 
-let rec generate_constraints expr =
-  match expr with
-  | Int _ | Float _ | String _ | Unit _ | Ident _ -> []
-  | Application { func; arguement; ty } ->
-      [ (type_of func, TFunction (type_of arguement, ty)) ]
-      @ generate_constraints func
-      @ generate_constraints arguement
-  | If { condition; consequent; alternative; ty } ->
-      [
-        (type_of condition, TBool);
-        (ty, type_of consequent);
-        (ty, type_of alternative);
-      ]
-      @ generate_constraints condition
-      @ generate_constraints consequent
-      @ generate_constraints alternative
-  | Function { parameter = { ty = p_ty; _ }; ty; abstraction } ->
-      [ (ty, TFunction (p_ty, type_of abstraction)) ]
-      @ generate_constraints abstraction
-  | Let { e1; e2; _ } -> generate_constraints e1 @ generate_constraints e2
-  | Rec { expr; _ } -> generate_constraints expr
-  | Poly { e; _ } -> generate_constraints e (* | e -> *)
-  | Record _r -> todo "generate constraints for record"
-  | TupleAcces { ty = _ty; value = _value; _ } ->
-      todo "generate constraints for tuple access"
-  | RecordAcces _ra -> todo "generate constraints for record access"
-  | Constructor _c -> todo "generate constraints for variant constructors"
-  | Tuple t ->
-      (t.ty, TTuple (List.map type_of t.pair))
-      :: List.concat_map generate_constraints t.pair
+module ConstraintGenerator : sig
+  val generate_constraints : typed_ast -> int -> (ty * ty) list * int
+end = struct
+  let return e meta = (e, meta)
+
+  let map t f m =
+    let e, m' = t m in
+    (f e, m')
+
+  let bind t f m =
+    let e, m' = t m in
+    f e m'
+
+  let ( >>= ) = bind
+  let ( <$> ) = map
+
+  let ( @ ) a b =
+    a >>= fun constraints_a ->
+    b <$> fun constraints_b -> constraints_a @ constraints_b
+
+  (* cons operator *)
+  let ( ++ ) a b =
+    a >>= fun constraint_a ->
+    b <$> fun constraints_b -> constraint_a :: constraints_b
+
+  let new_meta m = return (Meta m) (m + 1)
+
+  let rec generate_constraints expr =
+    match expr with
+    | Int _ | Float _ | String _ | Unit _ | Ident _ -> return []
+    | Application { func; arguement; ty } ->
+        return (type_of func, TFunction (type_of arguement, ty))
+        ++ generate_constraints func
+        @ generate_constraints arguement
+    | If { condition; consequent; alternative; ty } ->
+        return
+          [
+            (type_of condition, TBool);
+            (ty, type_of consequent);
+            (ty, type_of alternative);
+          ]
+        @ generate_constraints condition
+        @ generate_constraints consequent
+        @ generate_constraints alternative
+    | Function { parameter = { ty = p_ty; _ }; ty; abstraction } ->
+        return (ty, TFunction (p_ty, type_of abstraction))
+        ++ generate_constraints abstraction
+    | Let { e1; e2; _ } -> generate_constraints e1 @ generate_constraints e2
+    | Rec { expr; _ } -> generate_constraints expr
+    | Poly { e; _ } -> generate_constraints e (* | e -> *)
+    | Record { fields; ty } ->
+        return
+          ( ty,
+            TRecord
+              (List.fold_left
+                 (fun row (field : typed_ast field) ->
+                   TRowExtension
+                     {
+                       label = field.name;
+                       field = type_of field.value;
+                       row_extension = row;
+                     })
+                 TEmptyRow fields) )
+        ++ (fields
+           |> List.map (fun (field : typed_ast field) -> field.value)
+           |> List.map generate_constraints
+           |> List.fold_left
+                (fun tys ty ->
+                  tys >>= fun tys' ->
+                  ty <$> fun ty' -> List.append ty' tys')
+                (return []))
+    | TupleAcces { ty = _ty; value = _value; _ } ->
+        todo "generate constraints for tuple access"
+    | RecordAcces { value; ty; projector } ->
+        ( new_meta <$> fun rest_row ->
+          ( TRecord
+              (TRowExtension
+                 { label = projector; field = ty; row_extension = rest_row }),
+            type_of value ) )
+        ++ generate_constraints value
+    | Constructor _c -> todo "generate constraints for variant constructors"
+    | Tuple t ->
+        return (t.ty, TTuple (List.map type_of t.pair))
+        ++ (t.pair
+           |> List.map generate_constraints
+           |> List.fold_left
+                (fun tys ty ->
+                  tys >>= fun tys' ->
+                  ty <$> fun ty' -> List.append ty' tys')
+                (return []))
+end
 
 let rec mini_sub (m, s_ty) ty =
   match ty with
@@ -112,6 +174,7 @@ let rec unify constraints =
   | (t1, t2) :: constraints -> (
       match (t1, t2) with
       | t1, t2 when t1 = t2 -> unify constraints
+      (* | Meta _, TEmptyRow | TEmptyRow, Meta _ -> unify constraints *)
       | TFunction (t1, t2), TFunction (t3, t4) ->
           unify ((t1, t3) :: (t2, t4) :: constraints)
       | Meta m, t | t, Meta m ->
@@ -121,6 +184,8 @@ let rec unify constraints =
                (List.map
                   (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
                   constraints))
+      | (TRecord (TRowExtension _  as r1), TRecord ( TRowExtension _ as r2)) -> (r1, r2) :: constraints |> unify
+      (* | TRowExtension { label=l1;  } *)
       | t1, t2 ->
           Error
             ("could not unify " ^ type_to_string t1 ^ " and "
@@ -180,17 +245,14 @@ let rec find_free_in_env ms env =
         find_free_in_env ms' env'
 
 let generalize expr (s : (string * ty) list * int * (string * ty) list) =
+  let s, m, t = s in
   Result.map
-    (fun subs ->
+    (fun (subs, m') ->
       let exp = substitute subs expr in
-      let fv =
-        find_free_in_env
-          (type_of exp |> metas)
-          (let s, _, _ = s in
-           s)
-      in
-      (Poly { e = exp; metas = MetaS.to_list fv }, s))
-    (unify (generate_constraints expr))
+      let fv = find_free_in_env (type_of exp |> metas) s in
+      (Poly { e = exp; metas = MetaS.to_list fv }, (s, m', t)))
+    (let cs, m' = ConstraintGenerator.generate_constraints expr m in
+     Result.map (fun subs -> (subs, m')) (unify cs))
 
 let rec_no_func expr =
   match expr with
@@ -285,9 +347,10 @@ let rec typify expr =
 
 let infer expr =
   typify expr >>= fun typed_expr s ->
-  let constraints = generate_constraints typed_expr in
+  let s, m, t = s in
+  let constraints, m' = ConstraintGenerator.generate_constraints typed_expr m in
   Result.map
-    (fun substitutions -> (substitute substitutions typed_expr, s))
+    (fun substitutions -> (substitute substitutions typed_expr, (s, m', t)))
     (unify constraints)
 
 let inspect (s, m, t) =
@@ -311,7 +374,9 @@ let infer tl =
              value = Rec { expr = value'; ty = type_of value'; name };
              ty = type_of value';
            })
-  | Ast2.TypeBind { name; ty } -> TypeBind { name; ty } |> return
+  | Ast2.TypeBind { name; ty } ->
+      (* TODO: validate types *)
+      (name, ty) |> insert_type <$> fun _ -> TypeBind { name; ty }
   | Ast2.Bind { name; value } ->
       (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
       infer value >>= fun value' ->

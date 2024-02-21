@@ -44,6 +44,6 @@ let rec type_to_string ty type_delim delim =
       label ^ type_delim ^ type_to_string field "" ""
   | TRowExtension { label; field; row_extension } ->
       label ^ type_delim ^ type_to_string field "" "" ^ delim
-      ^ type_to_string row_extension "" ""
+      ^ type_to_string row_extension type_delim delim
 
 let type_to_string x = type_to_string x "" ""
