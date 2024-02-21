@@ -58,6 +58,11 @@ let rec instantiate ty (tmap : ty IntMap.t) =
   | TFunction (t1, t2) ->
       instantiate t1 tmap >>= fun t1' ->
       instantiate t2 tmap <$> fun t2' -> TFunction (t1', t2')
+  | TRecord t -> instantiate t tmap <$> fun t' -> TRecord t'
+  | TRowExtension { field; row_extension; label } ->
+      instantiate field tmap >>= fun field' ->
+      instantiate row_extension tmap <$> fun row_extension' ->
+      TRowExtension { row_extension = row_extension'; label; field = field' }
   | _ -> return ty
 
 (* let typify exp context = typify exp (context, 0) *)
@@ -166,6 +171,14 @@ let rec mini_sub (m, s_ty) ty =
   | TFunction (t1, t2) ->
       TFunction (mini_sub (m, s_ty) t1, mini_sub (m, s_ty) t2)
   | Meta n when m = n -> s_ty
+  | TRecord t -> TRecord (mini_sub (m, s_ty) t)
+  | TRowExtension { label; field; row_extension } ->
+      TRowExtension
+        {
+          label;
+          field = mini_sub (m, s_ty) field;
+          row_extension = mini_sub (m, s_ty) row_extension;
+        }
   | _ -> ty
 
 let rec unify constraints =
@@ -184,8 +197,15 @@ let rec unify constraints =
                (List.map
                   (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
                   constraints))
-      | (TRecord (TRowExtension _  as r1), TRecord ( TRowExtension _ as r2)) -> (r1, r2) :: constraints |> unify
-      (* | TRowExtension { label=l1;  } *)
+          (* todo: better error for when two records don't unify - right now it gets down to empty row and errors with "not type checked: could not unify a int '7 and {}" *)
+      | TRecord (TRowExtension _ as r1), TRecord (TRowExtension _ as r2) ->
+          (r1, r2) :: constraints |> unify
+      | ( TRowExtension { label = label1; field = ty1; row_extension = row1 },
+          TRowExtension { label = label2; field = ty2; row_extension = row2 } )
+        ->
+          (if label1 = label2 then (ty1, ty2) :: (row1, row2) :: constraints
+           else (t1, row2) :: (row1, t2) :: constraints)
+          |> unify
       | t1, t2 ->
           Error
             ("could not unify " ^ type_to_string t1 ^ " and "
@@ -229,6 +249,9 @@ let rec metas ty =
   match ty with
   | Meta m -> MetaS.singleton m
   | TFunction (t1, t2) -> metas t2 |> (metas t1 |> MetaS.union)
+  | TRecord t -> metas t
+  | TRowExtension { field; row_extension; _ } ->
+      metas field |> (metas row_extension |> MetaS.union)
   | _ -> MetaS.empty
 
 let find_free ms ty =
