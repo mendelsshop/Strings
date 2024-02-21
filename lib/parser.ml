@@ -119,7 +119,13 @@ let record_type_parser =
      <|> (seq (many record_mid) record
          <$> (fun (rs, r) -> rs @ [ r ])
          >> (skip_garbage >> char '}')))
-  <$> fun rs -> TRecord rs
+  <$> fun rs ->
+  TRecord
+    (List.fold_left
+       (fun row field ->
+         TRowExtension
+           { label = fst field; field = snd field; row_extension = row })
+       TEmptyRow rs)
 
 let variant_ident_parser =
   skip_garbage << seq upper (alphanum |> many) <$> fun (c, cs) ->
