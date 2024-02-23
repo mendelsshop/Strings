@@ -181,36 +181,6 @@ let rec mini_sub (m, s_ty) ty =
         }
   | _ -> ty
 
-let rec unify constraints =
-  match constraints with
-  | [] -> Ok []
-  | (t1, t2) :: constraints -> (
-      match (t1, t2) with
-      | t1, t2 when t1 = t2 -> unify constraints
-      (* | Meta _, TEmptyRow | TEmptyRow, Meta _ -> unify constraints *)
-      | TFunction (t1, t2), TFunction (t3, t4) ->
-          unify ((t1, t3) :: (t2, t4) :: constraints)
-      | Meta m, t | t, Meta m ->
-          Result.map
-            (fun subs -> (m, t) :: subs)
-            (unify
-               (List.map
-                  (fun (t1, t2) -> (mini_sub (m, t) t1, mini_sub (m, t) t2))
-                  constraints))
-          (* todo: better error for when two records don't unify - right now it gets down to empty row and errors with "not type checked: could not unify a int '7 and {}" *)
-      | TRecord (TRowExtension _ as r1), TRecord (TRowExtension _ as r2) ->
-          (r1, r2) :: constraints |> unify
-      | ( TRowExtension { label = label1; field = ty1; row_extension = row1 },
-          TRowExtension { label = label2; field = ty2; row_extension = row2 } )
-        ->
-          (if label1 = label2 then (ty1, ty2) :: (row1, row2) :: constraints
-           else (t1, row2) :: (row1, t2) :: constraints)
-          |> unify
-      | t1, t2 ->
-          Error
-            ("could not unify " ^ type_to_string t1 ^ " and "
-           ^ type_to_string t2))
-
 let rec subs substitutions ty =
   match substitutions with
   | [] -> ty
@@ -242,6 +212,18 @@ let rec substitute substitutions expr =
   | Rec { name; expr; _ } -> Rec { name; expr = substitute expr; ty }
   | Let { name; e1; e2; _ } ->
       Let { name; e1 = substitute e1; e2 = substitute e2; ty }
+  | RecordAcces { projector; value; _ } ->
+      RecordAcces { projector; value = substitute value; ty }
+  | Record { fields; _ } ->
+      Record
+        {
+          fields =
+            List.map
+              (fun field ->
+                { name = field.name; value = substitute field.value })
+              fields;
+          ty;
+        }
   (* TODO: subsitite non polymorphic type variables in poly *)
   | _ -> expr
 
@@ -257,6 +239,97 @@ let rec metas ty =
 let find_free ms ty =
   let ms' = metas ty in
   MetaS.diff ms ms'
+
+module Unifier : sig
+  val unify : (ty * ty) list -> int -> ((int * ty) list * int, string) result
+end = struct
+  let return e meta = Ok (e, meta)
+  let map t f m = Result.map (fun (e, m') -> (f e, m')) (t m)
+  let bind t f m = Result.bind (t m) (fun (e, m') -> f e m')
+  let zero e _ = Error e
+  let ( >>= ) = bind
+  let ( <$> ) = map
+
+  let ( @ ) a b =
+    a >>= fun sub_a ->
+    b <$> fun sub_b -> sub_a @ sub_b
+
+  let new_meta m = return (Meta m) (m + 1)
+
+  (* cons operator *)
+  let ( ++ ) a b = b <$> fun sub_b -> a :: sub_b
+
+  let rec unify constraints =
+    let rec row_rewrite l ty row =
+      match row with
+      | TEmptyRow -> "row does not contain label " ^ l |> zero
+      | TRowExtension { field; label; row_extension } when label = l ->
+          unify [ (ty, field) ] <$> fun subs -> (row_extension, subs)
+      | TRowExtension { field; label; row_extension } ->
+          row_rewrite l ty row_extension <$> fun (row', sub) ->
+          (TRowExtension { label; field; row_extension = row' }, sub)
+      | Meta m ->
+          new_meta <$> fun row' ->
+          ( row',
+            [
+              (m, TRowExtension { label = l; field = ty; row_extension = row' });
+            ] )
+      | _ ->
+          "row type expected with label " ^ l ^ " ,but type "
+          ^ type_to_string row ^ " was found"
+          |> zero
+    in
+
+    match constraints with
+    | [] -> return []
+    | (t1, t2) :: constraints -> (
+        match (t1, t2) with
+        | t1, t2 when t1 = t2 -> unify constraints
+        | TFunction (t1, t2), TFunction (t3, t4) ->
+            (t1, t3) :: (t2, t4) :: constraints |> unify
+        | Meta m, t | t, Meta m ->
+            (m, t)
+            ++ (constraints
+               |> List.map (fun (t1, t2) ->
+                      (mini_sub (m, t) t1, mini_sub (m, t) t2))
+               |> unify)
+            (* todo: better error for when two records don't unify - right now it gets down to empty row and errors with "not type checked: could not unify a int '7 and {}" *)
+        | TRecord (TRowExtension _ as r1), TRecord (TRowExtension _ as r2) ->
+            (r1, r2) :: constraints |> unify
+            (* | ( TRowExtension { label = label1; field = ty1; row_extension = row1 }, *)
+            (*     TRowExtension { label = label2; field = ty2; row_extension = row2 } *)
+            (*   ) *)
+            (*   when label1 = label2 -> *)
+            (*     print_endline (type_to_string t1 ^ "~= " ^ type_to_string t2); *)
+            (*     Result.bind *)
+            (*       (unify [ (ty1, ty2) ]) *)
+            (*       (fun sub1 -> *)
+            (*         let row1, row2 = (subs sub1 row1, subs sub1 row2) in *)
+            (*         Result.bind *)
+            (*           (unify [ (row1, row2) ]) *)
+            (*           (fun sub2 -> *)
+            (*             if *)
+            (*               MetaS.is_empty *)
+            (*                 (find_free (sub1 |> List.map fst |> MetaS.of_list) row1) *)
+            (*             then *)
+            (*               Result.map *)
+            (*                 (fun sub3 -> sub1 @ sub2 @ sub3) *)
+            (*                 (unify constraints) *)
+            (*             else Error "")) *)
+            (* unify ((ty1, ty2) :: (row1, row2) :: constraints) *)
+        | ( TRowExtension { label; field; row_extension = row1 },
+            (TRowExtension _ as row2) ) ->
+            (* TODO: make sure sub1's meta variables are not containted in row2 to ensure type infernce termination
+               look at the commented out case above for how to do so
+            *)
+            ( row_rewrite label field row2 >>= fun (row2', sub1) ->
+              unify [ (subs sub1 row1, subs sub1 row2') ] <$> fun sub2 ->
+              List.append sub1 sub2 )
+            @ unify constraints
+        | t1, t2 ->
+            "could not unify " ^ type_to_string t1 ^ " and " ^ type_to_string t2
+            |> zero)
+end
 
 let rec find_free_in_env ms env =
   if MetaS.is_empty ms then ms
@@ -275,7 +348,7 @@ let generalize expr (s : (string * ty) list * int * (string * ty) list) =
       let fv = find_free_in_env (type_of exp |> metas) s in
       (Poly { e = exp; metas = MetaS.to_list fv }, (s, m', t)))
     (let cs, m' = ConstraintGenerator.generate_constraints expr m in
-     Result.map (fun subs -> (subs, m')) (unify cs))
+     Result.map (fun (subs, m'') -> (subs, m'')) (Unifier.unify cs m'))
 
 let rec_no_func expr =
   match expr with
@@ -373,13 +446,9 @@ let infer expr =
   let s, m, t = s in
   let constraints, m' = ConstraintGenerator.generate_constraints typed_expr m in
   Result.map
-    (fun substitutions -> (substitute substitutions typed_expr, (s, m', t)))
-    (unify constraints)
-
-let inspect (s, m, t) =
-  String.concat "," (List.map (fun (b, ty) -> b ^ ":" ^ type_to_string ty) s)
-  |> print_endline;
-  return () (s, m, t)
+    (fun (substitutions, m'') ->
+      (substitute substitutions typed_expr, (s, m'', t)))
+    (Unifier.unify constraints m')
 
 let infer tl =
   match tl with
