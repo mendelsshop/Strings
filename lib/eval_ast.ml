@@ -8,6 +8,7 @@ type eval_expr =
       * ((string * eval_expr) list -> eval_expr -> eval_expr))
   | Unit
   | Rec of { name : string; expr : eval_expr }
+  | Record of (string * eval_expr)  list
 
 let print_ast expr =
   match expr with
@@ -18,3 +19,4 @@ let print_ast expr =
   | String s -> s
   | Function _ -> "function"
   | Rec _ -> "rec"
+  | Record _r -> "record"

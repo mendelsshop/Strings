@@ -35,6 +35,7 @@ let apply f a =
   | _ -> error "cannot apply non function"
 
 let get_bool b = match b with Bool b -> b | _ -> error "not bool"
+let get_record r = match r with Record r -> r | _ -> error "not record"
 let get_int n = match n with Int n -> n | _ -> error "not int"
 
 let rec eval (expr : typed_ast) =
@@ -64,6 +65,16 @@ let rec eval (expr : typed_ast) =
       eval condition >>= fun cond' ->
       eval (if get_bool cond' then consequent else alternative)
   | Poly { e; _ } -> eval e
+  | Record r ->
+      r.fields
+      |> List.fold_left
+           (fun rest { name; value } ->
+             rest >>= fun rest ->
+             eval value <$> fun value -> rest @ [ (name, value) ])
+           ([] |> return)
+      <$> fun fields -> Record fields
+  | RecordAcces { value; projector; _ } ->
+      eval value <$> fun value -> get_record value |> List.assoc projector
   | e ->
       print_endline ("todo: " ^ ast_to_string e);
       exit 1
