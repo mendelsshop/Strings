@@ -5,6 +5,17 @@ type typed_ident = { ident : ident; ty : ty option }
 type 'b field = { name : string; value : 'b }
 type ('a, 'b) projection = { value : 'a; projector : 'b }
 
+type pattern =
+  | PFloat of float
+  | PInt of int
+  | PTuple of pattern list
+  | PRecord of pattern field list
+  | PString of string
+  | PIdent of ident
+  | PConstructor of { name : string; value : pattern }
+  | PUnit
+  | PWildCard
+
 type ast =
   | Float of float
   | Int of int

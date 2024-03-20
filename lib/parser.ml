@@ -250,21 +250,60 @@ let if_then_else expr =
   <$> fun (condition, (consequent, alternative)) ->
   Ast.If { condition; consequent; alternative }
 
-let number = many1 digit <$> fun ns -> Ast.Int (implode ns |> int_of_string)
+let number wrapper =
+  many1 digit <$> fun ns -> implode ns |> int_of_string |> wrapper
+
 let integer_opt = many digit
 let integer = many1 digit
 let decimal = char '.'
 
-let float =
+let float wrapper =
   let number_opt_dot_number = seq integer_opt (seq decimal integer)
   and number_dot_number_opt = seq integer (seq decimal integer_opt) in
   number_dot_number_opt <|> number_opt_dot_number
   <$> fun (f, ((_ : char), s)) ->
-  Ast.Float (Float.of_string (implode (f @ ('.' :: s))))
+  Float.of_string (implode (f @ ('.' :: s))) |> wrapper
+
+let record wrapper expr =
+  let record =
+    seq ident_parser (skip_garbage << char '=' << expr) <$> fun (name, value) ->
+    { name; value }
+  in
+  let record_mid = record >> (skip_garbage << char ';') in
+  skip_garbage << char '{'
+  << (many1 record_mid
+     >> (skip_garbage << char '}')
+     <|> (seq (many record_mid) record
+         <$> (fun (rs, r) -> rs @ [ r ])
+         >> (skip_garbage >> char '}')))
+  <$> wrapper
+
+let tuple wrapper expr =
+  skip_garbage << char ',' << expr |> many |> seq expr <$> function
+  | x, [] -> x
+  | x, xs -> x :: xs |> wrapper
+
+let variant wrapper expr =
+  seq variant_ident_parser expr <$> fun (name, value) -> wrapper name value
+
+let parens expr =
+  expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
+
+let rec pattern_parser input =
+  input
+  |> (parens pattern_parser
+     <|> float (fun f -> Ast.PFloat f)
+     <|> number (fun i -> Ast.PInt i)
+     <|> (ident <$> fun i -> if i = "_" then PWildCard else Ast.PIdent i)
+     <|> ( skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ ->
+           Ast.PUnit )
+     <|> record (fun r -> PRecord r) pattern_parser
+     |> tuple (fun t -> PTuple t))
 
 let rec expr input =
   let constant =
-    float <|> number
+    float (fun f -> Ast.Float f)
+    <|> number (fun i -> Ast.Int i)
     (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
     <|> (char '\"'
         << sat (fun c -> c <> '\n')
@@ -286,39 +325,15 @@ let rec expr input =
           (int_of_string_opt projector)
     | value, None -> value
   in
-  let record =
-    let record =
-      seq ident_parser (skip_garbage << char '=' << expr)
-      <$> fun (name, value) -> { name; value }
-    in
-    let record_mid = record >> (skip_garbage << char ';') in
-    skip_garbage << char '{'
-    << (many1 record_mid
-       >> (skip_garbage << char '}')
-       <|> (seq (many record_mid) record
-           <$> (fun (rs, r) -> rs @ [ r ])
-           >> (skip_garbage >> char '}')))
-    <$> fun r -> Record r
-  in
-  let tuple expr =
-    skip_garbage << char ',' << expr |> many |> seq expr <$> function
-    | x, [] -> x
-    | x, xs -> Tuple (x :: xs)
-  in
-  let variant =
-    seq variant_ident_parser expr <$> fun (name, value) ->
-    Constructor { name; value }
-  in
   let ident = ident <$> fun i -> Ast.Ident i in
-  let parens =
-    expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
-  in
-  let atom = parens <|> (skip_garbage << constant) <|> ident in
+  let atom = parens expr <|> (skip_garbage << constant) <|> ident in
   let basic_forms =
-    let_expr_parser expr <|> if_then_else expr <|> fun_parser expr <|> variant
-    <|> record <|> atom
+    let_expr_parser expr <|> if_then_else expr <|> fun_parser expr
+    <|> variant (fun name value -> Constructor { name; value }) expr
+    <|> record (fun r -> Record r) expr
+    <|> atom
   in
-  let basic_forms = tuple (project basic_forms) in
+  let basic_forms = tuple (fun t -> Tuple t) (project basic_forms) in
   let application =
     let rec application_tail func input =
       ( basic_forms >>= fun arguement ->
