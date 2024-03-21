@@ -264,10 +264,11 @@ let float wrapper =
   <$> fun (f, ((_ : char), s)) ->
   Float.of_string (implode (f @ ('.' :: s))) |> wrapper
 
-let record wrapper expr =
+let record wrapper ident expr =
   let record =
-    seq ident_parser (skip_garbage << char '=' << expr) <$> fun (name, value) ->
-    { name; value }
+    seq ident_parser (opt (skip_garbage << char '=' << expr)) <$> function
+    | name, None -> { name; value = ident name }
+    | name, Some value -> { name; value }
   in
   let record_mid = record >> (skip_garbage << char ';') in
   skip_garbage << char '{'
@@ -297,7 +298,7 @@ let rec pattern_parser input =
      <|> (ident <$> fun i -> if i = "_" then PWildCard else Ast.PIdent i)
      <|> ( skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ ->
            Ast.PUnit )
-     <|> record (fun r -> PRecord r) pattern_parser
+     <|> record (fun r -> PRecord r) (fun i -> PIdent i) pattern_parser
      |> tuple (fun t -> PTuple t))
 
 let rec expr input =
@@ -330,7 +331,7 @@ let rec expr input =
   let basic_forms =
     let_expr_parser expr <|> if_then_else expr <|> fun_parser expr
     <|> variant (fun name value -> Constructor { name; value }) expr
-    <|> record (fun r -> Record r) expr
+    <|> record (fun r -> Record r) (fun i -> Ident i) expr
     <|> atom
   in
   let basic_forms = tuple (fun t -> Tuple t) (project basic_forms) in

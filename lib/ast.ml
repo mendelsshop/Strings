@@ -44,6 +44,25 @@ type program = top_level list
 
 let list_to_string = String.concat ""
 
+let rec pattern_to_string pattern =
+  match pattern with
+  | PFloat f -> string_of_float f
+  | PInt i -> string_of_int i
+  | PTuple t ->
+      "( " ^ (t |> List.map pattern_to_string |> String.concat ", ") ^ " )"
+  | PRecord r ->
+      "( "
+      ^ (r
+        |> List.map (fun { name; value } ->
+               name ^ " = " ^ pattern_to_string value)
+        |> String.concat ", ")
+      ^ " )"
+  | PString s -> "\"" ^ s ^ "\""
+  | PIdent i -> i
+  | PConstructor { name; value } -> name ^ "( " ^ pattern_to_string value ^ " )"
+  | PUnit -> "()"
+  | PWildCard -> "_"
+
 let rec ast_to_string ast =
   match ast with
   | Float f -> string_of_float f

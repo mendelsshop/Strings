@@ -40,17 +40,18 @@ let rec type_to_string ty type_delim delim empty =
   | TVariant fields ->
       String.concat " | "
         (List.map
-                (fun (field, ty) -> field ^ " of " ^ type_to_string ty ": " "; " "{}")
+           (fun (field, ty) ->
+             field ^ " of " ^ type_to_string ty ": " "; " "{}")
            fields)
   | TTuple fields ->
       String.concat " * "
-            (List.map (fun ty -> type_to_string ty ": " "; " "{}" ) fields)
+        (List.map (fun ty -> type_to_string ty ": " "; " "{}") fields)
   | TEmptyRow -> empty
   | TRowExtension { label; field; row_extension = TEmptyRow } ->
-        label ^ type_delim ^ type_to_string field ": " "; " "{}"
+      label ^ type_delim ^ type_to_string field ": " "; " "{}"
   | TRowExtension { label; field; row_extension } ->
       label ^ type_delim
-        ^ type_to_string field ": " "; " "{}"
+      ^ type_to_string field ": " "; " "{}"
       ^ delim
       ^ type_to_string row_extension type_delim delim ""
 
