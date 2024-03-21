@@ -166,81 +166,6 @@ let ident =
   (* TODO: make unit expression instead of "()"*)
   <|> (skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ -> "()")
 
-let fun_params =
-  many1
-    (ident
-    <$> (fun i -> { ident = i; ty = None })
-    <|> ( seq
-            (skip_garbage << char '(' << ident)
-            (skip_garbage << char ':' << skip_garbage << type_parser
-            >> (skip_garbage << char ')'))
-        <$> fun (i, ty) -> { ident = i; ty = Some ty } ))
-
-let fun_parser expr =
-  seq
-    (skip_garbage << string "fun" << fun_params >> (skip_garbage << string "->"))
-    expr
-  <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
-
-let let_parser expr =
-  skip_garbage << string "let" << skip_garbage
-  << seq
-       (opt (string "rec"))
-       (seq ident (seq (opt fun_params) (skip_garbage << (char '=' << expr))))
-  <$> fun (is_rec, (name, (params, exp))) ->
-  if Option.is_some is_rec then
-    RecBind
-      {
-        name;
-        value =
-          (match params with
-          | Some params ->
-              Ast.Function { parameters = params; abstraction = exp }
-          | None -> exp);
-      }
-  else
-    Bind
-      {
-        name;
-        value =
-          (match params with
-          | Some params ->
-              Ast.Function { parameters = params; abstraction = exp }
-          | None -> exp);
-      }
-
-let let_expr_parser expr =
-  skip_garbage << string "let" << skip_garbage
-  << seq
-       (opt (string "rec"))
-       (seq ident
-          (seq (opt fun_params)
-             (skip_garbage
-             << (char '=' << seq expr (skip_garbage << string "in" << expr)))))
-  <$> fun (is_rec, (name, (params, (e1, e2)))) ->
-  if Option.is_some is_rec then
-    LetRec
-      {
-        name;
-        e1 =
-          (match params with
-          | Some params ->
-              Ast.Function { parameters = params; abstraction = e1 }
-          | None -> e1);
-        e2;
-      }
-  else
-    Let
-      {
-        name;
-        e1 =
-          (match params with
-          | Some params ->
-              Ast.Function { parameters = params; abstraction = e1 }
-          | None -> e1);
-        e2;
-      }
-
 let if_then_else expr =
   seq
     (skip_garbage << string "if" << expr)
@@ -301,6 +226,70 @@ let rec pattern_parser input =
      <|> record (fun r -> PRecord r) (fun i -> PIdent i) pattern_parser
      |> tuple (fun t -> PTuple t))
 
+let fun_params = many1 pattern_parser
+
+let fun_parser expr =
+  seq
+    (skip_garbage << string "fun" << fun_params >> (skip_garbage << string "->"))
+    expr
+  <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
+
+(* TODO: lets that have parameters (functions) should not be allowed to have anything but normal idents as their name *)
+let let_parser expr =
+  let rec_parser =
+    string "rec"
+    << seq ident_parser (seq fun_params (skip_garbage << (char '=' << expr)))
+    <$> fun (name, (params, expr)) ->
+    RecBind
+      { name; value = Function { parameters = params; abstraction = expr } }
+  in
+
+  let let_parser =
+    seq pattern_parser
+      (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
+    <$> fun (name, (params, expr)) ->
+    Bind
+      {
+        name;
+        value =
+          (match params with
+          | Some params ->
+              Ast.Function { parameters = params; abstraction = expr }
+          | None -> expr);
+      }
+  in
+  skip_garbage << string "let" << skip_garbage << let_parser <|> rec_parser
+
+let let_expr_parser expr =
+  let rec_parser =
+    string "rec"
+    << seq ident_parser
+         (seq fun_params
+            (skip_garbage
+            << seq (char '=' << expr) (skip_garbage << string "in" << expr)))
+    <$> fun (name, (params, (e1, e2))) ->
+    LetRec { name; e1 = Function { parameters = params; abstraction = e1 }; e2 }
+  in
+
+  let let_parser =
+    seq pattern_parser
+      (seq (opt fun_params)
+         (skip_garbage
+         << (char '=' << seq expr (skip_garbage << string "in" << expr))))
+    <$> fun (name, (params, (e1, e2))) ->
+    Let
+      {
+        name;
+        e1 =
+          (match params with
+          | Some params ->
+              Ast.Function { parameters = params; abstraction = e1 }
+          | None -> e1);
+        e2;
+      }
+  in
+  skip_garbage << string "let" << skip_garbage << let_parser <|> rec_parser
+
 let rec expr input =
   let constant =
     float (fun f -> Ast.Float f)
@@ -354,7 +343,7 @@ let rec expr input =
   in
   infix_application input
 
-let top_level = expr <$> fun exp -> Ast.Bind { name = "()"; value = exp }
+let top_level = expr <$> fun exp -> Ast.Bind { name = PUnit; value = exp }
 
 let parser =
   many

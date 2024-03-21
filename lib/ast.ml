@@ -29,15 +29,15 @@ type ast =
   | Ident of ident
   | Application of { func : ast; arguement : ast }
   | InfixApplication of { infix : ident; arguements : ast * ast }
-  | Function of { parameters : typed_ident list; abstraction : ast }
+  | Function of { parameters : pattern list; abstraction : ast }
   | If of { condition : ast; consequent : ast; alternative : ast }
-  | Let of { name : ident; e1 : ast; e2 : ast }
-  | LetRec of { name : ident; e1 : ast; e2 : ast }
+  | Let of { name : pattern; e1 : ast; e2 : ast }
+  | LetRec of { name : string; e1 : ast; e2 : ast }
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
-  | Bind of { name : ident; value : ast }
-  | RecBind of { name : ident; value : ast }
+  | Bind of { name : pattern; value : ast }
+  | RecBind of { name : string; value : ast }
   | PrintString of string
 
 type program = top_level list
@@ -79,10 +79,11 @@ let rec ast_to_string ast =
   | LetRec { name; e1; e2 } ->
       "let rec  " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Let { name; e1; e2 } ->
-      "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
+      "let " ^ pattern_to_string name ^ " = " ^ ast_to_string e1 ^ " in "
+      ^ ast_to_string e2
   | Function { parameters; abstraction } ->
       "fun "
-      ^ list_to_string (List.map (fun p -> p.ident) parameters)
+      ^ list_to_string (List.map pattern_to_string parameters)
       ^ "->" ^ ast_to_string abstraction
   | Tuple tuple ->
       "( " ^ (tuple |> List.map ast_to_string |> String.concat " , ") ^ " )"
@@ -103,7 +104,8 @@ let print_program program =
     (List.map
        (fun exp ->
          match exp with
-         | Bind { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+         | Bind { name; value } ->
+             "let " ^ pattern_to_string name ^ " = " ^ ast_to_string value
          | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
          | RecBind { name; value } ->
              "let rec " ^ name ^ " = " ^ ast_to_string value

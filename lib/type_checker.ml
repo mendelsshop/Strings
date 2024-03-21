@@ -367,10 +367,9 @@ let rec typify expr =
       get i >>= fun ty ->
       instantiate ty IntMap.empty <$> fun ty' -> Ident { ty = ty'; ident = i }
       (* TODO: make ident type be adt of unit, wildcard or string if paramater = some unit insert follow parameter = non case *)
-  | Ast2.Function { parameter = Some { ident; ty = ty_opt }; abstraction } ->
+  | Ast2.Function { parameter = PIdent ident; abstraction } ->
       new_meta >>= fun f_ty ->
-      (match ty_opt with None -> new_meta | Some ty -> return ty)
-      >>= fun a_ty ->
+      new_meta >>= fun a_ty ->
       scoped_insert (ident, a_ty) (fun () ->
           typify abstraction >>= fun abstraction ->
           return
@@ -386,7 +385,7 @@ let rec typify expr =
       typify func >>= fun func ->
       typify arguement >>= fun arguement ->
       new_meta >>= fun ty -> return (Application { func; arguement; ty })
-  | Ast2.Function { parameter = None; abstraction } ->
+  | Ast2.Function { parameter = PUnit; abstraction } ->
       typify abstraction >>= fun abstraction ->
       new_meta >>= fun a_ty ->
       return
@@ -396,7 +395,7 @@ let rec typify expr =
              parameter = { ident = "()"; ty = TUnit };
              ty = TFunction (TUnit, a_ty);
            })
-  | Ast2.Let { e1; e2; name } ->
+  | Ast2.Let { e1; e2; name = PIdent name } ->
       typify e1 >>= fun e1 ->
       generalize e1 >>= fun e1 ->
       scoped_insert (name, type_of e1) (fun () -> typify e2) >>= fun e2 ->
@@ -440,6 +439,12 @@ let rec typify expr =
   | Ast2.TupleAcces { projector; value } ->
       new_meta >>= fun ty ->
       typify value <$> fun value -> TupleAcces { projector; value; ty }
+  | Ast2.Let { name = PUnit; e1; e2 } ->
+      typify e1 >>= fun e1 ->
+      generalize e1 >>= fun e1 ->
+      typify e2 >>= fun e2 ->
+      return (Let { name = "()"; ty = type_of e2; e1; e2 })
+  | _ -> zero ("not supported yet " ^ Ast2.ast_to_string expr)
 
 let infer expr =
   typify expr >>= fun typed_expr s ->
@@ -469,13 +474,23 @@ let infer tl =
   | Ast2.TypeBind { name; ty } ->
       (* TODO: validate types *)
       (name, ty) |> insert_type <$> fun _ -> TypeBind { name; ty }
-  | Ast2.Bind { name; value } ->
+  | Ast2.Bind { name = PIdent name; value } ->
       (* TODO: make ident type be adt of unit, wildcard or string if unit insert (name, unit) *)
       infer value >>= fun value' ->
       generalize value' >>= fun value' ->
       insert (name, type_of value') >>= fun () ->
       return (Bind { name; value = value'; ty = type_of value' })
+  | Ast2.Bind { name = PUnit; value } ->
+      infer value >>= fun value' ->
+      generalize value' >>= fun value' ->
+      if type_of value' = TUnit then
+        return (Bind { name = "()"; value = value'; ty = type_of value' })
+      else
+        ast_to_string value' ^ " does not have type unit, it has type "
+        ^ (type_of value' |> type_to_string)
+        |> zero
   | Ast2.PrintString s -> return (PrintString s)
+  | _ -> "not supported yet: " ^ Ast2.print_top_level tl |> zero
 
 (* TODO: static envoirment *)
 let infer tls =

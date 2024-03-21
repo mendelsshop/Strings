@@ -7,10 +7,10 @@ type ast2 =
   | String of string
   | Ident of ident
   | Application of { func : ast2; arguement : ast2 }
-  | Function of { parameter : typed_ident option; abstraction : ast2 }
+  | Function of { parameter : pattern; abstraction : ast2 }
   | If of { condition : ast2; consequent : ast2; alternative : ast2 }
-  | Let of { name : ident; e1 : ast2; e2 : ast2 }
-  | LetRec of { name : ident; e1 : ast2; e2 : ast2 }
+  | Let of { name : pattern; e1 : ast2; e2 : ast2 }
+  | LetRec of { name : string; e1 : ast2; e2 : ast2 }
   (* tuples and record can be made into one form *)
   | Tuple of ast2 list
   | Record of ast2 field list
@@ -20,17 +20,17 @@ type ast2 =
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
-  | Bind of { name : ident; value : ast2 }
-  | RecBind of { name : ident; value : ast2 }
+  | Bind of { name : pattern; value : ast2 }
+  | RecBind of { name : string; value : ast2 }
   | PrintString of string
 
 type program = top_level list
 
 let rec curry_ify ps abs =
   match ps with
-  | [] -> Function { parameter = None; abstraction = abs }
-  | p :: [] -> Function { parameter = Some p; abstraction = abs }
-  | p :: ps -> Function { parameter = Some p; abstraction = curry_ify ps abs }
+  | [] -> Function { parameter = PUnit; abstraction = abs }
+  | p :: [] -> Function { parameter = p; abstraction = abs }
+  | p :: ps -> Function { parameter = p; abstraction = curry_ify ps abs }
 
 let rec ast_to_ast2 (ast : ast) =
   match ast with
@@ -94,10 +94,11 @@ let rec ast_to_string ast =
   | LetRec { name; e1; e2 } ->
       "let rec  " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
   | Let { name; e1; e2 } ->
-      "let " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
+      "let " ^ pattern_to_string name ^ " = " ^ ast_to_string e1 ^ " in "
+      ^ ast_to_string e2
   | Function { parameter; abstraction } ->
       "fun "
-      ^ Option.fold parameter ~some:(fun p -> p.ident) ~none:""
+      ^ (parameter |> pattern_to_string)
       ^ "-> " ^ ast_to_string abstraction
   | Tuple tuple ->
       "( " ^ (tuple |> List.map ast_to_string |> String.concat " , ") ^ " )"
@@ -115,7 +116,8 @@ let rec ast_to_string ast =
 
 let print_top_level tl =
   match tl with
-  | Bind { name; value } -> "let " ^ name ^ " = " ^ ast_to_string value
+  | Bind { name; value } ->
+      "let " ^ pattern_to_string name ^ " = " ^ ast_to_string value
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
   | RecBind { name; value } -> "let rec " ^ name ^ " = " ^ ast_to_string value
   | PrintString s -> s
