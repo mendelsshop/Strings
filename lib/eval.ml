@@ -48,9 +48,10 @@ let rec eval (expr : typed_ast) =
   | Float { value; _ } -> Float value |> return
   | Int { value; _ } -> Int value |> return
   | String { value; _ } -> String value |> return
-  | Let { name; e1; e2; _ } ->
+  | Let { binding = PUnit _; e1; e2; _ } -> eval e1 >>= fun _ -> eval e2
+  | Let { binding = PIdent { ident = name; _ }; e1; e2; _ } ->
       eval e1 >>= fun e1' -> scoped_insert (name, e1') (eval e2)
-  | Function { parameter = { ident; _ }; abstraction; _ } ->
+  | Function { parameter = PIdent { ident; _ }; abstraction; _ } ->
       fun s ->
         ( Function
             ( s,
@@ -82,10 +83,16 @@ let rec eval (expr : typed_ast) =
 let eval expr =
   match expr with
   | TypeBind _ -> return ()
-  | Bind { name; value; _ } -> eval value >>= fun value' -> insert (name, value')
+  (* | Bind { name; value; _ } -> eval value >>= fun value' -> insert (name, value') *)
+  | Bind { binding = PUnit _; value; _ } -> eval value <$> fun _ -> ()
+  | Bind { binding = PIdent { ident = name; _ }; value; _ } ->
+      eval value >>= fun value' -> insert (name, value')
   | PrintString s ->
       print_string s;
       return ()
+  | e ->
+      print_endline ("todo: " ^ top_level_to_string e);
+      exit 1
 
 let env =
   [

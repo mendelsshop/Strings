@@ -1,0 +1,5 @@
+"let rec fact n = if n = 1 then n else (n * (fact (n - 1))) in print (fact 2)"
+"let foo = 10"
+"let bar = 11"
+"let baz = { foo; bar; b= 8}"
+"print baz.foo"
