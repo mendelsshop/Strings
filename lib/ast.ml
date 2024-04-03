@@ -42,7 +42,7 @@ type top_level =
 
 type program = top_level list
 
-let list_to_string = String.concat ""
+let list_to_string = String.concat " "
 
 let rec pattern_to_string pattern =
   match pattern with

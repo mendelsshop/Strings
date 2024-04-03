@@ -23,7 +23,7 @@ type typed_ast =
   | String of { ty : ty; value : string }
   | Ident of { ty : ty; ident : ident }
   | Application of { ty : ty; func : typed_ast; arguement : typed_ast }
-  | Function of { ty : ty; parameter: typed_pattern; abstraction : typed_ast }
+  | Function of { ty : ty; parameter : typed_pattern; abstraction : typed_ast }
   | If of {
       ty : ty;
       condition : typed_ast;
@@ -93,11 +93,11 @@ let rec pattern_to_string pattern =
         |> String.concat ", ")
       ^ " )"
   | PString s -> "\"" ^ s.value ^ "\""
-  | PIdent i -> i.ident
+  | PIdent i ->  i.ident ^ ": " ^ type_to_string i.ty
   | PConstructor { name; value; _ } ->
       name ^ "( " ^ pattern_to_string value ^ " )"
   | PUnit _ -> "()"
-  | PWildCard _ -> "_"
+  | PWildCard { ty } -> "(_: " ^ type_to_string ty ^ ")"
 
 let rec ast_to_string ast =
   match ast with
@@ -115,7 +115,9 @@ let rec ast_to_string ast =
       "let " ^ pattern_to_string binding ^ " = " ^ ast_to_string e1 ^ " in "
       ^ ast_to_string e2
   | Function { parameter; abstraction; _ } ->
-      "fun (" ^ pattern_to_string parameter ^ ") -> " ^ ast_to_string abstraction
+      "fun ("
+      ^ pattern_to_string parameter
+      ^ ") -> " ^ ast_to_string abstraction
   | Poly p ->
       "∀"
       ^ String.concat "," (List.map string_of_int p.metas)
@@ -139,8 +141,10 @@ let top_level_to_string exp =
   match exp with
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
   | Bind { binding; value; ty } ->
-      "let " ^ pattern_to_string binding ^ " : " ^ type_to_string ty ^ " = "
-      ^ ast_to_string value
+      "let (" ^ pattern_to_string binding ^ ":"
+      ^ (binding |> type_of_pattern |> type_to_string)
+      ^ ") : " ^ type_to_string ty ^ " = " ^ ast_to_string value
   | PrintString s -> s
 
-let print_program program = String.concat "" (List.map top_level_to_string program)
+let print_program program =
+  String.concat "" (List.map top_level_to_string program)

@@ -14,6 +14,7 @@ let () =
   Option.value ~default:"not parsed"
     (Option.map
        (fun t ->
+         Strings.Ast.print_program t |> print_endline;
          Strings.Ast2.ast_to_ast2 t |> Strings.Type_checker.infer
          |> Result.fold
               ~error:(fun e -> "not type checked: " ^ e)

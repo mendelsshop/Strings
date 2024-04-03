@@ -2,7 +2,7 @@ open AMPCL
 open Ast
 open Types
 
-let key_words = [ "type"; "in"; "let"; "if"; "then"; "else"; "fun" ]
+let key_words = [ "type"; "in"; "let"; "if"; "rec"; "then"; "else"; "fun" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -237,58 +237,54 @@ let fun_parser expr =
 (* TODO: lets that have parameters (functions) should not be allowed to have anything but normal idents as their name *)
 let let_parser expr =
   let rec_parser =
-    string "rec"
-    << seq ident_parser (seq fun_params (skip_garbage << (char '=' << expr)))
-    <$> fun (name, (params, expr)) ->
-    RecBind
-      { name; value = Function { parameters = params; abstraction = expr } }
+    seq
+      (opt (string "rec"))
+      (seq ident_parser (seq fun_params (skip_garbage << (char '=' << expr))))
+    <$> fun (is_rec, (name, (params, expr))) ->
+    if Option.is_some is_rec then
+      RecBind
+        { name; value = Function { parameters = params; abstraction = expr } }
+    else
+      Bind
+        {
+          name = PIdent name;
+          value = Function { parameters = params; abstraction = expr };
+        }
   in
-
   let let_parser =
-    seq pattern_parser
-      (seq (opt fun_params) (skip_garbage << (char '=' << expr)))
-    <$> fun (name, (params, expr)) ->
-    Bind
-      {
-        name;
-        value =
-          (match params with
-          | Some params ->
-              Ast.Function { parameters = params; abstraction = expr }
-          | None -> expr);
-      }
+    seq pattern_parser (skip_garbage << (char '=' << expr))
+    <$> fun (name, expr) -> Bind { name; value = expr }
   in
-  skip_garbage << string "let" << skip_garbage << let_parser <|> rec_parser
+  skip_garbage << string "let" << skip_garbage << (rec_parser <|> let_parser)
 
 let let_expr_parser expr =
   let rec_parser =
-    string "rec"
-    << seq ident_parser
+    seq
+      (opt (string "rec"))
+      (seq ident_parser
          (seq fun_params
             (skip_garbage
-            << seq (char '=' << expr) (skip_garbage << string "in" << expr)))
-    <$> fun (name, (params, (e1, e2))) ->
-    LetRec { name; e1 = Function { parameters = params; abstraction = e1 }; e2 }
+            << seq (char '=' << expr) (skip_garbage << string "in" << expr))))
+    <$> fun (is_rec, (name, (params, (e1, e2)))) ->
+    if Option.is_some is_rec then
+      LetRec
+        { name; e1 = Function { parameters = params; abstraction = e1 }; e2 }
+    else
+      Let
+        {
+          name = PIdent name;
+          e1 = Function { parameters = params; abstraction = e1 };
+          e2;
+        }
   in
 
   let let_parser =
     seq pattern_parser
-      (seq (opt fun_params)
-         (skip_garbage
-         << (char '=' << seq expr (skip_garbage << string "in" << expr))))
-    <$> fun (name, (params, (e1, e2))) ->
-    Let
-      {
-        name;
-        e1 =
-          (match params with
-          | Some params ->
-              Ast.Function { parameters = params; abstraction = e1 }
-          | None -> e1);
-        e2;
-      }
+      (skip_garbage
+      << (char '=' << seq expr (skip_garbage << string "in" << expr)))
+    <$> fun (name, (e1, e2)) -> Let { name; e1; e2 }
   in
-  skip_garbage << string "let" << skip_garbage << let_parser <|> rec_parser
+  skip_garbage << string "let" << skip_garbage << (rec_parser <|> let_parser)
 
 let rec expr input =
   let constant =
