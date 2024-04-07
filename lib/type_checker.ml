@@ -243,7 +243,6 @@ let rec subs substitutions ty =
   | [] -> ty
   | sub :: substitutions -> subs substitutions (mini_sub sub ty)
 
-(* TODO: something is wrong with pattern (constraints/unification/substitutions) or records *)
 let rec substitute_pattern substitutions pattern =
   let substitute_pattern = substitute_pattern substitutions in
   let ty = subs substitutions (type_of_pattern pattern) in
@@ -291,7 +290,6 @@ let rec substitute substitutions expr =
         { func = substitute func; arguement = substitute arguement; ty }
   | Rec { name; expr; _ } -> Rec { name; expr = substitute expr; ty }
   | Let { binding; e1; e2; _ } ->
-      (* TODO: subsitiute in bindings to *)
       Let
         {
           binding = substitute_pattern binding;
@@ -592,8 +590,7 @@ let typify tl =
       new_meta >>= fun value_ty ->
       scoped_insert [ (name, value_ty) ] (fun _ -> typify value)
       >>= fun value ->
-      generalize value >>= fun value ->
-      insert [ (name, type_of value) ] <$> fun () ->
+      generalize value <$> fun value ->
       Bind
         {
           binding = PIdent { ident = name; ty = type_of value };
@@ -602,19 +599,32 @@ let typify tl =
         }
   | Ast2.TypeBind { name; ty } ->
       (* TODO: validate types *)
-      (name, ty) |> insert_type <$> fun _ -> TypeBind { name; ty }
+      return (TypeBind { name; ty })
   | Ast2.Bind { value; name } ->
       typify value >>= fun value ->
       typify_pattern name >>= fun name' ->
-      generalize value >>= fun value ->
-      insert (get_binders name') <$> fun () ->
+      generalize value <$> fun value ->
       Bind { binding = name'; ty = type_of value; value }
   | Ast2.PrintString s -> return (PrintString s)
+
+let print_subs constraints =
+  List.fold_left
+    (fun first (c1, c2) ->
+      first ^ "\n" ^ string_of_int c1 ^ " = " ^ type_to_string c2)
+    "" constraints
+
+let insert tl =
+  (match tl with
+  | Bind { binding; _ } -> insert (get_binders binding)
+  | TypeBind { name; ty } -> insert_type (name, ty)
+  | PrintString _ -> return ())
+  <$> fun () -> tl
 
 let infer tl =
   typify tl
   >>= unify ConstraintGenerator.generate_constraints_top_level
         substitute_top_level
+  >>= insert
 
 (* TODO: static envoirment *)
 let infer tls =
@@ -631,9 +641,3 @@ let infer tls =
       ],
       0,
       [] )
-
-let print_constraints constraints =
-  List.fold_left
-    (fun first (c1, c2) ->
-      first ^ "\n" ^ type_to_string c1 ^ " = " ^ type_to_string c2)
-    "" constraints
