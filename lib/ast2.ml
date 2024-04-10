@@ -17,6 +17,7 @@ type ast2 =
   | TupleAcces of (ast2, int) projection
   | RecordAcces of (ast2, string) projection
   | Constructor of { name : string; value : ast2 }
+  | Match of { expr : ast2; cases : (pattern, ast2) case list }
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
@@ -71,6 +72,15 @@ let rec ast_to_ast2 (ast : ast) =
       TupleAcces { projector; value = ast_to_ast2 value }
   | RecordAcces { projector; value } ->
       RecordAcces { projector; value = ast_to_ast2 value }
+  | Match { expr; cases } ->
+      Match
+        {
+          cases =
+            cases
+            |> List.map (fun { pattern; result } ->
+                   { pattern; result = ast_to_ast2 result });
+          expr = ast_to_ast2 expr;
+        }
 
 let ast_to_ast2 =
   List.map (fun (tl : Ast.top_level) ->
@@ -113,6 +123,12 @@ let rec ast_to_string ast =
       ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value
+  | Match { expr; cases } ->
+      "match " ^ ast_to_string expr ^ " with "
+      ^ String.concat " | "
+          (cases
+          |> List.map (fun { pattern; result } ->
+                 pattern_to_string pattern ^ " -> " ^ ast_to_string result))
 
 let print_top_level tl =
   match tl with

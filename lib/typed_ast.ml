@@ -39,6 +39,11 @@ type typed_ast =
   | TupleAcces of (typed_ast, int) projection
   | RecordAcces of (typed_ast, string) projection
   | Constructor of { ty : ty; name : string; value : typed_ast }
+  | Match of {
+      expr : typed_ast;
+      cases : (typed_pattern, typed_ast) case list;
+      ty : ty;
+    }
 
 type top_level =
   | Bind of { ty : ty; binding : typed_pattern; value : typed_ast }
@@ -78,6 +83,7 @@ let rec type_of expr =
   | RecordAcces a -> a.ty
   | Tuple t -> t.ty
   | Constructor c -> c.ty
+  | Match m -> m.ty
 
 let rec pattern_to_string pattern =
   match pattern with
@@ -93,7 +99,7 @@ let rec pattern_to_string pattern =
         |> String.concat ", ")
       ^ " )"
   | PString s -> "\"" ^ s.value ^ "\""
-  | PIdent i ->  i.ident ^ ": " ^ type_to_string i.ty
+  | PIdent i -> i.ident ^ ": " ^ type_to_string i.ty
   | PConstructor { name; value; _ } ->
       name ^ "( " ^ pattern_to_string value ^ " )"
   | PUnit _ -> "()"
@@ -136,6 +142,12 @@ let rec ast_to_string ast =
       ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector; _ } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value; _ } -> name ^ " " ^ ast_to_string value
+    | Match { expr; cases; _ } ->
+      "match " ^ ast_to_string expr ^ " with "
+      ^ String.concat " | "
+          (cases
+          |> List.map (fun { pattern; result } ->
+                 pattern_to_string pattern ^ " -> " ^ ast_to_string result))
 
 let top_level_to_string exp =
   match exp with

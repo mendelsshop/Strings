@@ -100,6 +100,12 @@ let rec ast_to_string ast =
       ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value
+  | Match { expr; cases } ->
+      "match " ^ ast_to_string expr ^ " with "
+      ^ String.concat " | "
+          (cases
+          |> List.map (fun { pattern; result } ->
+                 pattern_to_string pattern ^ " -> " ^ ast_to_string result))
 
 let print_program program =
   String.concat "\n"
