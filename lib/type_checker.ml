@@ -1,3 +1,4 @@
+open Ast
 open Typed_ast
 open Types
 module MetaS = Set.Make (Int)
@@ -45,7 +46,7 @@ let print_env (s, m, t) =
 let get v (s, m, t) =
   Result.map
     (fun r -> (r, (s, m, t)))
-    (List.assoc_opt v s |> Option.to_result ~none:("unbound variable " ^ v))
+    (List.assoc_opt v s |> Option.to_result ~none:("unbound variable `" ^ v ^ "`"))
 
 module IntMap = Map.Make (Int)
 
@@ -212,6 +213,16 @@ end = struct
                   tys >>= fun tys' ->
                   ty <$> fun ty' -> List.append ty' tys')
                 (return []))
+    | Match { cases; ty; expr } ->
+        List.fold_left
+          (fun cs { pattern; result } ->
+            let pattern_ty = type_of_pattern pattern in
+            let result_ty = type_of result in
+            return (pattern_ty, type_of expr)
+            ++ ((return (result_ty, ty) ++ generate_constraints result)
+               @ generate_constraints_pattern pattern
+               @ cs))
+          (return []) cases
 
   let generate_constraints_top_level tl =
     match tl with
@@ -311,6 +322,12 @@ let rec substitute substitutions expr =
         }
   (* TODO: subsitite non polymorphic type variables in poly *)
   | Tuple { pair; _ } -> Tuple { ty; pair = List.map substitute pair }
+  | Match { cases; expr; _ } ->
+      let substitute_case { pattern; result } =
+        { pattern = substitute_pattern pattern; result = substitute result }
+      in
+      Match
+        { expr = substitute expr; cases = List.map substitute_case cases; ty }
   | _ -> expr
 
 let substitute_top_level substitutions tl =
@@ -575,6 +592,17 @@ let rec typify expr =
   | Ast2.TupleAcces { projector; value } ->
       new_meta >>= fun ty ->
       typify value <$> fun value -> TupleAcces { projector; value; ty }
+  | Ast2.Match { cases; expr } ->
+      new_meta >>= fun ty ->
+      typify expr >>= fun expr' ->
+      List.fold_left
+        (fun cases ({ pattern; result } : (Ast.pattern, Ast2.ast2) Ast.case) ->
+          typify result >>= fun result' ->
+          typify_pattern pattern >>= fun pattern' ->
+          cases <$> fun cases' ->
+          { result = result'; pattern = pattern' } :: cases')
+        (return []) cases
+      <$> fun cases' -> Match { cases = cases'; expr = expr'; ty }
 
 let unify generator mapper expr s =
   let s, m, t = s in

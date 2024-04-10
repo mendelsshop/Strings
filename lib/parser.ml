@@ -2,7 +2,10 @@ open AMPCL
 open Ast
 open Types
 
-let key_words = [ "type"; "in"; "let"; "if"; "rec"; "then"; "else"; "fun" ]
+let key_words =
+  [ "match"; "with"; "type"; "in"; "let"; "if"; "rec"; "then"; "else"; "fun" ]
+
+let reserved_operators = [ "|" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 
 let skip_garbage =
@@ -153,10 +156,12 @@ let start_infix_symbols =
 let infix_symbols = [ '!'; '?'; '~' ] @ start_infix_symbols
 
 let infix =
-  (fun c -> List.mem c start_infix_symbols)
-  |> sat |> many
-  |> seq (skip_garbage << sat (fun c -> List.mem c start_infix_symbols))
-  <$> fun (fst, rst) -> implode (fst :: rst)
+  check
+    (fun x -> not (List.mem x reserved_operators))
+    ( (fun c -> List.mem c start_infix_symbols)
+    |> sat |> many
+    |> seq (skip_garbage << sat (fun c -> List.mem c start_infix_symbols))
+    <$> fun (fst, rst) -> implode (fst :: rst) )
 
 let infix_ident =
   infix |> between (skip_garbage << char '(') (skip_garbage << char ')')
