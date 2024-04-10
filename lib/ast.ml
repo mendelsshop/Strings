@@ -4,6 +4,7 @@ type ident = string
 type typed_ident = { ident : ident; ty : ty option }
 type 'b field = { name : string; value : 'b }
 type ('a, 'b) projection = { value : 'a; projector : 'b }
+type ('a, 'b) case = { pattern : 'a; result : 'b }
 
 type pattern =
   | PFloat of float
@@ -33,6 +34,7 @@ type ast =
   | If of { condition : ast; consequent : ast; alternative : ast }
   | Let of { name : pattern; e1 : ast; e2 : ast }
   | LetRec of { name : string; e1 : ast; e2 : ast }
+  | Match of { expr : ast; cases : (pattern, ast) case list }
 
 type top_level =
   | TypeBind of { name : string; ty : ty }

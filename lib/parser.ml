@@ -226,6 +226,20 @@ let rec pattern_parser input =
      <|> record (fun r -> PRecord r) (fun i -> PIdent i) pattern_parser
      |> tuple (fun t -> PTuple t))
 
+let case_parser expr =
+  let case =
+    seq (skip_garbage << pattern_parser) (skip_garbage << string "->" << expr)
+    <$> fun (pattern, result) -> { pattern; result }
+  in
+  skip_garbage << string "match" << skip_garbage << expr >> skip_garbage
+  >> string "with"
+  >>= fun expr ->
+  ( seq
+      (skip_garbage << char '|' |> opt << case)
+      (skip_garbage << char '|' << case |> many)
+  <$> fun (c, cs) -> c :: cs )
+  <$> fun cases -> Ast.Match { cases; expr }
+
 let fun_params = many1 pattern_parser
 
 let fun_parser expr =
@@ -317,7 +331,7 @@ let rec expr input =
     let_expr_parser expr <|> if_then_else expr <|> fun_parser expr
     <|> variant (fun name value -> Constructor { name; value }) expr
     <|> record (fun r -> Record r) (fun i -> Ident i) expr
-    <|> atom
+    <|> case_parser expr <|> atom
   in
   let basic_forms = tuple (fun t -> Tuple t) (project basic_forms) in
   let application =
