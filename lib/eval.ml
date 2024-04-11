@@ -15,7 +15,7 @@ let map = ( <$> )
 
 (* type checker also checks for unbound variables so there is no need to do that here *)
 let get e s = (List.assoc e s, s)
-let insert v s = v :: s |> return ()
+let insert v s = v @ s |> return ()
 
 let error msg =
   print_endline msg;
@@ -38,6 +38,25 @@ let get_bool b = match b with Bool b -> b | _ -> error "not bool"
 let get_record r = match r with Record r -> r | _ -> error "not record"
 let get_int n = match n with Int n -> n | _ -> error "not int"
 
+let rec get_bindings pattern expr =
+  match (pattern, expr) with
+  | PIdent { ident; _ }, _ -> [ (ident, expr) ]
+  | (PFloat _ | PInt _ | PString _ | PUnit _ | PWildCard _), _ -> []
+  | PTuple { pair = ppair; _ }, Tuple pair ->
+      (* TODO: if tuple become row polymorphic(ish) combining the lists of patterns and expression might not work, in that case we want to join up to length of pattern list  *)
+      List.combine ppair pair
+      |> List.concat_map (fun (pat, expr) -> get_bindings pat expr)
+  | PTuple _, _ -> error "not a tuple"
+  | PRecord { fields = pfields; _ }, Record fields ->
+      pfields
+      |> List.concat_map (fun { name; value } ->
+             let value' = List.assoc name fields in
+             get_bindings value value')
+  | PRecord _, _ -> error "not a record"
+  | PConstructor _, _ ->
+      print_endline "todo: constructors";
+      exit 1
+
 let rec eval (expr : typed_ast) =
   match expr with
   | Rec { name; expr; _ } -> (
@@ -49,14 +68,17 @@ let rec eval (expr : typed_ast) =
   | Int { value; _ } -> Int value |> return
   | String { value; _ } -> String value |> return
   | Let { binding = PUnit _; e1; e2; _ } -> eval e1 >>= fun _ -> eval e2
-  | Let { binding = PIdent { ident = name; _ }; e1; e2; _ } ->
-      eval e1 >>= fun e1' -> scoped_insert (name, e1') (eval e2)
-  | Function { parameter = PIdent { ident; _ }; abstraction; _ } ->
+  | Let { binding; e1; e2; _ } ->
+      eval e1 >>= fun e1' -> scoped_insert (get_bindings binding e1') (eval e2)
+  | Function { parameter; abstraction; _ } ->
       fun s ->
         ( Function
             ( s,
               fun s x ->
-                (insert (ident, x) >>= fun () -> eval abstraction) s |> fst ),
+                ( insert (get_bindings parameter x) >>= fun () ->
+                  eval abstraction )
+                  s
+                |> fst ),
           s )
   | Ident { ident; _ } -> get ident
   | Application { func; arguement; _ } ->
@@ -85,14 +107,11 @@ let eval expr =
   | TypeBind _ -> return ()
   (* | Bind { name; value; _ } -> eval value >>= fun value' -> insert (name, value') *)
   | Bind { binding = PUnit _; value; _ } -> eval value <$> fun _ -> ()
-  | Bind { binding = PIdent { ident = name; _ }; value; _ } ->
-      eval value >>= fun value' -> insert (name, value')
+  | Bind { binding; value; _ } ->
+      eval value >>= fun value' -> insert (get_bindings binding value')
   | PrintString s ->
       print_string s;
       return ()
-  | e ->
-      print_endline ("todo: " ^ top_level_to_string e);
-      exit 1
 
 let env =
   [

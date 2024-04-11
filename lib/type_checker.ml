@@ -46,7 +46,8 @@ let print_env (s, m, t) =
 let get v (s, m, t) =
   Result.map
     (fun r -> (r, (s, m, t)))
-    (List.assoc_opt v s |> Option.to_result ~none:("unbound variable `" ^ v ^ "`"))
+    (List.assoc_opt v s
+    |> Option.to_result ~none:("unbound variable `" ^ v ^ "`"))
 
 module IntMap = Map.Make (Int)
 

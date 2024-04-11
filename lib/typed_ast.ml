@@ -142,7 +142,7 @@ let rec ast_to_string ast =
       ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector; _ } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value; _ } -> name ^ " " ^ ast_to_string value
-    | Match { expr; cases; _ } ->
+  | Match { expr; cases; _ } ->
       "match " ^ ast_to_string expr ^ " with "
       ^ String.concat " | "
           (cases

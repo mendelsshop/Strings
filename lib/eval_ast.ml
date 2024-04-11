@@ -9,6 +9,7 @@ type eval_expr =
   | Unit
   | Rec of { name : string; expr : eval_expr }
   | Record of (string * eval_expr) list
+  | Tuple of eval_expr list
 
 let print_ast expr =
   match expr with
@@ -20,3 +21,4 @@ let print_ast expr =
   | Function _ -> "function"
   | Rec _ -> "rec"
   | Record _r -> "record"
+  | Tuple _t -> "tuple"
