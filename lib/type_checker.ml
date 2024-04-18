@@ -65,11 +65,19 @@ let rec instantiate ty (tmap : ty IntMap.t) =
       instantiate t1 tmap >>= fun t1' ->
       instantiate t2 tmap <$> fun t2' -> TFunction (t1', t2')
   | TRecord t -> instantiate t tmap <$> fun t' -> TRecord t'
+  | TVariant t -> instantiate t tmap <$> fun t' -> TVariant t'
   | TRowExtension { field; row_extension; label } ->
       instantiate field tmap >>= fun field' ->
       instantiate row_extension tmap <$> fun row_extension' ->
       TRowExtension { row_extension = row_extension'; label; field = field' }
-  | _ -> return ty
+  | TInteger | TFloat | TUnit | TEmptyRow | TString | TBool -> return ty
+  | TTuple pair ->
+      List.fold_left
+        (fun instantiated item ->
+          instantiated >>= fun instantiated' ->
+          instantiate item tmap <$> fun item' -> item' :: instantiated')
+        (return []) pair
+      <$> fun pair' -> TTuple pair'
 
 type constraints = (ty * ty) list
 
@@ -218,7 +226,11 @@ end = struct
         ( new_meta <$> fun rest_row ->
           ( TVariant
               (TRowExtension
-                 { label = name; field = type_of value; row_extension = rest_row }),
+                 {
+                   label = name;
+                   field = type_of value;
+                   row_extension = rest_row;
+                 }),
             ty ) )
         ++ generate_constraints value
     | Tuple t ->
@@ -247,7 +259,7 @@ end = struct
         return (type_of_pattern binding, type_of value)
         ++ generate_constraints value
         @ generate_constraints_pattern binding
-    | _ -> return []
+    | TypeBind _ | PrintString _ -> return []
 end
 
 let rec mini_sub (m, s_ty) ty =
@@ -264,7 +276,11 @@ let rec mini_sub (m, s_ty) ty =
           row_extension = mini_sub (m, s_ty) row_extension;
         }
   | TTuple pair -> TTuple (List.map (mini_sub (m, ty)) pair)
-  | _ -> ty
+  | TVariant t -> TVariant (mini_sub (m, s_ty) t)
+  | Meta _ | TUnit | TBool | TInteger | TFloat | TString
+  | TPoly (_, _)
+  | TEmptyRow ->
+      ty
 
 let rec subs substitutions ty =
   match substitutions with
@@ -290,7 +306,7 @@ let rec substitute_pattern substitutions pattern =
   | PConstructor { name; value; _ } ->
       PConstructor { name; value = substitute_pattern value; ty }
   | PWildCard _ -> PWildCard { ty }
-  | _ -> pattern
+  | PFloat _ | PInt _ | PString _ | PUnit _ -> pattern
 
 let rec substitute substitutions expr =
   let substitute = substitute substitutions in
@@ -345,7 +361,10 @@ let rec substitute substitutions expr =
       in
       Match
         { expr = substitute expr; cases = List.map substitute_case cases; ty }
-  | _ -> expr
+  | Unit _ | Float _ | String _ | Int _ | Poly _ -> expr
+  | Constructor { name; value; _ } ->
+      Constructor { name; value = substitute value; ty }
+  | TupleAcces _ -> todo "substitute tuple access"
 
 let substitute_top_level substitutions tl =
   let substitute = substitute substitutions in
@@ -356,16 +375,22 @@ let substitute_top_level substitutions tl =
       (* TODO: subsitiute in bindings to *)
       Bind
         { binding = substitute_pattern binding; value = substitute value; ty }
-  | _ -> tl
+  | PrintString _ | TypeBind _ -> tl
 
 let rec metas ty =
   match ty with
   | Meta m -> MetaS.singleton m
   | TFunction (t1, t2) -> metas t2 |> (metas t1 |> MetaS.union)
   | TRecord t -> metas t
+  | TVariant t -> metas t
+  | TTuple pair ->
+      List.fold_left
+        (fun meta_set current -> MetaS.union (metas current) meta_set)
+        MetaS.empty pair
   | TRowExtension { field; row_extension; _ } ->
       metas field |> (metas row_extension |> MetaS.union)
-  | _ -> MetaS.empty
+  | TInteger | TFloat | TUnit | TEmptyRow | TPoly _ | TString | TBool ->
+      MetaS.empty
 
 let find_free ms ty =
   let ms' = metas ty in
@@ -460,6 +485,10 @@ end = struct
             *)
             ( row_rewrite label field row2 >>= fun (row2', sub1) ->
               unify [ (subs sub1 row1, subs sub1 row2') ] <$> fun sub2 ->
+              sub2
+              |> List.map (fun (id, sub) ->
+                     string_of_int id ^ ": " ^ type_to_string sub)
+              |> String.concat ";" |> print_endline;
               List.append sub1 sub2 )
             @ unify constraints
         | t1, t2 ->
@@ -614,8 +643,9 @@ let rec typify expr =
       typify expr >>= fun expr' ->
       List.fold_left
         (fun cases ({ pattern; result } : (Ast.pattern, Ast2.ast2) Ast.case) ->
-          typify result >>= fun result' ->
           typify_pattern pattern >>= fun pattern' ->
+          scoped_insert (get_binders pattern') (fun () -> typify result)
+          >>= fun result' ->
           cases <$> fun cases' ->
           { result = result'; pattern = pattern' } :: cases')
         (return []) cases

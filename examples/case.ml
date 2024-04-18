@@ -1,5 +1,5 @@
 "let foo = Cons 5"
 
 "let x foo =match foo with
-        | Cons a -> 5
+        | Cons a -> a
         | V v -> 6"

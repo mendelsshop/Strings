@@ -38,7 +38,7 @@ let rec type_to_string ty type_delim delim empty =
       "{ " ^ type_to_string fields ": " "; " "" ^ " }"
       (* to make printing work if we swithc variants/adts to rows is call type_to_string with delim = " | " and type_delim = " of " *)
   | TVariant fields ->
-      type_to_string fields " " ": " ""
+      type_to_string fields " " "| " ""
   | TTuple fields ->
       String.concat " * "
         (List.map (fun ty -> type_to_string ty ": " "; " "{}") fields)
