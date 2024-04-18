@@ -13,7 +13,7 @@ type ty =
   | TRecord of
       ty (* todo gadts so this can only be empty row or row extension *)
   | TTuple of ty list (* todo variants are also rows *)
-  | TVariant of (string * ty) list
+  | TVariant of ty
 
 let rec type_to_string ty type_delim delim empty =
   match ty with
@@ -38,11 +38,7 @@ let rec type_to_string ty type_delim delim empty =
       "{ " ^ type_to_string fields ": " "; " "" ^ " }"
       (* to make printing work if we swithc variants/adts to rows is call type_to_string with delim = " | " and type_delim = " of " *)
   | TVariant fields ->
-      String.concat " | "
-        (List.map
-           (fun (field, ty) ->
-             field ^ " of " ^ type_to_string ty ": " "; " "{}")
-           fields)
+      type_to_string fields " " ": " ""
   | TTuple fields ->
       String.concat " * "
         (List.map (fun ty -> type_to_string ty ": " "; " "{}") fields)

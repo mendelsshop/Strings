@@ -106,7 +106,7 @@ let string_parser =
 let ident_parser =
   check
     (fun x -> not (List.mem x key_words))
-    ( skip_garbage << seq lower (many (alphanum <|> char '_'))
+    ( skip_garbage << seq (lower <|> char '_') (many (alphanum <|> char '_'))
     <$> fun (fst, snd) -> implode (fst :: snd) )
 
 let inspect chars =
@@ -141,7 +141,13 @@ let variant_type_parser =
   in
   let variant_with_sep f = skip_garbage << char '|' |> f << variant in
   seq (variant_with_sep opt) (variant_with_sep Fun.id |> many)
-  <$> fun (v, vs) -> TVariant (v :: vs)
+  <$> fun (v, vs) ->
+  TVariant
+    (List.fold_left
+       (fun row field ->
+         TRowExtension
+           { label = fst field; field = snd field; row_extension = row })
+       TEmptyRow (v :: vs))
 
 let type_def_parser =
   seq
@@ -224,6 +230,7 @@ let rec pattern_parser input =
   input
   |> (parens pattern_parser
      <|> float (fun f -> Ast.PFloat f)
+     <|> variant (fun name value -> PConstructor { name; value }) pattern_parser
      <|> number (fun i -> Ast.PInt i)
      <|> (ident <$> fun i -> if i = "_" then PWildCard else Ast.PIdent i)
      <|> ( skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ ->

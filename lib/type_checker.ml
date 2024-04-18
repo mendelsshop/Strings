@@ -136,7 +136,17 @@ end = struct
                   tys >>= fun tys' ->
                   ty <$> fun ty' -> List.append ty' tys')
                 (return []))
-    | PConstructor _c -> todo "generate constraints for variant constructors"
+    | PConstructor { name; value; ty } ->
+        ( new_meta <$> fun rest_row ->
+          ( TVariant
+              (TRowExtension
+                 {
+                   label = name;
+                   field = type_of_pattern value;
+                   row_extension = rest_row;
+                 }),
+            ty ) )
+        ++ generate_constraints_pattern value
     | PTuple t ->
         return (t.ty, TTuple (List.map type_of_pattern t.pair))
         ++ (t.pair
@@ -204,7 +214,13 @@ end = struct
                  { label = projector; field = ty; row_extension = rest_row }),
             type_of value ) )
         ++ generate_constraints value
-    | Constructor _c -> todo "generate constraints for variant constructors"
+    | Constructor { name; value; ty } ->
+        ( new_meta <$> fun rest_row ->
+          ( TVariant
+              (TRowExtension
+                 { label = name; field = type_of value; row_extension = rest_row }),
+            ty ) )
+        ++ generate_constraints value
     | Tuple t ->
         return (t.ty, TTuple (List.map type_of t.pair))
         ++ (t.pair
@@ -414,6 +430,8 @@ end = struct
             (* todo: better error for when two records don't unify - right now it gets down to empty row and errors with "not type checked: could not unify a int '7 and {}" *)
         | TRecord (TRowExtension _ as r1), TRecord (TRowExtension _ as r2) ->
             (r1, r2) :: constraints |> unify
+        | TVariant (TRowExtension _ as r1), TVariant (TRowExtension _ as r2) ->
+            (r1, r2) :: constraints |> unify
             (* | ( TRowExtension { label = label1; field = ty1; row_extension = row1 }, *)
             (*     TRowExtension { label = label2; field = ty2; row_extension = row2 } *)
             (*   ) *)
@@ -519,10 +537,8 @@ let rec get_binders pattern =
               [ (name, ty) ]
           | { value; _ } -> get_binders value)
         fields
-  | PUnit _ -> []
-  | _ ->
-      print_endline ("unsupported pattern" ^ pattern_to_string pattern);
-      exit 0
+  | PWildCard _ | PFloat _ | PInt _ | PString _ | PUnit _ -> []
+  | PConstructor { value; _ } -> get_binders value
 
 let rec typify expr =
   match expr with
