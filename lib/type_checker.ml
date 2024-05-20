@@ -186,8 +186,9 @@ end = struct
         return (ty, TFunction (type_of_pattern parameter, type_of abstraction))
         ++ generate_constraints abstraction
         @ generate_constraints_pattern parameter
-    | Let { e1; e2; binding; _ } ->
-        (return (type_of_pattern binding, type_of e1) ++ generate_constraints e1)
+    | Let { e1; e2; binding; ty } ->
+        (return [ (type_of_pattern binding, type_of e1); (ty, type_of e2) ]
+        @ generate_constraints e1)
         @ generate_constraints e2
         @ generate_constraints_pattern binding
     | Rec { expr; _ } -> generate_constraints expr
@@ -277,10 +278,8 @@ let rec mini_sub (m, s_ty) ty =
         }
   | TTuple pair -> TTuple (List.map (mini_sub (m, ty)) pair)
   | TVariant t -> TVariant (mini_sub (m, s_ty) t)
-  | Meta _ | TUnit | TBool | TInteger | TFloat | TString
-  | TPoly (_, _)
-  | TEmptyRow ->
-      ty
+  | TPoly (ms, ty) when List.mem m ms |> not -> mini_sub (m, s_ty) ty
+  | Meta _ | TUnit | TBool | TInteger | TFloat | TString | TEmptyRow | TPoly _ -> ty
 
 let rec subs substitutions ty =
   match substitutions with
@@ -367,6 +366,10 @@ let rec substitute substitutions expr =
   | TupleAcces _ -> todo "substitute tuple access"
 
 let substitute_top_level substitutions tl =
+  List.iter
+    (fun (i, ty) ->
+      "sub " ^ string_of_int i ^ ": " ^ type_to_string ty |> print_endline)
+    substitutions;
   let substitute = substitute substitutions in
   let substitute_pattern = substitute_pattern substitutions in
   match tl with
@@ -581,8 +584,10 @@ let rec typify expr =
       new_meta >>= fun f_ty ->
       typify_pattern parameter >>= fun parameter' ->
       scoped_insert (get_binders parameter') (fun () ->
-          typify abstraction >>= fun abstraction ->
-          return (Function { abstraction; parameter = parameter'; ty = f_ty }))
+          typify abstraction >>= fun abstraction' ->
+          return
+            (Function
+               { abstraction = abstraction'; parameter = parameter'; ty = f_ty }))
   | Ast2.If { condition; consequent; alternative } ->
       typify condition >>= fun condition ->
       typify consequent >>= fun consequent ->
@@ -594,11 +599,11 @@ let rec typify expr =
       typify arguement >>= fun arguement ->
       new_meta >>= fun ty -> return (Application { func; arguement; ty })
   | Ast2.Let { e1; e2; name } ->
-      typify e1 >>= fun e1 ->
+      typify e1 >>= fun e1' ->
       typify_pattern name >>= fun name' ->
-      generalize e1 >>= fun e1 ->
-      scoped_insert (get_binders name') (fun () -> typify e2) >>= fun e2 ->
-      return (Let { binding = name'; ty = type_of e2; e1; e2 })
+      generalize e1' >>= fun e1'' ->
+      scoped_insert (get_binders name') (fun () -> typify e2) >>= fun e2' ->
+      return (Let { binding = name'; ty = type_of e2'; e1 = e1''; e2 = e2' })
   | Ast2.LetRec { e1; e2; name } ->
       rec_no_func e1 >>= fun e1 ->
       new_meta >>= fun e1_ty ->
@@ -677,6 +682,8 @@ let typify tl =
       return (TypeBind { name; ty })
   | Ast2.Bind { value; name } ->
       typify value >>= fun value ->
+
+  value |> ast_to_string |> print_endline;
       typify_pattern name >>= fun name' ->
       generalize value <$> fun value ->
       Bind { binding = name'; ty = type_of value; value }
