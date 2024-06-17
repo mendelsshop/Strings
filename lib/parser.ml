@@ -365,7 +365,7 @@ let rec expr input =
   in
   infix_application input
 
-let top_level = expr <$> fun exp -> Ast.Bind { name = PUnit; value = exp }
+let top_level = expr <$> fun exp -> Ast.Bind { name = PWildCard; value = exp }
 
 let parser =
   many

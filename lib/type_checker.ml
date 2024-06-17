@@ -682,8 +682,6 @@ let typify tl =
       return (TypeBind { name; ty })
   | Ast2.Bind { value; name } ->
       typify value >>= fun value ->
-
-  value |> ast_to_string |> print_endline;
       typify_pattern name >>= fun name' ->
       generalize value <$> fun value ->
       Bind { binding = name'; ty = type_of value; value }
