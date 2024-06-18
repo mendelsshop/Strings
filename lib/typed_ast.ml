@@ -46,7 +46,7 @@ type typed_ast =
     }
 
 type top_level =
-  | Bind of { ty : ty; binding : typed_pattern; value : typed_ast }
+  | Bind of { binding : typed_pattern; value : typed_ast }
   | TypeBind of { name : string; ty : ty }
   | PrintString of string
 
@@ -152,10 +152,8 @@ let rec ast_to_string ast =
 let top_level_to_string exp =
   match exp with
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
-  | Bind { binding; value; ty } ->
-      "let (" ^ pattern_to_string binding ^ ":"
-      ^ (binding |> type_of_pattern |> type_to_string)
-      ^ ") : " ^ type_to_string ty ^ " = " ^ ast_to_string value
+  | Bind { binding; value } ->
+      "let (" ^ pattern_to_string binding ^ ") = " ^ ast_to_string value
   | PrintString s -> s
 
 let print_program program =

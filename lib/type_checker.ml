@@ -192,7 +192,7 @@ end = struct
         @ generate_constraints e2
         @ generate_constraints_pattern binding
     | Rec { expr; _ } -> generate_constraints expr
-    | Poly { e; _ } -> generate_constraints e (* | e -> *)
+    | Poly { e; _ } -> generate_constraints e
     | Record { fields; ty } ->
         return
           ( ty,
@@ -279,7 +279,9 @@ let rec mini_sub (m, s_ty) ty =
   | TTuple pair -> TTuple (List.map (mini_sub (m, ty)) pair)
   | TVariant t -> TVariant (mini_sub (m, s_ty) t)
   | TPoly (ms, ty) when List.mem m ms |> not -> mini_sub (m, s_ty) ty
-  | Meta _ | TUnit | TBool | TInteger | TFloat | TString | TEmptyRow | TPoly _ -> ty
+  | Meta _ | TUnit | TBool | TInteger | TFloat | TString | TEmptyRow | TPoly _
+    ->
+      ty
 
 let rec subs substitutions ty =
   match substitutions with
@@ -373,12 +375,12 @@ let substitute_top_level substitutions tl =
   let substitute = substitute substitutions in
   let substitute_pattern = substitute_pattern substitutions in
   match tl with
-  | Bind { binding; value; ty } ->
-      let ty = subs substitutions ty in
+  | Bind { binding; value } ->
       (* TODO: subsitiute in bindings to *)
-      Bind
-        { binding = substitute_pattern binding; value = substitute value; ty }
+      Bind { binding = substitute_pattern binding; value = substitute value }
   | PrintString _ | TypeBind _ -> tl
+
+let substitute_envoirnment env substitutions = List.map (fun  (name, ty)  -> (name, subs substitutions ty)) env
 
 let rec metas ty =
   match ty with
@@ -508,17 +510,55 @@ let rec find_free_in_env ms env =
         let ms' = find_free ms ty in
         find_free_in_env ms' env'
 
-let generalize expr (s : (string * ty) list * int * (string * ty) list) =
+let rec get_binders pattern metas =
+  let get_binders p = get_binders p metas in
+  match pattern with
+  | PIdent { ident; ty } -> [ (ident, metas ty) ]
+  | PTuple { pair; _ } -> List.concat_map get_binders pair
+  | PRecord { fields; _ } ->
+      List.concat_map
+        (function
+          | { name; value = PIdent { ident = name'; ty } } when name = name' ->
+              [ (name, ty) ]
+          | { value; _ } -> get_binders value)
+        fields
+  | PWildCard _ | PFloat _ | PInt _ | PString _ | PUnit _ -> []
+  | PConstructor { value; _ } -> get_binders value
+
+let generalize expr pattern (s : (string * ty) list * int * (string * ty) list)
+    =
   let s, m, t = s in
   Result.map
     (fun (subs, m') ->
+      subs
+      |> List.map (fun (i, ty) -> string_of_int i ^ ":" ^ type_to_string ty)
+      |> String.concat "," |> print_endline;
       let exp = substitute subs expr in
-      let fv = find_free_in_env (type_of exp |> metas) s in
-      ( (if MetaS.is_empty fv then exp
-         else Poly { e = exp; metas = MetaS.to_list fv }),
-        (s, m', t) ))
-    (let cs, m' = ConstraintGenerator.generate_constraints expr m in
-     Result.map (fun (subs, m'') -> (subs, m'')) (Unifier.unify cs m'))
+      let pattern = substitute_pattern subs pattern in
+
+          (*TODO: maybe we need a better place to back substitute envoirnment*)
+      let s' = substitute_envoirnment s subs in
+
+      let fv = find_free_in_env (type_of_pattern pattern |> metas) s in
+      ( ( get_binders pattern 
+          (fun ty ->
+                if MetaS.is_empty fv then ty
+                else
+                  let f = TPoly (MetaS.to_list fv, ty) in
+                  print_endline (type_to_string f);
+          f),
+          (*TODO: maybe generalize exp and pattern two*)
+          exp,
+          pattern ),
+        (s', m', t) )) (*TODO: better way to couple pattern and expression*)
+    (let cs, m' = ConstraintGenerator.generate_constraints_pattern pattern m in
+     let cs', m' = ConstraintGenerator.generate_constraints expr m' in
+     Result.map
+       (fun (subs, m'') -> (subs, m''))
+       (Unifier.unify
+          (*TODO: makes sure unifier does not generate more than one substitution per variable*)
+          (((type_of expr, type_of_pattern pattern) :: cs') @ cs)
+          m'))
 
 let rec_no_func expr =
   match expr with
@@ -558,19 +598,7 @@ let rec typify_pattern pat =
       typify_pattern value <$> fun value' ->
       PConstructor { value = value'; name; ty }
 
-let rec get_binders pattern =
-  match pattern with
-  | PIdent { ident; ty } -> [ (ident, ty) ]
-  | PTuple { pair; _ } -> List.concat_map get_binders pair
-  | PRecord { fields; _ } ->
-      List.concat_map
-        (function
-          | { name; value = PIdent { ident = name'; ty } } when name = name' ->
-              [ (name, ty) ]
-          | { value; _ } -> get_binders value)
-        fields
-  | PWildCard _ | PFloat _ | PInt _ | PString _ | PUnit _ -> []
-  | PConstructor { value; _ } -> get_binders value
+let id x = x
 
 let rec typify expr =
   match expr with
@@ -583,7 +611,7 @@ let rec typify expr =
   | Ast2.Function { parameter; abstraction } ->
       new_meta >>= fun f_ty ->
       typify_pattern parameter >>= fun parameter' ->
-      scoped_insert (get_binders parameter') (fun () ->
+      scoped_insert (get_binders parameter' id) (fun () ->
           typify abstraction >>= fun abstraction' ->
           return
             (Function
@@ -601,21 +629,22 @@ let rec typify expr =
   | Ast2.Let { e1; e2; name } ->
       typify e1 >>= fun e1' ->
       typify_pattern name >>= fun name' ->
-      generalize e1' >>= fun e1'' ->
-      scoped_insert (get_binders name') (fun () -> typify e2) >>= fun e2' ->
-      return (Let { binding = name'; ty = type_of e2'; e1 = e1''; e2 = e2' })
+      generalize e1' name' >>= fun (env, e1'', name'') ->
+      scoped_insert env (fun () -> typify e2) >>= fun e2' ->
+      return (Let { binding = name''; ty = type_of e2'; e1 = e1''; e2 = e2' })
   | Ast2.LetRec { e1; e2; name } ->
       rec_no_func e1 >>= fun e1 ->
       new_meta >>= fun e1_ty ->
       scoped_insert [ (name, e1_ty) ] (fun _ -> typify e1) >>= fun e1 ->
-      generalize e1 >>= fun e1 ->
-      scoped_insert [ (name, type_of e1) ] (fun () -> typify e2) >>= fun e2 ->
+      generalize e1 (PIdent { ident = name; ty = e1_ty })
+      >>= fun (env, e1'', _) ->
+      scoped_insert env (fun () -> typify e2) >>= fun e2 ->
       return
         (Let
            {
-             binding = PIdent { ident = name; ty = type_of e1 };
+             binding = PIdent { ident = name; ty = type_of e1'' };
              ty = type_of e2;
-             e1 = Rec { ty = type_of e1; expr = e1; name };
+             e1 = Rec { ty = type_of e1''; expr = e1''; name };
              e2;
            })
   | Ast2.Tuple tuple ->
@@ -649,7 +678,7 @@ let rec typify expr =
       List.fold_left
         (fun cases ({ pattern; result } : (Ast.pattern, Ast2.ast2) Ast.case) ->
           typify_pattern pattern >>= fun pattern' ->
-          scoped_insert (get_binders pattern') (fun () -> typify result)
+          scoped_insert (get_binders pattern' id) (fun () -> typify result)
           >>= fun result' ->
           cases <$> fun cases' ->
           { result = result'; pattern = pattern' } :: cases')
@@ -663,19 +692,20 @@ let unify generator mapper expr s =
     (fun (substitutions, m'') -> (mapper substitutions expr, (s, m'', t)))
     (Unifier.unify constraints m')
 
-let typify tl =
+let infer tl =
   match tl with
   | Ast2.RecBind { name; value } ->
       rec_no_func value >>= fun value ->
       new_meta >>= fun value_ty ->
       scoped_insert [ (name, value_ty) ] (fun _ -> typify value)
       >>= fun value ->
-      generalize value <$> fun value ->
+      generalize value (PIdent { ident = name; ty = value_ty })
+      >>= fun (bind, value', _) ->
+      insert bind <$> fun _ ->
       Bind
         {
-          binding = PIdent { ident = name; ty = type_of value };
-          ty = type_of value;
-          value = Rec { ty = type_of value; expr = value; name };
+          binding = PIdent { ident = name; ty = type_of value' };
+          value = Rec { ty = type_of value'; expr = value'; name };
         }
   | Ast2.TypeBind { name; ty } ->
       (* TODO: validate types *)
@@ -683,8 +713,8 @@ let typify tl =
   | Ast2.Bind { value; name } ->
       typify value >>= fun value ->
       typify_pattern name >>= fun name' ->
-      generalize value <$> fun value ->
-      Bind { binding = name'; ty = type_of value; value }
+      generalize value name' >>= fun (bind, value', name'') ->
+      insert bind <$> fun _ -> Bind { binding = name''; value = value' }
   | Ast2.PrintString s -> return (PrintString s)
 
 let print_subs constraints =
@@ -692,19 +722,6 @@ let print_subs constraints =
     (fun first (c1, c2) ->
       first ^ "\n" ^ string_of_int c1 ^ " = " ^ type_to_string c2)
     "" constraints
-
-let insert tl =
-  (match tl with
-  | Bind { binding; _ } -> insert (get_binders binding)
-  | TypeBind { name; ty } -> insert_type (name, ty)
-  | PrintString _ -> return ())
-  <$> fun () -> tl
-
-let infer tl =
-  typify tl
-  >>= unify ConstraintGenerator.generate_constraints_top_level
-        substitute_top_level
-  >>= insert
 
 (* TODO: static envoirment *)
 let infer tls =
