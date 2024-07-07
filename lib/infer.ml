@@ -102,6 +102,37 @@ struct
   let ftv env = Stdlib.List.map (fun (_, ty) -> ty) env |> SubstitableTypes.ftv
 end
 
+module SubstitableExpr : Substitable = struct
+  type t = texpr
+
+  (*apply is rescursive so that all types are filled in in all sub expressions*)
+  let rec apply subs = function
+    | TVar (var, ty) -> TVar (var, SubstitableType.apply subs ty)
+    | (TBoolean _ | TNumber _) as e -> e
+    | TIf (cond, cons, alt, ty) ->
+        TIf
+          ( apply subs cond,
+            apply subs cons,
+            apply subs alt,
+            SubstitableType.apply subs ty )
+    | TLet (var, e1, e2, ty) ->
+        TLet (var, apply subs e1, apply subs e2, SubstitableType.apply subs ty)
+    | TLambda (var, arg_ty, abs, ty) ->
+        TLambda
+          ( var,
+            SubstitableType.apply subs arg_ty,
+            apply subs abs,
+            SubstitableType.apply subs ty )
+    | TApplication (abs, arg, ty) ->
+        TApplication
+          (apply subs abs, apply subs arg, SubstitableType.apply subs ty)
+    | TPoly (metas, expr) ->
+        let subst' = MetaVariables.fold Subst.remove metas subs in
+        apply subst' expr
+
+  let ftv expr = type_of expr |> SubstitableType.ftv
+end
+
 let occurs_check a t = SubstitableType.ftv t |> MetaVariables.mem a
 
 let rec unify t1 t2 subs =
