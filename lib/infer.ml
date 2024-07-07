@@ -42,6 +42,13 @@ let scoped_do f =
   let* _ = ST.put (env, s) in
   return r
 
+let env_modify f =
+  (let open ST in
+   let* env, s = ST.get () in
+   let env' = (f env, s) in
+   put env')
+  |> lift
+
 let update_env env =
   let open ST in
   let* _, s = get () in
@@ -102,7 +109,7 @@ struct
   let ftv env = Stdlib.List.map (fun (_, ty) -> ty) env |> SubstitableTypes.ftv
 end
 
-module SubstitableExpr : Substitable = struct
+module SubstitableExpr : Substitable with type t = texpr = struct
   type t = texpr
 
   (*apply is rescursive so that all types are filled in in all sub expressions*)
@@ -134,27 +141,27 @@ module SubstitableExpr : Substitable = struct
 end
 
 let occurs_check a t = SubstitableType.ftv t |> MetaVariables.mem a
+let compose s1 s2 = Subst.union (fun _ fst _ -> Some fst) s1 s2
 
-let rec unify t1 t2 subs =
+let rec unify t1 t2 =
   match (t1, t2) with
-  | _, _ when t1 = t2 -> return subs
+  | _, _ when t1 = t2 -> return Subst.empty
   | TMeta t, ty when occurs_check t ty -> fail ""
   | ty, TMeta t when occurs_check t ty -> fail ""
-  | TMeta t, ty | ty, TMeta t ->
-      Subst.union (fun _ fst _ -> Some fst) (Subst.singleton t ty) subs
-      |> return
+  | TMeta t, ty | ty, TMeta t -> Subst.singleton t ty |> return
   | TArrow (t1, t2), TArrow (t1', t2') ->
-      let* subs' = unify t1 t1' subs in
-      unify t2 t2' subs'
+      let* subs = unify t1 t1' in
+      let* subs' =
+        unify (SubstitableType.apply subs t2) (SubstitableType.apply subs t2')
+      in
+      compose subs subs' |> return
   | _ -> fail "unification error"
 
-let generalize subs ty =
-  let ty' = SubstitableType.apply subs ty in
-  let ty_ftv = SubstitableType.ftv ty' in
+let generalize ty =
+  let ty_ftv = SubstitableType.ftv ty in
   let get_env = ST.gets fst |> lift in
   let* env = get_env in
-  let env' = SubstitableTypeEnv.apply subs env in
-  let env_ftv = SubstitableTypeEnv.ftv env' in
+  let env_ftv = SubstitableTypeEnv.ftv env in
   MetaVariables.diff ty_ftv env_ftv |> return
 
 let instantiate : ty -> ty ResultState.t = function
@@ -170,50 +177,68 @@ let instantiate : ty -> ty ResultState.t = function
       SubstitableType.apply subs' ty |> return
   | ty -> return ty
 
-let rec infer subs expr =
-  match expr with
-  | Var x ->
-      x |> get
-      |> bind ~f:(fun ty ->
-             let* ty' = instantiate ty in
-             return (subs, TVar (x, ty')))
-  | Boolean b -> return (subs, TBoolean (b, TBool))
-  | Number n -> return (subs, TNumber (n, TInt))
-  | If (cond, cons, alt) ->
-      let* subs', cond' = infer subs cond in
-      let* subs'', cons' = infer subs' cons in
-      let* subs''', alt' = infer subs'' alt in
-      let* v = unify (type_of cond') TBool subs''' in
-      let* v' = unify (type_of cons') (type_of alt') v in
-      return (v', TIf (cond', cons', alt', type_of cons'))
-  | Let (var, e1, e2) ->
-      let* subs', e1' = infer subs e1 in
-      let* free_variables = type_of e1' |> generalize subs' in
+let infer expr =
+  let rec infer_inner expr =
+    match expr with
+    | Var x ->
+        x |> get
+        |> bind ~f:(fun ty ->
+               let* ty' = instantiate ty in
+               return (Subst.empty, ty', TVar (x, ty')))
+    | Lambda ((var : string), abs) ->
+        let* arg_ty = new_meta in
+        let* subs, abs_ty, abs' =
+          scoped_do (fun env ->
+              let* _ = (var, arg_ty) :: env |> update_env |> return in
+              infer_inner abs)
+        in
+        let arg_ty' = SubstitableType.apply subs arg_ty in
+        let ty = TArrow (arg_ty', abs_ty) in
+        return (subs, ty, TLambda (var, arg_ty', abs', ty))
+    | Application (abs, arg) ->
+        let* subs, abs_ty, abs' = infer_inner abs in
 
-      let* subs'', e2' =
-        scoped_do (fun env ->
-            let* _ =
-              let new_binding : string * ty =
-                (var, TPoly (free_variables, type_of e1'))
+        let* _ = env_modify (SubstitableTypeEnv.apply subs) in
+        let* subs', arg_ty, arg' = infer_inner arg and* meta = new_meta in
+        let abs_ty' = SubstitableType.apply subs' abs_ty in
+        let* v = unify abs_ty' (TArrow (arg_ty, meta)) in
+        let meta' = SubstitableType.apply v arg_ty in
+        let subs''' = (compose subs << compose subs') v in
+        return (subs''', meta', TApplication (abs', arg', meta'))
+    | Let (var, e1, e2) ->
+        let* subs, e1_ty, e1' = infer_inner e1 in
+        let* _ = env_modify (SubstitableTypeEnv.apply subs) in
+        let* free_variables = e1_ty |> generalize in
+
+        let* subs', e2_ty, e2' =
+          scoped_do (fun env ->
+              let* _ =
+                let new_binding : string * ty =
+                  (var, TPoly (free_variables, e1_ty))
+                in
+                new_binding :: env |> update_env |> return
               in
-              new_binding :: env |> update_env |> return
-            in
-            infer subs e2)
-      in
-      return (subs'', TLet (var, TPoly (free_variables, e1'), e2', type_of e2'))
-  | Lambda ((var : string), abs) ->
-      let* arg_ty = new_meta in
-      let* subs', abs' =
-        scoped_do (fun env ->
-            let* _ = (var, arg_ty) :: env |> update_env |> return in
-            infer subs abs)
-      in
-      return (subs', TLambda (var, arg_ty, abs', TArrow (arg_ty, type_of abs')))
-  | Application (abs, arg) ->
-      let* subs', abs' = infer subs abs in
-      let* subs'', arg' = infer subs' arg and* meta = new_meta in
-      let* v = unify (type_of abs') (TArrow (type_of arg', meta)) subs'' in
-      return (v, TApplication (abs', arg', meta))
+              infer_inner e2)
+        in
+        let subs'' = compose subs subs' in
+        return
+          (subs'', e2_ty, TLet (var, TPoly (free_variables, e1'), e2', e2_ty))
+    | Boolean b -> return (Subst.empty, TBool, TBoolean (b, TBool))
+    | Number n -> return (Subst.empty, TInt, TNumber (n, TInt))
+    | If (cond, cons, alt) ->
+        let* subs, cond_ty, cond' = infer_inner cond in
+        let* subs', cons_ty, cons' = infer_inner cons in
+        let* subs'', alt_ty, alt' = infer_inner alt in
+        let* v = unify cond_ty TBool in
+        let* v' = unify cons_ty alt_ty in
+        let cons_ty' = SubstitableType.apply v' cons_ty in
+        let subs''' =
+          (compose subs << compose subs' << compose subs'' << compose v) v'
+        in
+        return (subs''', cons_ty', TIf (cond', cons', alt', cons_ty'))
+  in
+  let* subs, ty, expr' = infer_inner expr in
+  (SubstitableExpr.apply subs expr', ty) |> return
 
 let rec generate_constraints expr =
   match expr with
