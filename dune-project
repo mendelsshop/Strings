@@ -19,7 +19,7 @@
  (name ml)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune monads)
+ (depends ocaml dune monads ACMPL)
  (tags
   (topics "to describe" your project)))
 
