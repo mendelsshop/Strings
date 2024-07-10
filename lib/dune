@@ -1,3 +1,4 @@
 (library
  (name ml)
+ (modules Parser Expr)
  (libraries monads AMPCL))

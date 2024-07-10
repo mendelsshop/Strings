@@ -60,6 +60,32 @@ type expr =
   | Lambda of string * expr
   | Application of expr * expr
 
+(*bad expression format*)
+let rec expr_to_string indent =
+  let next_level = indent + 1 in
+  let indent_string = String.make (next_level * 2) ' ' in
+  function
+  | Var s -> s
+  | Boolean b -> string_of_bool b
+  | Number n -> string_of_float n
+  | If (cond, cons, alt) ->
+      "if ( " ^ expr_to_string indent cond ^ " )\n" ^ indent_string ^ "then ( "
+      ^ expr_to_string next_level cons
+      ^ " )\n" ^ indent_string ^ "else ( "
+      ^ expr_to_string next_level alt
+      ^ " )"
+  | Let (var, e1, e2) ->
+      "let " ^ var ^ " = ( " ^ expr_to_string indent e1 ^ " )\n" ^ indent_string
+      ^ "in ( "
+      ^ expr_to_string next_level e2
+      ^ " )"
+  | Lambda (var, abs) -> "\\" ^ var ^ ".( " ^ expr_to_string indent abs ^ " )"
+  | Application (abs, arg) ->
+      "( " ^ expr_to_string indent abs ^ " ) ( " ^ expr_to_string indent arg
+      ^ " )"
+
+let expr_to_string = expr_to_string 0
+
 type texpr =
   | TVar of string * ty
   | TBoolean of bool * ty

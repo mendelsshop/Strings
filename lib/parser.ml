@@ -1,7 +1,22 @@
 open AMPCL
 open Expr
 
+let key_words = [ "in"; "let"; "if"; "rec"; "then"; "else"; "\\" ]
+
+let junk =
+  let non_newline = sat (fun c -> c != '\n') in
+  let comment_contents = many non_newline <$> implode in
+  let comment =
+    string "--" >>= fun comment_start ->
+    comment_contents <$> fun contents -> comment_start ^ contents
+  in
+  let white_space = sat (function ' ' | '\n' | '\t' -> true | _ -> false) in
+  let white_spaces = white_space <$> String.make 1 in
+  many (white_spaces <|> comment) <$> String.concat ""
+
+let skip_garbage f = junk >>= fun _ -> f
 let ( << ) f g x = f (g x)
+let ( ! ) = skip_garbage
 
 (*TODO: comments and whitespace*)
 
@@ -18,49 +33,61 @@ let ident =
   let idents = many alphanum in
   let flatten (f, rest) = f :: rest in
   seq letter idents <$> flatten <$> implode
+  |> check (fun x -> not (List.mem x key_words))
 
 let ident_parser = ident <$> fun i -> Var i
 
 let lambda_parser expr =
   char '\\' >>= fun _ ->
-  ident >>= fun ident ->
-  char '.' >>= fun _ ->
+  !ident >>= fun ident ->
+  !(char '.') >>= fun _ ->
   expr <$> fun expr -> Lambda (ident, expr)
-
-let rec application_parser expr =
-  application_parser expr >>= fun abs ->
-  opt expr <$> function Some arg -> Application (abs, arg) | None -> abs
 
 let if_parser expr =
   string "if" >>= fun _ ->
   expr >>= fun cond ->
-  string "then" >>= fun _ ->
+  !(string "then") >>= fun _ ->
   expr >>= fun cons ->
-  string "else" >>= fun _ ->
+  !(string "else") >>= fun _ ->
   expr <$> fun alt -> If (cond, cons, alt)
 
 let let_parser expr =
   string "let" >>= fun _ ->
-  ident >>= fun ident ->
+  !ident >>= fun ident ->
+  !(char '=') >>= fun _ ->
   expr >>= fun e1 ->
-  string "in" >>= fun _ ->
+  !(string "in") >>= fun _ ->
   expr <$> fun e2 -> Let (ident, e1, e2)
 
 let parens_parser expr =
   char '(' >>= fun _ ->
   expr >>= fun expr ->
-  char ')' <$> fun _ -> expr
+  !(char ')') <$> fun _ -> expr
 
-let rec expr input =
-  choice
-    [
-      parens_parser expr;
-      boolean_parser;
-      number_parser;
-      ident_parser;
-      application_parser expr;
-      lambda_parser expr;
-      let_parser expr;
-      if_parser expr;
-    ]
-    input
+let rec expr_inner input =
+  let basic_forms =
+    !(choice
+        [
+          parens_parser (expr_inner <|> !(let_parser expr_inner));
+          boolean_parser;
+          number_parser;
+          ident_parser;
+          lambda_parser expr_inner;
+          if_parser expr_inner;
+        ])
+  in
+  let rec application_parser input =
+    ( basic_forms >>= fun abs ->
+      application_parser <$> (fun arg -> Application (abs, arg)) <|> return abs
+    )
+      input
+  in
+  application_parser input
+
+let rec expr input = (expr_inner <|> !(let_parser expr)) input
+
+let parse =
+  many expr >>= fun exprs ->
+  junk <$> fun _ -> exprs
+
+let run = run
