@@ -15,6 +15,9 @@ let () =
   let input = read_to_string file in
   let parsed = run parse input in
   Option.fold ~none:"bad file"
-    ~some:(fun exprs -> List.map expr_to_string exprs |> String.concat "\n")
+    ~some:(fun exprs ->
+      Ml.Infer.infer_many exprs |> Ml.Infer.run_with_default
+      |> Result.fold ~error:Fun.id ~ok:(fun exprs' ->
+             List.map texpr_to_string exprs' |> String.concat "\n"))
     parsed
-  |> prerr_endline
+  |> print_endline

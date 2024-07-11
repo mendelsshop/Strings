@@ -4,7 +4,10 @@ open Monads.Std
 let ( << ) f g x = f (g x)
 
 module ST = struct
-  module StateEnv = Int
+  module StateEnv = struct
+    type t = string Seq.t
+  end
+
   include Monad.State.T1 (StateEnv) (Monad.Ident)
   include Monad.State.Make (StateEnv) (Monad.Ident)
 end
@@ -38,13 +41,38 @@ let get x =
   let* env = lift (R.read ()) in
   Option.fold
     ~some:(fun x -> return x)
-    ~none:(ResultReaderOps.fail "unbound variable")
+    ~none:("unbound variable " ^ x |> ResultReaderOps.fail)
     (env
     |> Stdlib.List.find_map (fun ((name : string), ty) ->
-           if name == x then Some ty else None))
+           if name = x then Some ty else None))
+
+let chars = Stdlib.Seq.init 26 (fun x -> 97 + x |> Char.chr |> String.make 1)
+
+let rec replicate n seq =
+  let open Stdlib in
+  if n = 0 then Seq.return ""
+  else
+    Seq.flat_map
+      (fun res ->
+        Seq.flat_map
+          (fun rest -> res ^ rest |> Seq.return)
+          (replicate (n - 1) seq))
+      seq
+
+let letters =
+  let open Stdlib in
+  Seq.ints 1 |> Seq.flat_map (fun x -> replicate x chars)
 
 let new_meta =
-  ST.gets (fun meta -> TMeta (meta |> string_of_int)) |> R.lift |> lift
+  let* letters = ST.get () |> R.lift |> lift in
+  let* letter, letters' =
+    Stdlib.Option.fold
+      ~none:(fail "ran out of fresh type variables")
+      ~some:(fun (letter, letters') -> (TMeta letter, letters') |> return)
+      (Stdlib.Seq.uncons letters)
+  in
+  let* _ = ST.put letters' |> R.lift |> lift in
+  return letter
 
 let in_env (name, ty) m =
   let scope env = (name, ty) :: env in
@@ -150,7 +178,7 @@ module SubstitableExpr : Substitable with type t = texpr = struct
           (apply subs abs, apply subs arg, SubstitableType.apply subs ty)
     | TPoly (metas, expr) ->
         let subst' = MetaVariables.fold Subst.remove metas subs in
-        apply subst' expr
+        TPoly (metas, apply subst' expr)
 
   let ftv expr = type_of expr |> SubstitableType.ftv
 end
@@ -235,15 +263,21 @@ let infer expr =
         let* subs', cons_ty, cons' = infer_inner cons in
         let* subs'', alt_ty, alt' = infer_inner alt in
         let* v = unify cond_ty TBool in
-        let* v' = unify cons_ty alt_ty in
-        let cons_ty' = SubstitableType.apply v' cons_ty in
+        let cons_ty' = SubstitableType.apply (compose subs v) cons_ty in
+        let alt_ty' = SubstitableType.apply (compose subs v) alt_ty in
+        let* v' = unify cons_ty' alt_ty' in
+        let cons_ty'' = SubstitableType.apply v' cons_ty' in
         let subs''' =
           (compose subs << compose subs' << compose subs'' << compose v) v'
         in
-        return (subs''', cons_ty', TIf (cond', cons', alt', cons_ty'))
+        return (subs''', cons_ty', TIf (cond', cons', alt', cons_ty''))
   in
   let* subs, ty, expr' = infer_inner expr in
   (SubstitableExpr.apply subs expr', ty) |> return
+
+let infer_many = List.map ~f:(map ~f:fst << infer)
+let run e env = (run e |> R.run) env |> ST.run
+let run_with_default e : ('a, string) result = run e [] letters |> fst
 
 let rec generate_constraints expr =
   match expr with

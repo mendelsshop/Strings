@@ -7,6 +7,16 @@ type ty =
   | TMeta of string
   | TPoly of MetaVariables.t * ty
 
+let rec type_to_string = function
+  | TInt -> "number"
+  | TBool -> "boolean"
+  | TArrow (t1, t2) -> type_to_string t1 ^ " -> " ^ type_to_string t2
+  | TMeta m -> m
+  | TPoly (metas, ty) ->
+      "∀"
+      ^ (MetaVariables.to_list metas |> String.concat ", ")
+      ^ "." ^ type_to_string ty
+
 (*type 'a exprF =*)
 (*  | Var of string*)
 (*  | Boolean of bool*)
@@ -107,3 +117,33 @@ let rec type_of expr =
   | TApplication (_, _, ty) ->
       ty
   | TPoly (metas, expr) -> TPoly (metas, type_of expr)
+
+let rec texpr_to_string indent =
+  let next_level = indent + 1 in
+  let indent_string = String.make (next_level * 2) ' ' in
+  function
+  | TVar (s, _) -> s
+  | TBoolean (b, _) -> string_of_bool b
+  | TNumber (n, _) -> string_of_float n
+  | TIf (cond, cons, alt, _) ->
+      "if ( "
+      ^ texpr_to_string indent cond
+      ^ " )\n" ^ indent_string ^ "then ( "
+      ^ texpr_to_string next_level cons
+      ^ " )\n" ^ indent_string ^ "else ( "
+      ^ texpr_to_string next_level alt
+      ^ " )"
+  | TLet (var, e1, e2, _) ->
+      "let " ^ var ^ ":"
+      ^ (type_of e1 |> type_to_string)
+      ^ " = ( " ^ texpr_to_string indent e1 ^ " )\n" ^ indent_string ^ "in ( "
+      ^ texpr_to_string next_level e2
+      ^ " )"
+  | TLambda (var, var_ty, abs, _) ->
+      "\\" ^ var ^ ":" ^ type_to_string var_ty ^ ".( "
+      ^ texpr_to_string indent abs ^ " )"
+  | TApplication (abs, arg, _) ->
+      "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg
+  | TPoly (_, e) -> texpr_to_string indent e
+
+let texpr_to_string = texpr_to_string 0
