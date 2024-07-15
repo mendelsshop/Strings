@@ -1,5 +1,7 @@
-open Ml.Expr
-open Ml.Parser
+open Ml
+open Expr
+open Parser
+open Infer2
 
 let read_to_string file = open_in file |> Stdio.In_channel.input_all
 
@@ -16,7 +18,7 @@ let () =
   let parsed = run parse input in
   Option.fold ~none:"bad file"
     ~some:(fun exprs ->
-      Ml.Infer.infer_many exprs |> Ml.Infer.run_with_default
+      infer_many exprs |> Utils.run_with_default
       |> Result.fold ~error:Fun.id ~ok:(fun exprs' ->
              List.map texpr_to_string exprs' |> String.concat "\n"))
     parsed
