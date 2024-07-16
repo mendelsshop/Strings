@@ -1,5 +1,5 @@
 open Monads.Std
-open Expr
+open Expr.Types
 
 let ( << ) f g x = f (g x)
 

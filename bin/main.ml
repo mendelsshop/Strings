@@ -18,8 +18,8 @@ let () =
   let parsed = run parse input in
   Option.fold ~none:"bad file"
     ~some:(fun exprs ->
-      infer_many exprs |> Utils.run_with_default
+      infer [] exprs
       |> Result.fold ~error:Fun.id ~ok:(fun exprs' ->
-             List.map texpr_to_string exprs' |> String.concat "\n"))
+             List.map tprogram_to_string exprs' |> String.concat "\n"))
     parsed
   |> print_endline

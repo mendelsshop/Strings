@@ -86,8 +86,16 @@ let rec expr_inner input =
 
 let rec expr input = (expr_inner <|> !(let_parser expr)) input
 
+let let_parser =
+  string "let" >>= fun _ ->
+  !ident >>= fun ident ->
+  !(char '=') >>= fun _ ->
+  expr >>= fun e1 -> Bind (ident, e1) |> return
+
+let top_level = expr <$> (fun e -> Expr e) <|> !let_parser
+
 let parse =
-  many expr >>= fun exprs ->
-  junk <$> fun _ -> exprs
+  many top_level >>= fun tl ->
+  junk <$> fun _ -> tl
 
 let run = run

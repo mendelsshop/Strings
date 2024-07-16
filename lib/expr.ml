@@ -1,21 +1,24 @@
 module MetaVariables = Set.Make (String)
 
-type ty =
-  | TInt
-  | TBool
-  | TArrow of ty * ty
-  | TMeta of string
-  | TPoly of MetaVariables.t * ty
+module Types = struct
+  type ty =
+    | TInt
+    | TBool
+    | TArrow of ty * ty
+    | TMeta of string
+    | TPoly of MetaVariables.t * ty
 
-let rec type_to_string = function
-  | TInt -> "number"
-  | TBool -> "boolean"
-  | TArrow (t1, t2) -> type_to_string t1 ^ " -> " ^ type_to_string t2
-  | TMeta m -> m
-  | TPoly (metas, ty) ->
-      "∀"
-      ^ (MetaVariables.to_list metas |> String.concat ", ")
-      ^ "." ^ type_to_string ty
+  let rec type_to_string = function
+    | TInt -> "number"
+    | TBool -> "boolean"
+    | TArrow (t1, t2) -> type_to_string t1 ^ " -> " ^ type_to_string t2
+    | TMeta m -> m
+    | TPoly (metas, ty) ->
+        "∀"
+        ^ (MetaVariables.to_list metas |> String.concat ", ")
+        ^ "." ^ type_to_string ty
+end
+open Types
 
 (*type 'a exprF =*)
 (*  | Var of string*)
@@ -147,3 +150,15 @@ let rec texpr_to_string indent =
   | TPoly (_, e) -> texpr_to_string indent e
 
 let texpr_to_string = texpr_to_string 0
+
+type 'a programF = Bind of string * 'a | Expr of 'a
+
+let tprogram_to_string = function
+  | Bind (name, expr) ->
+      name ^ ": "
+      ^ (expr |> type_of |> type_to_string)
+      ^ " = " ^ texpr_to_string expr
+  | Expr expr -> texpr_to_string expr
+
+type program = expr programF
+type tprogram = texpr programF

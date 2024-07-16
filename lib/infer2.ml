@@ -1,7 +1,8 @@
+open Expr.Types
 open Expr
-open Utils
 open Monad
 open Monad.ResultReaderOps
+open Utils
 
 let rec solver = function
   | [] -> return Subst.empty
@@ -11,7 +12,7 @@ let rec solver = function
       let* subs' = apply subs cs' |> solver in
       compose subs subs' |> return
 
-let infer expr =
+let infer_expr expr =
   let rec infer_inner expr =
     match expr with
     | Var x ->
@@ -57,4 +58,27 @@ let infer expr =
   let* subs = solver cs in
   (SubstitableExpr.apply subs expr', ty) |> return
 
-let infer_many = List.map ~f:(map ~f:fst << infer)
+let rec infer :
+    R.env -> ST.env -> program list -> (tprogram list * R.env, string) result =
+ fun env letters -> function
+  | [] -> Result.ok ([], env)
+  | Bind (name, expr) :: tls ->
+      let infer_generalize =
+        let* (expr' : texpr), (expr_ty : ty) = infer_expr expr in
+        let* metas = generalize expr_ty in
+        (TPoly (metas, expr'), Expr.Types.TPoly (metas, expr_ty)) |> return
+      in
+      let expr', letters' = run infer_generalize env letters in
+
+      Result.bind expr' (fun (expr'', expr_ty) ->
+          infer ((name, expr_ty) :: env) letters' tls
+          |> Result.map (fun (program, letters') ->
+                 (Bind (name, expr'') :: program, letters')))
+  | Expr expr :: tls ->
+      let expr', letters' = run (infer_expr expr) env letters in
+      Result.bind expr' (fun (expr'', _) ->
+          infer env letters' tls
+          |> Result.map (fun (program, letters') ->
+                 (Expr expr'' :: program, letters')))
+
+let infer env = Result.map fst << infer env letters

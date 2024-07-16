@@ -1,3 +1,4 @@
+open Expr.Types
 open Expr
 open Utils
 open Monad
