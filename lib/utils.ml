@@ -74,6 +74,19 @@ struct
   let ftv env = Stdlib.List.map (fun (_, ty) -> ty) env |> SubstitableTypes.ftv
 end
 
+module SubstitablePattern : Substitable with type t = tpattern = struct
+  type t = tpattern
+
+  let rec apply subs = function
+    | PTVar (var, ty) -> PTVar (var, SubstitableType.apply subs ty)
+    | (PTBoolean _ | PTNumber _) as e -> e
+    | PTTuple (e1, e2, ty) ->
+        PTTuple (apply subs e1, apply subs e2, SubstitableType.apply subs ty)
+    | PTWildcard ty -> PTWildcard (SubstitableType.apply subs ty)
+
+  let ftv pattern = type_of_pattern pattern |> SubstitableType.ftv
+end
+
 module SubstitableExpr : Substitable with type t = texpr = struct
   type t = texpr
 
@@ -89,10 +102,9 @@ module SubstitableExpr : Substitable with type t = texpr = struct
             SubstitableType.apply subs ty )
     | TLet (var, e1, e2, ty) ->
         TLet (var, apply subs e1, apply subs e2, SubstitableType.apply subs ty)
-    | TLambda (var, arg_ty, abs, ty) ->
+    | TLambda (var, abs, ty) ->
         TLambda
-          ( var,
-            SubstitableType.apply subs arg_ty,
+          ( SubstitablePattern.apply subs var,
             apply subs abs,
             SubstitableType.apply subs ty )
     | TApplication (abs, arg, ty) ->

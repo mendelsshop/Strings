@@ -30,21 +30,21 @@ let infer_expr expr =
           ( ((cond_ty, TBool) :: (cond_ty, alt_ty) :: cs) @ cs' @ cs'',
             cons_ty,
             TIf (cond', cons', alt', cons_ty) )
-    | Let (var, e1, e2) ->
-        let* cs, e1_ty, e1' = infer_inner e1 in
-        let* subs = solver cs in
-        let e1'' = SubstitableExpr.apply subs e1' in
-        let e1_ty' = SubstitableType.apply subs e1_ty in
-        let* metas = generalize e1_ty' in
-        let* cs', e2_ty, e2' =
-          in_env (var, TPoly (metas, e1_ty')) (infer_inner e2)
-        in
-        return (cs @ cs', e2_ty, TLet (var, TPoly (metas, e1''), e2', e2_ty))
-    | Lambda (var, abs) ->
-        let* arg_ty = new_meta in
-        let* cs, abs_ty, abs' = in_env (var, arg_ty) (infer_inner abs) in
-        let ty = TArrow (arg_ty, abs_ty) in
-        return (cs, ty, TLambda (var, arg_ty, abs', ty))
+    | Let (_var, _e1, _e2) -> exit 1
+    (*let* cs, e1_ty, e1' = infer_inner e1 in*)
+    (*let* subs = solver cs in*)
+    (*let e1'' = SubstitableExpr.apply subs e1' in*)
+    (*let e1_ty' = SubstitableType.apply subs e1_ty in*)
+    (*let* metas = generalize e1_ty' in*)
+    (*let* cs', e2_ty, e2' =*)
+    (*  in_env (var, TPoly (metas, e1_ty')) (infer_inner e2)*)
+    (*in*)
+    (*return (cs @ cs', e2_ty, TLet (var, TPoly (metas, e1''), e2', e2_ty))*)
+    | Lambda (_var, _abs) -> exit 1
+    (*let* arg_ty = new_meta in*)
+    (*let* cs, abs_ty, abs' = in_env (var, arg_ty) (infer_inner abs) in*)
+    (*let ty = TArrow (arg_ty, abs_ty) in*)
+    (*return (cs, ty, TLambda (var, arg_ty, abs', ty))*)
     | Application (abs, arg) ->
         let* cs, abs_ty, abs' = infer_inner abs in
         let* cs', arg_ty, arg' = infer_inner arg in

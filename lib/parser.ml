@@ -20,13 +20,12 @@ let ( ! ) = skip_garbage
 
 (*TODO: comments and whitespace*)
 
-let number_parser =
-  many1 digit <$> (float_of_int << int_of_string << implode) <$> fun f ->
-  Number f
+let number_parser wrapper =
+  many1 digit <$> (float_of_int << int_of_string << implode) <$> wrapper
 
-let boolean_parser =
-  let true_parser = string "true" <$> fun _ -> Boolean true in
-  let false_parser = string "false" <$> fun _ -> Boolean false in
+let boolean_parser wrapper =
+  let true_parser = string "true" <$> fun _ -> wrapper true in
+  let false_parser = string "false" <$> fun _ -> wrapper false in
   true_parser <|> false_parser
 
 let ident =
@@ -35,11 +34,45 @@ let ident =
   seq letter idents <$> flatten <$> implode
   |> check (fun x -> not (List.mem x key_words))
 
-let ident_parser = ident <$> fun i -> Var i
+let ident_parser wrapper = ident <$> wrapper
+
+let parens_parser expr =
+  char '(' >>= fun _ ->
+  expr >>= fun expr ->
+  !(char ')') <$> fun _ -> expr
+
+let tuple expr wrapper =
+  let rec tuple input =
+    ( expr >>= fun e1 ->
+      !(char ',') >>= (fun _ -> tuple) |> opt <$> function
+      | Some e2 -> wrapper e1 e2
+      | None -> e1 )
+      input
+  in
+  tuple
+(*|> many*)
+(*List.fold*)
+(*<$> ( List.fold_left wrapper e1)*)
+(*function*)
+(*| [] -> e1*)
+(*| tuples -> wrapper (e1, e2)*)
+
+let rec pattern input =
+  let basic_forms =
+    choice
+      [
+        parens_parser pattern;
+        (char '_' <$> fun _ -> PWildcard);
+        ident_parser (fun i -> PVar i);
+        number_parser (fun n -> PNumber n);
+        boolean_parser (fun b -> PBoolean b);
+      ]
+  in
+  tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2)) input
 
 let lambda_parser expr =
   char '\\' >>= fun _ ->
-  !ident >>= fun ident ->
+  !pattern >>= fun ident ->
   !(char '.') >>= fun _ ->
   expr <$> fun expr -> Lambda (ident, expr)
 
@@ -53,36 +86,25 @@ let if_parser expr =
 
 let let_parser expr =
   string "let" >>= fun _ ->
-  !ident >>= fun ident ->
+  !pattern >>= fun ident ->
   !(char '=') >>= fun _ ->
   expr >>= fun e1 ->
   !(string "in") >>= fun _ ->
   expr <$> fun e2 -> Let (ident, e1, e2)
-
-let parens_parser expr =
-  char '(' >>= fun _ ->
-  expr >>= fun expr ->
-  !(char ')') <$> fun _ -> expr
-
-let tuple expr =
-  expr >>= fun e1 ->
-  !(char ',') >>= (fun _ -> expr) |> opt <$> function
-  | Some e2 -> Tuple (e1, e2)
-  | None -> e1
 
 let rec expr_inner input =
   let basic_forms =
     !(choice
         [
           parens_parser (expr_inner <|> !(let_parser expr_inner));
-          boolean_parser;
-          number_parser;
-          ident_parser;
+          boolean_parser (fun b -> Boolean b);
+          number_parser (fun n -> Number n);
+          ident_parser (fun i -> Var i);
           lambda_parser expr_inner;
           if_parser expr_inner;
         ])
   in
-  let basic_forms = tuple basic_forms in
+  let basic_forms = tuple basic_forms (fun t1 t2 -> Tuple (t1, t2)) in
   let rec application_parser input =
     ( basic_forms >>= fun abs ->
       application_parser <$> (fun arg -> Application (abs, arg)) <|> return abs

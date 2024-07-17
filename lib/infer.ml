@@ -12,12 +12,12 @@ let infer expr =
         |> bind ~f:(fun ty ->
                let* ty' = instantiate ty in
                return (Subst.empty, ty', TVar (x, ty')))
-    | Lambda ((var : string), abs) ->
-        let* arg_ty = new_meta in
-        let* subs, abs_ty, abs' = in_env (var, arg_ty) (infer_inner abs) in
-        let arg_ty' = SubstitableType.apply subs arg_ty in
-        let ty = TArrow (arg_ty', abs_ty) in
-        return (subs, ty, TLambda (var, arg_ty', abs', ty))
+    | Lambda (_var, _abs) -> exit 1
+    (*let* arg_ty = new_meta in*)
+    (*let* subs, abs_ty, abs' = in_env (var, arg_ty) (infer_inner abs) in*)
+    (*let arg_ty' = SubstitableType.apply subs arg_ty in*)
+    (*let ty = TArrow (arg_ty', abs_ty) in*)
+    (*return (subs, ty, TLambda (var, arg_ty', abs', ty))*)
     | Application (abs, arg) ->
         let* subs, abs_ty, abs' = infer_inner abs in
         R.local
@@ -28,17 +28,17 @@ let infer expr =
            let meta' = SubstitableType.apply v arg_ty in
            let subs''' = (compose subs << compose subs') v in
            return (subs''', meta', TApplication (abs', arg', meta')))
-    | Let (var, e1, e2) ->
-        let* subs, e1_ty, e1' = infer_inner e1 in
-        R.local
-          (SubstitableTypeEnv.apply subs)
-          (let* free_variables = e1_ty |> generalize in
-           let* subs', e2_ty, e2' =
-             in_env (var, TPoly (free_variables, e1_ty)) (infer_inner e2)
-           in
-           let subs'' = compose subs subs' in
-           return
-             (subs'', e2_ty, TLet (var, TPoly (free_variables, e1'), e2', e2_ty)))
+    | Let (_var, _e1, _e2) -> exit 1
+    (*let* subs, e1_ty, e1' = infer_inner e1 in*)
+    (*R.local*)
+    (*  (SubstitableTypeEnv.apply subs)*)
+    (*  (let* free_variables = e1_ty |> generalize in*)
+    (*   let* subs', e2_ty, e2' =*)
+    (*     in_env (var, TPoly (free_variables, e1_ty)) (infer_inner e2)*)
+    (*   in*)
+    (*   let subs'' = compose subs subs' in*)
+    (*   return*)
+    (*     (subs'', e2_ty, TLet (var, TPoly (free_variables, e1'), e2', e2_ty)))*)
     | Boolean b -> return (Subst.empty, TBool, TBoolean (b, TBool))
     | Number n -> return (Subst.empty, TInt, TNumber (n, TInt))
     | If (cond, cons, alt) ->
