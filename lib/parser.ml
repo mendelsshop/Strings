@@ -64,6 +64,12 @@ let parens_parser expr =
   expr >>= fun expr ->
   !(char ')') <$> fun _ -> expr
 
+let tuple expr =
+  expr >>= fun e1 ->
+  !(char ',') >>= (fun _ -> expr) |> opt <$> function
+  | Some e2 -> Tuple (e1, e2)
+  | None -> e1
+
 let rec expr_inner input =
   let basic_forms =
     !(choice
@@ -76,6 +82,7 @@ let rec expr_inner input =
           if_parser expr_inner;
         ])
   in
+  let basic_forms = tuple basic_forms in
   let rec application_parser input =
     ( basic_forms >>= fun abs ->
       application_parser <$> (fun arg -> Application (abs, arg)) <|> return abs

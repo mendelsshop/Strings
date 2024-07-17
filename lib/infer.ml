@@ -33,7 +33,6 @@ let infer expr =
         R.local
           (SubstitableTypeEnv.apply subs)
           (let* free_variables = e1_ty |> generalize in
-
            let* subs', e2_ty, e2' =
              in_env (var, TPoly (free_variables, e1_ty)) (infer_inner e2)
            in
@@ -55,7 +54,15 @@ let infer expr =
           (compose subs << compose subs' << compose subs'' << compose v) v'
         in
         return (subs''', cons_ty', TIf (cond', cons', alt', cons_ty''))
+    | Tuple (e1, e2) ->
+        let* subs, e1_ty, e1' = infer_inner e1 in
+        let* subs', e2_ty, e2' = infer_inner e2 in
+        let e1_ty' = SubstitableType.apply subs' e1_ty in
+        let e1'' = SubstitableExpr.apply subs' e1' in
+        let ty = Types.TTuple (e1_ty', e2_ty) in
+        return (compose subs subs', ty, TTuple (e1'', e2', ty))
   in
+
   let* subs, ty, expr' = infer_inner expr in
   (SubstitableExpr.apply subs expr', ty) |> return
 

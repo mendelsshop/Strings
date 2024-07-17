@@ -26,6 +26,7 @@ module SubstitableType : Substitable with type t = ty = struct
     | TMeta meta as ty ->
         Subst.find_opt meta subst |> Option.fold ~none:ty ~some:(fun x -> x)
     | TArrow (t1, t2) -> TArrow (apply subst t1, apply subst t2)
+    | TTuple (t1, t2) -> TTuple (apply subst t1, apply subst t2)
     | TPoly (metas, ty) ->
         (*TODO: foldr*)
         let subst' = MetaVariables.fold Subst.remove metas subst in
@@ -35,6 +36,7 @@ module SubstitableType : Substitable with type t = ty = struct
     | TBool | TInt -> MetaVariables.empty
     | TMeta meta -> MetaVariables.singleton meta
     | TArrow (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
+    | TTuple (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
     | TPoly (metas, ty) -> MetaVariables.diff (ftv ty) metas
 end
 
@@ -96,6 +98,8 @@ module SubstitableExpr : Substitable with type t = texpr = struct
     | TApplication (abs, arg, ty) ->
         TApplication
           (apply subs abs, apply subs arg, SubstitableType.apply subs ty)
+    | TTuple (e1, e2, ty) ->
+        TTuple (apply subs e1, apply subs e2, SubstitableType.apply subs ty)
     | TPoly (metas, expr) ->
         let subst' = MetaVariables.fold Subst.remove metas subs in
         TPoly (metas, apply subst' expr)

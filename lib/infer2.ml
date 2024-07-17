@@ -53,6 +53,11 @@ let infer_expr expr =
           ( ((abs_ty, TArrow (arg_ty, ret_ty)) :: cs) @ cs',
             ret_ty,
             TApplication (abs', arg', ret_ty) )
+    | Tuple (e1, e2) ->
+        let* cs, e1_ty, e1' = infer_inner e1 in
+        let* cs', e2_ty, e2' = infer_inner e2 in
+        let ty = Types.TTuple (e1_ty, e2_ty) in
+        return (cs @ cs', ty, TTuple (e1', e2', ty))
   in
   let* cs, ty, expr' = infer_inner expr in
   let* subs = solver cs in
