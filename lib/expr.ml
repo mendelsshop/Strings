@@ -45,6 +45,7 @@ type tpattern =
   | PTNumber of float * ty
   | PTBoolean of bool * ty
   | PTTuple of tpattern * tpattern * ty
+  | PTPoly of MetaVariables.t * tpattern
 
 let rec tpattern_to_string = function
   | PTVar (s, ty) -> s ^ " : " ^ type_to_string ty
@@ -53,8 +54,12 @@ let rec tpattern_to_string = function
   | PTWildcard _ -> "_"
   | PTTuple (e1, e2, _) ->
       "( " ^ tpattern_to_string e1 ^ " , " ^ tpattern_to_string e2 ^ " )"
+    | PTPoly (metas, pat) ->
+        "∀"
+        ^ (MetaVariables.to_list metas |> String.concat ", ")
+        ^ "." ^ tpattern_to_string pat
 
-let type_of_pattern pattern =
+let rec type_of_pattern pattern =
   match pattern with
   | PTVar (_, ty)
   | PTBoolean (_, ty)
@@ -62,6 +67,7 @@ let type_of_pattern pattern =
   | PTTuple (_, _, ty)
   | PTWildcard ty ->
       ty
+  | PTPoly (metas, expr) -> TPoly (metas, type_of_pattern expr)
 
 (*type 'a exprF =*)
 (*  | Var of string*)

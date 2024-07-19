@@ -3,8 +3,8 @@ open Expr
 open Monad
 open Monad.ResultReaderOps
 
-let in_env (name, ty) m =
-  let scope env = (name, ty) :: env in
+let in_env new_env m =
+  let scope env = new_env @ env in
   R.local scope m
 
 module Subst = Map.Make (String)
@@ -83,6 +83,9 @@ module SubstitablePattern : Substitable with type t = tpattern = struct
     | PTTuple (e1, e2, ty) ->
         PTTuple (apply subs e1, apply subs e2, SubstitableType.apply subs ty)
     | PTWildcard ty -> PTWildcard (SubstitableType.apply subs ty)
+    | PTPoly (metas, pat) ->
+        let subst' = MetaVariables.fold Subst.remove metas subs in
+        PTPoly (metas, apply subst' pat)
 
   let ftv pattern = type_of_pattern pattern |> SubstitableType.ftv
 end
@@ -101,7 +104,7 @@ module SubstitableExpr : Substitable with type t = texpr = struct
             apply subs alt,
             SubstitableType.apply subs ty )
     | TLet (var, e1, e2, ty) ->
-        TLet (var, apply subs e1, apply subs e2, SubstitableType.apply subs ty)
+        TLet (SubstitablePattern.apply subs var, apply subs e1, apply subs e2, SubstitableType.apply subs ty)
     | TLambda (var, abs, ty) ->
         TLambda
           ( SubstitablePattern.apply subs var,
@@ -157,7 +160,13 @@ let rec unify t1 t2 =
         unify (SubstitableType.apply subs t2) (SubstitableType.apply subs t2')
       in
       compose subs subs' |> return
-  | _ -> fail "unification error"
+  | TTuple (t1, t2), TTuple (t1', t2') ->
+      let* subs = unify t1 t1' in
+      let* subs' =
+        unify (SubstitableType.apply subs t2) (SubstitableType.apply subs t2')
+      in
+      compose subs subs' |> return
+  | _ ->  "unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 |> fail
 
 let generalize ty =
   let ty_ftv = SubstitableType.ftv ty in
