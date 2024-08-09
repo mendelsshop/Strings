@@ -8,10 +8,6 @@ let generalize =
   List.fold ~init:([], MetaVariables.empty)
     ~f:(fun (variables, metavariables) ((name : string), (ty : ty)) ->
       let* metavariables' = generalize ty in
-      type_to_string ty ^ " is being generalized" |> print_endline;
-      (Types.TPoly (metavariables', ty) |> type_to_string)
-      ^ " is being generalized"
-      |> print_endline;
       return
         ( (name, Types.TPoly (metavariables', ty)) :: variables,
           MetaVariables.union metavariables metavariables' ))
@@ -58,14 +54,13 @@ let infer_expr expr =
             cons_ty,
             TIf (cond', cons', alt', cons_ty) )
     | Let (var, e1, e2) ->
-        (*exit 1;*)
         let* cs, e1_ty, e1' = infer_inner e1 in
         let* env, var_ty, var' = infer_pattern var in
         let cs' = (e1_ty, var_ty) :: cs in
         let* subs = cs' |> solver in
         (*subs |> Subst.to_list*)
         (*|> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)*)
-        (*|> String.concat " " |> print_endline;*)
+        (*|> String.concat ", " |> print_endline;*)
         (*let e1_ty' = SubstitableType.apply subs e1_ty in*)
         let env' =
           Stdlib.List.map
@@ -73,11 +68,11 @@ let infer_expr expr =
             env
         in
         let* env'', metas = generalize env' in
-        env''
-        |> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)
-        |> String.concat " " |> print_endline;
+        (*env''*)
+        (*|> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)*)
+        (*      |> String.concat "; " |> print_endline;*)
         let* cs'', e2_ty, e2' = in_env env'' (infer_inner e2) in
-        (*TODO: be more specific about where we put our (P)TPolys so the annotations of type schemes are more targeted*)
+        (*TODO: maybe: be more specific about where we put our (P)TPolys so the annotations of type schemes are more targeted*)
         return
           ( cs' @ cs'',
             e2_ty,
@@ -101,9 +96,10 @@ let infer_expr expr =
         let ty = Types.TTuple (e1_ty, e2_ty) in
         return (cs @ cs', ty, TTuple (e1', e2', ty))
   in
-  let* cs, ty, expr' = infer_inner expr in
+  let* cs, _ty, expr' = infer_inner expr in
   let* subs = solver cs in
-  (SubstitableExpr.apply subs expr', ty) |> return
+  let expr'' = SubstitableExpr.apply subs expr' in
+  (expr'', type_of expr'') |> return
 
 let rec infer :
     R.env -> ST.env -> program list -> (tprogram list * R.env, string) result =

@@ -17,9 +17,9 @@ module Types = struct
     | TTuple (t1, t2) ->
         "( " ^ type_to_string t1 ^ " * " ^ type_to_string t2 ^ " )"
     | TPoly (metas, ty) ->
-        "∀"
-        ^ (MetaVariables.to_list metas |> String.concat ", ")
-        ^ "." ^ type_to_string ty
+        (if MetaVariables.is_empty metas then ""
+         else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
+        ^ type_to_string ty
 end
 
 open Types
@@ -54,10 +54,10 @@ let rec tpattern_to_string = function
   | PTWildcard _ -> "_"
   | PTTuple (e1, e2, _) ->
       "( " ^ tpattern_to_string e1 ^ " , " ^ tpattern_to_string e2 ^ " )"
-    | PTPoly (metas, pat) ->
-        "∀"
-        ^ (MetaVariables.to_list metas |> String.concat ", ")
-        ^ "." ^ tpattern_to_string pat
+  | PTPoly (metas, pat) ->
+      (if MetaVariables.is_empty metas then ""
+       else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
+      ^ tpattern_to_string pat
 
 let rec type_of_pattern pattern =
   match pattern with
@@ -157,6 +157,7 @@ type texpr =
   | TBoolean of bool * ty
   | TNumber of float * ty
   | TIf of texpr * texpr * texpr * ty
+    (*TODO: maybe store any metavariables this type captures*)
   | TLet of tpattern * texpr * texpr * ty
   | TLambda of tpattern * texpr * ty
   | TApplication of texpr * texpr * ty
