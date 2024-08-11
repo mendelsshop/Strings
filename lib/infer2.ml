@@ -4,13 +4,18 @@ open Monad
 open Monad.ResultReaderOps
 open Utils
 
-let generalize =
-  List.fold ~init:([], MetaVariables.empty)
-    ~f:(fun (variables, metavariables) ((name : string), (ty : ty)) ->
-      let* metavariables' = generalize ty in
-      return
-        ( (name, Types.TPoly (metavariables', ty)) :: variables,
-          MetaVariables.union metavariables metavariables' ))
+(*the list of variables here is the list of pattern variables we are generalizing*)
+let generalize variables =
+  let* variables, metas =
+    List.fold ~init:([], MetaVariables.empty)
+      ~f:(fun (variables, metavariables) ((name : string), (ty : ty)) ->
+        let* metavariables' = generalize ty in
+        return
+          ( (name, Types.TPoly (metavariables', ty)) :: variables,
+            MetaVariables.union metavariables metavariables' ))
+      variables
+  in
+  return (variables, if MetaVariables.is_empty metas then None else Some metas)
 
 let rec solver = function
   | [] -> return Subst.empty
@@ -76,7 +81,10 @@ let infer_expr expr =
         return
           ( cs' @ cs'',
             e2_ty,
-            TLet (PTPoly (metas, var'), TPoly (metas, e1'), e2', e2_ty) )
+            Option.fold metas
+              ~none:(TLet (var', e1', e2', e2_ty))
+              ~some:(fun metas ->
+                TLet (PTPoly (metas, var'), TPoly (metas, e1'), e2', e2_ty)) )
     | Lambda (var, abs) ->
         let* env, var_ty, var' = infer_pattern var in
         let* cs, abs_ty, abs' = in_env env (infer_inner abs) in
@@ -109,10 +117,13 @@ let rec infer :
       let infer_generalize =
         let* (expr' : texpr), (expr_ty : ty) = infer_expr expr in
         let* _, metas = generalize [ (name, expr_ty) ] in
-        (TPoly (metas, expr'), Expr.Types.TPoly (metas, expr_ty)) |> return
+        Option.fold metas
+          ~some:(fun metas ->
+            (TPoly (metas, expr'), Expr.Types.TPoly (metas, expr_ty)))
+          ~none:(expr', expr_ty)
+        |> return
       in
       let expr', letters' = run infer_generalize env letters in
-
       Result.bind expr' (fun (expr'', expr_ty) ->
           infer ((name, expr_ty) :: env) letters' tls
           |> Result.map (fun (program, letters') ->
