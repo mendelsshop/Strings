@@ -250,8 +250,8 @@ let rec texpr_to_string indent =
       "{\n"
       ^ (Row.to_list row
         |> List.map (fun (label, pat) ->
-               indent_string ^ label ^ " = " ^ texpr_to_string indent pat)
-        |> String.concat "; ")
+               indent_string ^ label ^ " = " ^ texpr_to_string next_level pat)
+        |> String.concat ";\n")
       ^ "\n}"
   | TRecordAcces (record, label, _ty) ->
       texpr_to_string indent record ^ "." ^ label
@@ -259,6 +259,10 @@ let rec texpr_to_string indent =
 let texpr_to_string = texpr_to_string 0
 
 type 'a programF = Bind of string * 'a | Expr of 'a
+
+let program_to_string = function
+  | Bind (name, expr) -> name ^ " = " ^ expr_to_string expr
+  | Expr expr -> expr_to_string expr
 
 let tprogram_to_string = function
   | Bind (name, expr) ->

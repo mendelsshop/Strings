@@ -50,12 +50,28 @@ let tuple expr wrapper =
       input
   in
   tuple
+
 (*|> many*)
 (*List.fold*)
 (*<$> ( List.fold_left wrapper e1)*)
 (*function*)
 (*| [] -> e1*)
 (*| tuples -> wrapper (e1, e2)*)
+let record wrapper ident_wrapper expr =
+  (let ( << ) = keep_right in
+   let record =
+     seq !ident (opt (!(char '=') << expr)) <$> function
+     | name, None -> (name, ident_wrapper name)
+     | name, Some value -> (name, value)
+   in
+   let record_mid = record >> !(char ';') in
+   !(char '{')
+   << (many1 record_mid
+      >> !(char '}')
+      <|> (seq (many record_mid) record
+          <$> (fun (rs, r) -> rs @ [ r ])
+          >> !(char '}'))))
+  <$> Row.of_list <$> wrapper
 
 let rec pattern input =
   let basic_forms =
@@ -66,6 +82,7 @@ let rec pattern input =
         ident_parser (fun i -> PVar i);
         number_parser (fun n -> PNumber n);
         boolean_parser (fun b -> PBoolean b);
+        record (fun r -> PRecord r) (fun i -> PVar i) pattern;
       ]
   in
   tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2)) input
@@ -92,6 +109,13 @@ let let_parser expr =
   !(string "in") >>= fun _ ->
   expr <$> fun e2 -> Let (ident, e1, e2)
 
+let record_acces_parser expr =
+  expr >>= fun record ->
+  many (char '.' >>= fun _ -> ident) <$> fun acceses ->
+  List.fold_left
+    (fun record field -> RecordAcces (record, field))
+    record acceses
+
 let rec expr_inner input =
   let basic_forms =
     !(choice
@@ -100,11 +124,15 @@ let rec expr_inner input =
           boolean_parser (fun b -> Boolean b);
           number_parser (fun n -> Number n);
           ident_parser (fun i -> Var i);
+          record (fun r -> Record r) (fun i -> Var i) expr_inner;
           lambda_parser expr_inner;
           if_parser expr_inner;
+          (*record_acces_parser expr_inner;*)
         ])
   in
-  let basic_forms = tuple basic_forms (fun t1 t2 -> Tuple (t1, t2)) in
+  let basic_forms =
+    tuple (record_acces_parser basic_forms) (fun t1 t2 -> Tuple (t1, t2))
+  in
   let rec application_parser input =
     ( basic_forms >>= fun abs ->
       application_parser <$> (fun arg -> Application (abs, arg)) <|> return abs

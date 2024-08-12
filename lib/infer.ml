@@ -46,6 +46,7 @@ let rec infer_pattern = function
       in
 
       let* env, pattern_ty, pattern =
+        (*TODO: right fold*)
         Row.fold
           (fun label pattern result ->
             let* env, row_ty, row = result in
@@ -74,7 +75,7 @@ let infer_expr expr =
         let* cs', cons_ty, cons' = infer_inner cons in
         let* cs'', alt_ty, alt' = infer_inner alt in
         return
-          ( ((cond_ty, TBool) :: (cond_ty, alt_ty) :: cs) @ cs' @ cs'',
+          ( ((cond_ty, TBool) :: (cons_ty, alt_ty) :: cs) @ cs' @ cs'',
             cons_ty,
             TIf (cond', cons', alt', cons_ty) )
     | Let (var, e1, e2) ->
@@ -123,12 +124,10 @@ let infer_expr expr =
         let ty = Types.TTuple (e1_ty, e2_ty) in
         return (cs @ cs', ty, TTuple (e1', e2', ty))
     | Record row ->
-        let row_init =
-          let* meta = new_meta in
-          return ([], meta, Row.empty)
-        in
+        let row_init = return ([], TRowEmpty, Row.empty) in
 
         let* cs, row_ty, row' =
+          (*TODO: right fold*)
           Row.fold
             (fun label expr result ->
               let* cs, row_ty, row = result in
