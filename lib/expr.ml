@@ -150,6 +150,7 @@ type expr =
   | Application of expr * expr
   | Tuple of expr * expr
   | Record of expr Row.t
+  | RecordAcces of expr * string
 
 (*bad expression format*)
 let rec expr_to_string indent =
@@ -183,7 +184,8 @@ let rec expr_to_string indent =
         |> List.map (fun (label, pat) ->
                indent_string ^ label ^ " = " ^ expr_to_string indent pat)
         |> String.concat "; ")
-      ^ "\n}"
+      ^ "\n" ^ indent_string ^ "}"
+  | RecordAcces (record, label) -> expr_to_string indent record ^ "." ^ label
 
 let expr_to_string = expr_to_string 0
 
@@ -199,6 +201,7 @@ type texpr =
   | TPoly of MetaVariables.t * texpr
   | TTuple of texpr * texpr * ty
   | TRecord of texpr Row.t * ty
+  | TRecordAcces of texpr * string * ty
 
 let rec type_of expr =
   match expr with
@@ -208,6 +211,7 @@ let rec type_of expr =
   | TIf (_, _, _, ty)
   | TLet (_, _, _, ty)
   | TLambda (_, _, ty)
+  | TRecordAcces (_, _, ty)
   | TApplication (_, _, ty)
   | TRecord (_, ty)
   | TTuple (_, _, ty) ->
@@ -249,6 +253,8 @@ let rec texpr_to_string indent =
                indent_string ^ label ^ " = " ^ texpr_to_string indent pat)
         |> String.concat "; ")
       ^ "\n}"
+  | TRecordAcces (record, label, _ty) ->
+      texpr_to_string indent record ^ "." ^ label
 
 let texpr_to_string = texpr_to_string 0
 

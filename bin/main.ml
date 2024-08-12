@@ -1,7 +1,7 @@
 open Ml
 open Expr
 open Parser
-open Infer2
+open Infer
 
 let read_to_string file = open_in file |> Stdio.In_channel.input_all
 

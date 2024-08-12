@@ -132,6 +132,8 @@ module SubstitableExpr : Substitable with type t = texpr = struct
         TPoly (metas, apply subst' expr)
     | TRecord (row, ty) ->
         TRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
+    | TRecordAcces (record, label, ty) ->
+        TRecordAcces (apply subs record, label, SubstitableType.apply subs ty)
 
   let ftv expr = type_of expr |> SubstitableType.ftv
 end

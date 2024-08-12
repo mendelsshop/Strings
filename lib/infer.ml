@@ -1,70 +1,184 @@
 open Expr.Types
 open Expr
-open Utils
 open Monad
 open Monad.ResultReaderOps
+open Utils
 
-let infer expr =
+(*the list of variables here is the list of pattern variables we are generalizing*)
+let generalize variables =
+  let* variables, metas =
+    List.fold ~init:([], MetaVariables.empty)
+      ~f:(fun (variables, metavariables) ((name : string), (ty : ty)) ->
+        let* metavariables' = generalize ty in
+        return
+          ( (name, Types.TPoly (metavariables', ty)) :: variables,
+            MetaVariables.union metavariables metavariables' ))
+      variables
+  in
+  return (variables, if MetaVariables.is_empty metas then None else Some metas)
+
+let rec solver = function
+  | [] -> return Subst.empty
+  | (t1, t2) :: cs' ->
+      let* subs = unify t1 t2 in
+      let open SubstitableA (SubstitableConstraint) in
+      let* subs' = apply subs cs' |> solver in
+      compose subs subs' |> return
+
+let rec infer_pattern = function
+  | PVar x ->
+      let* ty = new_meta in
+      return ([ (x, ty) ], ty, PTVar (x, ty))
+  | PWildcard ->
+      let* ty = new_meta in
+      return ([], ty, PTWildcard ty)
+  | PBoolean b -> return ([], TBool, PTBoolean (b, TBool))
+  | PNumber b -> return ([], TInt, PTNumber (b, TInt))
+  | PTuple (t1, t2) ->
+      let* env1, e1_ty, t1' = infer_pattern t1 in
+      let* env2, e2_ty, t2' = infer_pattern t2 in
+      let ty = Types.TTuple (e1_ty, e2_ty) in
+      return (env1 @ env2, ty, PTTuple (t1', t2', ty))
+  | PRecord row ->
+      let row_init =
+        let* meta = new_meta in
+        return ([], meta, Row.empty)
+      in
+
+      let* env, pattern_ty, pattern =
+        Row.fold
+          (fun label pattern result ->
+            let* env, row_ty, row = result in
+            let* env', pat_ty, pat' = infer_pattern pattern in
+            return
+              ( env @ env',
+                TRowExtend (label, pat_ty, row_ty),
+                Row.add label pat' row ))
+          row row_init
+      in
+      let ty = Types.TRecord pattern_ty in
+      return (env, ty, PTRecord (pattern, ty))
+
+let infer_expr expr =
   let rec infer_inner expr =
     match expr with
     | Var x ->
         x |> get
         |> bind ~f:(fun ty ->
                let* ty' = instantiate ty in
-               return (Subst.empty, ty', TVar (x, ty')))
-    | Lambda (_var, _abs) -> exit 1
-    (*let* arg_ty = new_meta in*)
-    (*let* subs, abs_ty, abs' = in_env (var, arg_ty) (infer_inner abs) in*)
-    (*let arg_ty' = SubstitableType.apply subs arg_ty in*)
-    (*let ty = TArrow (arg_ty', abs_ty) in*)
-    (*return (subs, ty, TLambda (var, arg_ty', abs', ty))*)
-    | Application (abs, arg) ->
-        let* subs, abs_ty, abs' = infer_inner abs in
-        R.local
-          (SubstitableTypeEnv.apply subs)
-          (let* subs', arg_ty, arg' = infer_inner arg and* meta = new_meta in
-           let abs_ty' = SubstitableType.apply subs' abs_ty in
-           let* v = unify abs_ty' (TArrow (arg_ty, meta)) in
-           let meta' = SubstitableType.apply v arg_ty in
-           let subs''' = (compose subs << compose subs') v in
-           return (subs''', meta', TApplication (abs', arg', meta')))
-    | Let (_var, _e1, _e2) -> exit 1
-    (*let* subs, e1_ty, e1' = infer_inner e1 in*)
-    (*R.local*)
-    (*  (SubstitableTypeEnv.apply subs)*)
-    (*  (let* free_variables = e1_ty |> generalize in*)
-    (*   let* subs', e2_ty, e2' =*)
-    (*     in_env (var, TPoly (free_variables, e1_ty)) (infer_inner e2)*)
-    (*   in*)
-    (*   let subs'' = compose subs subs' in*)
-    (*   return*)
-    (*     (subs'', e2_ty, TLet (var, TPoly (free_variables, e1'), e2', e2_ty)))*)
-    | Boolean b -> return (Subst.empty, TBool, TBoolean (b, TBool))
-    | Number n -> return (Subst.empty, TInt, TNumber (n, TInt))
+               return ([], ty', TVar (x, ty')))
+    | Boolean b -> return ([], TBool, TBoolean (b, TBool))
+    | Number b -> return ([], TInt, TNumber (b, TInt))
     | If (cond, cons, alt) ->
-        let* subs, cond_ty, cond' = infer_inner cond in
-        let* subs', cons_ty, cons' = infer_inner cons in
-        let* subs'', alt_ty, alt' = infer_inner alt in
-        let* v = unify cond_ty TBool in
-        let cons_ty' = SubstitableType.apply (compose subs v) cons_ty in
-        let alt_ty' = SubstitableType.apply (compose subs v) alt_ty in
-        let* v' = unify cons_ty' alt_ty' in
-        let cons_ty'' = SubstitableType.apply v' cons_ty' in
-        let subs''' =
-          (compose subs << compose subs' << compose subs'' << compose v) v'
+        let* cs, cond_ty, cond' = infer_inner cond in
+        let* cs', cons_ty, cons' = infer_inner cons in
+        let* cs'', alt_ty, alt' = infer_inner alt in
+        return
+          ( ((cond_ty, TBool) :: (cond_ty, alt_ty) :: cs) @ cs' @ cs'',
+            cons_ty,
+            TIf (cond', cons', alt', cons_ty) )
+    | Let (var, e1, e2) ->
+        let* cs, e1_ty, e1' = infer_inner e1 in
+        let* env, var_ty, var' = infer_pattern var in
+        let cs' = (e1_ty, var_ty) :: cs in
+        let* subs = cs' |> solver in
+        (*subs |> Subst.to_list*)
+        (*|> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)*)
+        (*|> String.concat ", " |> print_endline;*)
+        (*let e1_ty' = SubstitableType.apply subs e1_ty in*)
+        let env' =
+          Stdlib.List.map
+            (fun (x, ty) -> (x, SubstitableType.apply subs ty))
+            env
         in
-        return (subs''', cons_ty', TIf (cond', cons', alt', cons_ty''))
+        let* env'', metas = generalize env' in
+        (*env''*)
+        (*|> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)*)
+        (*      |> String.concat "; " |> print_endline;*)
+        let* cs'', e2_ty, e2' = in_env env'' (infer_inner e2) in
+        (*TODO: maybe: be more specific about where we put our (P)TPolys so the annotations of type schemes are more targeted*)
+        return
+          ( cs' @ cs'',
+            e2_ty,
+            Option.fold metas
+              ~none:(TLet (var', e1', e2', e2_ty))
+              ~some:(fun metas ->
+                TLet (PTPoly (metas, var'), TPoly (metas, e1'), e2', e2_ty)) )
+    | Lambda (var, abs) ->
+        let* env, var_ty, var' = infer_pattern var in
+        let* cs, abs_ty, abs' = in_env env (infer_inner abs) in
+        let ty = TArrow (var_ty, abs_ty) in
+        return (cs, ty, TLambda (var', abs', ty))
+    | Application (abs, arg) ->
+        let* cs, abs_ty, abs' = infer_inner abs in
+        let* cs', arg_ty, arg' = infer_inner arg in
+        let* ret_ty = new_meta in
+        return
+          ( ((abs_ty, TArrow (arg_ty, ret_ty)) :: cs) @ cs',
+            ret_ty,
+            TApplication (abs', arg', ret_ty) )
     | Tuple (e1, e2) ->
-        let* subs, e1_ty, e1' = infer_inner e1 in
-        let* subs', e2_ty, e2' = infer_inner e2 in
-        let e1_ty' = SubstitableType.apply subs' e1_ty in
-        let e1'' = SubstitableExpr.apply subs' e1' in
-        let ty = Types.TTuple (e1_ty', e2_ty) in
-        return (compose subs subs', ty, TTuple (e1'', e2', ty))
-    | Record _ -> failwith "record not implemented yet"
+        let* cs, e1_ty, e1' = infer_inner e1 in
+        let* cs', e2_ty, e2' = infer_inner e2 in
+        let ty = Types.TTuple (e1_ty, e2_ty) in
+        return (cs @ cs', ty, TTuple (e1', e2', ty))
+    | Record row ->
+        let row_init =
+          let* meta = new_meta in
+          return ([], meta, Row.empty)
+        in
+
+        let* cs, row_ty, row' =
+          Row.fold
+            (fun label expr result ->
+              let* cs, row_ty, row = result in
+              let* cs', expr_ty, expr' = infer_inner expr in
+              return
+                ( cs @ cs',
+                  TRowExtend (label, expr_ty, row_ty),
+                  Row.add label expr' row ))
+            row row_init
+        in
+        let ty = Types.TRecord row_ty in
+        return (cs, ty, TRecord (row', ty))
+    | RecordAcces (record, label) ->
+        let* ty = new_meta in
+        let* rest_row = new_meta in
+        let* cs, record_ty, record' = infer_inner record in
+        return
+          ( (Types.TRecord (TRowExtend (label, ty, rest_row)), record_ty) :: cs,
+            ty,
+            TRecordAcces (record', label, ty) )
   in
+  let* cs, _ty, expr' = infer_inner expr in
+  let* subs = solver cs in
+  let expr'' = SubstitableExpr.apply subs expr' in
+  (expr'', type_of expr'') |> return
 
-  let* subs, ty, expr' = infer_inner expr in
-  (SubstitableExpr.apply subs expr', ty) |> return
+let rec infer :
+    R.env -> ST.env -> program list -> (tprogram list * R.env, string) result =
+ fun env letters -> function
+  | [] -> Result.ok ([], env)
+  | Bind (name, expr) :: tls ->
+      let infer_generalize =
+        let* (expr' : texpr), (expr_ty : ty) = infer_expr expr in
+        let* _, metas = generalize [ (name, expr_ty) ] in
+        Option.fold metas
+          ~some:(fun metas ->
+            (TPoly (metas, expr'), Expr.Types.TPoly (metas, expr_ty)))
+          ~none:(expr', expr_ty)
+        |> return
+      in
+      let expr', letters' = run infer_generalize env letters in
+      Result.bind expr' (fun (expr'', expr_ty) ->
+          infer ((name, expr_ty) :: env) letters' tls
+          |> Result.map (fun (program, letters') ->
+                 (Bind (name, expr'') :: program, letters')))
+  | Expr expr :: tls ->
+      let expr', letters' = run (infer_expr expr) env letters in
+      Result.bind expr' (fun (expr'', _) ->
+          infer env letters' tls
+          |> Result.map (fun (program, letters') ->
+                 (Expr expr'' :: program, letters')))
 
-let infer_many = List.map ~f:(map ~f:fst << infer)
+let infer env = Result.map fst << infer env letters
