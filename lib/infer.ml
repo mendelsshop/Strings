@@ -61,6 +61,7 @@ let infer expr =
         let e1'' = SubstitableExpr.apply subs' e1' in
         let ty = Types.TTuple (e1_ty', e2_ty) in
         return (compose subs subs', ty, TTuple (e1'', e2', ty))
+    | Record _ -> failwith "record not implemented yet"
   in
 
   let* subs, ty, expr' = infer_inner expr in

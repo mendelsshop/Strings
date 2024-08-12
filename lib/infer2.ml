@@ -39,6 +39,7 @@ let rec infer_pattern = function
       let* env2, e2_ty, t2' = infer_pattern t2 in
       let ty = Types.TTuple (e1_ty, e2_ty) in
       return (env1 @ env2, ty, PTTuple (t1', t2', ty))
+  | PRecord _ -> failwith "record not implemented yet"
 
 let infer_expr expr =
   let rec infer_inner expr =
@@ -103,6 +104,7 @@ let infer_expr expr =
         let* cs', e2_ty, e2' = infer_inner e2 in
         let ty = Types.TTuple (e1_ty, e2_ty) in
         return (cs @ cs', ty, TTuple (e1', e2', ty))
+    | Record _ -> failwith "record not implemented yet"
   in
   let* cs, _ty, expr' = infer_inner expr in
   let* subs = solver cs in

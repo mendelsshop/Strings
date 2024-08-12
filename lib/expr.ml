@@ -1,4 +1,5 @@
 module MetaVariables = Set.Make (String)
+module Row = Map.Make (String)
 
 module Types = struct
   type ty =
@@ -7,9 +8,14 @@ module Types = struct
     | TArrow of ty * ty
     | TMeta of string
     | TTuple of ty * ty
+    (*TODO: seperate row types, also would help with printing*)
+    | TRowEmpty
+    | TRowExtend of string * ty * ty
+    | TRecord of ty
     | TPoly of MetaVariables.t * ty
 
-  let rec type_to_string = function
+  let rec type_to_string ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") =
+    function
     | TInt -> "number"
     | TBool -> "boolean"
     | TArrow (t1, t2) -> type_to_string t1 ^ " -> " ^ type_to_string t2
@@ -20,6 +26,11 @@ module Types = struct
         (if MetaVariables.is_empty metas then ""
          else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
         ^ type_to_string ty
+    | TRecord t -> "{ " ^ type_to_string ~unit:"" t ^ " }"
+    | TRowExtend (label, field, row_extension) ->
+        label ^ type_delim ^ type_to_string field ^ delim
+        ^ type_to_string row_extension ~type_delim ~delim ~unit
+    | TRowEmpty -> unit
 end
 
 open Types
@@ -30,6 +41,7 @@ type pattern =
   | PNumber of float
   | PBoolean of bool
   | PTuple of pattern * pattern
+  | PRecord of pattern Row.t
 
 let rec pattern_to_string = function
   | PVar s -> s
@@ -38,6 +50,13 @@ let rec pattern_to_string = function
   | PWildcard -> "_"
   | PTuple (e1, e2) ->
       "( " ^ pattern_to_string e1 ^ " , " ^ pattern_to_string e2 ^ " )"
+  | PRecord row ->
+      "{ "
+      ^ (Row.to_list row
+        |> List.map (fun (label, pat) -> label ^ " = " ^ pattern_to_string pat)
+        |> String.concat "; ")
+      ^ " }"
+(*| PRecord row -> *)
 
 type tpattern =
   | PTVar of string * ty
@@ -46,6 +65,7 @@ type tpattern =
   | PTBoolean of bool * ty
   | PTTuple of tpattern * tpattern * ty
   | PTPoly of MetaVariables.t * tpattern
+  | PTRecord of tpattern Row.t * ty
 
 let rec tpattern_to_string = function
   | PTVar (s, ty) -> s ^ " : " ^ type_to_string ty
@@ -58,6 +78,12 @@ let rec tpattern_to_string = function
       (if MetaVariables.is_empty metas then ""
        else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
       ^ tpattern_to_string pat
+  | PTRecord (row, _ty) ->
+      "{ "
+      ^ (Row.to_list row
+        |> List.map (fun (label, pat) -> label ^ " = " ^ tpattern_to_string pat)
+        |> String.concat "; ")
+      ^ " }"
 
 let rec type_of_pattern pattern =
   match pattern with
@@ -65,6 +91,7 @@ let rec type_of_pattern pattern =
   | PTBoolean (_, ty)
   | PTNumber (_, ty)
   | PTTuple (_, _, ty)
+  | PTRecord (_, ty)
   | PTWildcard ty ->
       ty
   | PTPoly (metas, expr) -> TPoly (metas, type_of_pattern expr)
@@ -122,6 +149,7 @@ type expr =
   | Lambda of pattern * expr
   | Application of expr * expr
   | Tuple of expr * expr
+  | Record of expr Row.t
 
 (*bad expression format*)
 let rec expr_to_string indent =
@@ -149,6 +177,13 @@ let rec expr_to_string indent =
   | Application (abs, arg) ->
       "( " ^ expr_to_string indent abs ^ " ) ( " ^ expr_to_string indent arg
       ^ " )"
+  | Record row ->
+      "{\n"
+      ^ (Row.to_list row
+        |> List.map (fun (label, pat) ->
+               indent_string ^ label ^ " = " ^ expr_to_string indent pat)
+        |> String.concat "; ")
+      ^ "\n}"
 
 let expr_to_string = expr_to_string 0
 
@@ -163,6 +198,7 @@ type texpr =
   | TApplication of texpr * texpr * ty
   | TPoly of MetaVariables.t * texpr
   | TTuple of texpr * texpr * ty
+  | TRecord of texpr Row.t * ty
 
 let rec type_of expr =
   match expr with
@@ -173,6 +209,7 @@ let rec type_of expr =
   | TLet (_, _, _, ty)
   | TLambda (_, _, ty)
   | TApplication (_, _, ty)
+  | TRecord (_, ty)
   | TTuple (_, _, ty) ->
       ty
   | TPoly (metas, expr) -> TPoly (metas, type_of expr)
@@ -205,6 +242,13 @@ let rec texpr_to_string indent =
   | TTuple (e1, e2, _) ->
       "( " ^ texpr_to_string indent e1 ^ " , " ^ texpr_to_string indent e2
       ^ " )"
+  | TRecord (row, _ty) ->
+      "{\n"
+      ^ (Row.to_list row
+        |> List.map (fun (label, pat) ->
+               indent_string ^ label ^ " = " ^ texpr_to_string indent pat)
+        |> String.concat "; ")
+      ^ "\n}"
 
 let texpr_to_string = texpr_to_string 0
 

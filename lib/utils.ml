@@ -31,10 +31,16 @@ module SubstitableType : Substitable with type t = ty = struct
         (*TODO: foldr*)
         let subst' = MetaVariables.fold Subst.remove metas subst in
         TPoly (metas, apply subst' ty)
+    | TRowEmpty -> TRowEmpty
+    | TRecord row -> TRecord (apply subst row)
+    | TRowExtend (label, ty, row) ->
+        TRowExtend (label, apply subst ty, apply subst row)
 
   let rec ftv = function
-    | TBool | TInt -> MetaVariables.empty
+    | TBool | TInt | TRowEmpty -> MetaVariables.empty
     | TMeta meta -> MetaVariables.singleton meta
+    | TRecord row -> ftv row
+    | TRowExtend (_, ty, row) -> MetaVariables.union (ftv ty) (ftv row)
     | TArrow (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
     | TTuple (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
     | TPoly (metas, ty) -> MetaVariables.diff (ftv ty) metas
@@ -86,6 +92,8 @@ module SubstitablePattern : Substitable with type t = tpattern = struct
     | PTPoly (metas, pat) ->
         let subst' = MetaVariables.fold Subst.remove metas subs in
         PTPoly (metas, apply subst' pat)
+    | PTRecord (row, ty) ->
+        PTRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
 
   let ftv pattern = type_of_pattern pattern |> SubstitableType.ftv
 end
@@ -104,7 +112,11 @@ module SubstitableExpr : Substitable with type t = texpr = struct
             apply subs alt,
             SubstitableType.apply subs ty )
     | TLet (var, e1, e2, ty) ->
-        TLet (SubstitablePattern.apply subs var, apply subs e1, apply subs e2, SubstitableType.apply subs ty)
+        TLet
+          ( SubstitablePattern.apply subs var,
+            apply subs e1,
+            apply subs e2,
+            SubstitableType.apply subs ty )
     | TLambda (var, abs, ty) ->
         TLambda
           ( SubstitablePattern.apply subs var,
@@ -118,6 +130,8 @@ module SubstitableExpr : Substitable with type t = texpr = struct
     | TPoly (metas, expr) ->
         let subst' = MetaVariables.fold Subst.remove metas subs in
         TPoly (metas, apply subst' expr)
+    | TRecord (row, ty) ->
+        TRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
 
   let ftv expr = type_of expr |> SubstitableType.ftv
 end
@@ -149,6 +163,7 @@ let instantiate : ty -> ty ResultReader.t = function
   | ty -> return ty
 
 let rec unify t1 t2 =
+  let open Types in
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
   | TMeta t, ty when occurs_check t ty -> fail ""
@@ -166,7 +181,12 @@ let rec unify t1 t2 =
         unify (SubstitableType.apply subs t2) (SubstitableType.apply subs t2')
       in
       compose subs subs' |> return
-  | _ ->  "unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 |> fail
+  | TRecord _, _ | TRowEmpty, _ | TRowExtend _, _ ->
+      failwith "record not implemented"
+  | _, TRowEmpty | _, TRowExtend _ | _, TRecord _ ->
+      failwith "record not implemented"
+  | _ ->
+      "unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 |> fail
 
 let generalize ty =
   let ty_ftv = SubstitableType.ftv ty in
