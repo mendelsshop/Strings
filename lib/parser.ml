@@ -107,7 +107,8 @@ let let_parser expr =
   !(char '=') >>= fun _ ->
   expr >>= fun e1 ->
   !(string "in") >>= fun _ ->
-  expr <$> fun e2 -> Let (ident, e1, e2)
+  expr <$> fun e2 -> 
+  Let (ident, e1, e2)
 
 let record_acces_parser expr =
   expr >>= fun record ->
@@ -127,7 +128,6 @@ let rec expr_inner input =
           record (fun r -> Record r) (fun i -> Var i) expr_inner;
           lambda_parser expr_inner;
           if_parser expr_inner;
-          (*record_acces_parser expr_inner;*)
         ])
   in
   let basic_forms =
@@ -145,7 +145,7 @@ let rec expr input = (expr_inner <|> !(let_parser expr)) input
 
 let let_parser =
   string "let" >>= fun _ ->
-  !ident >>= fun ident ->
+  !pattern >>= fun ident ->
   !(char '=') >>= fun _ ->
   expr >>= fun e1 -> Bind (ident, e1) |> return
 

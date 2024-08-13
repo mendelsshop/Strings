@@ -258,18 +258,15 @@ let rec texpr_to_string indent =
 
 let texpr_to_string = texpr_to_string 0
 
-type 'a programF = Bind of string * 'a | Expr of 'a
+type ('e, 'p) programF = Bind of 'p * 'e | Expr of 'e
 
 let program_to_string = function
-  | Bind (name, expr) -> name ^ " = " ^ expr_to_string expr
+  | Bind (name, expr) -> pattern_to_string name ^ " = " ^ expr_to_string expr
   | Expr expr -> expr_to_string expr
 
 let tprogram_to_string = function
-  | Bind (name, expr) ->
-      name ^ ": "
-      ^ (expr |> type_of |> type_to_string)
-      ^ " = " ^ texpr_to_string expr
+  | Bind (name, expr) -> tpattern_to_string name ^ " = " ^ texpr_to_string expr
   | Expr expr -> texpr_to_string expr
 
-type program = expr programF
-type tprogram = texpr programF
+type program = (expr, pattern) programF
+type tprogram = (texpr, tpattern) programF

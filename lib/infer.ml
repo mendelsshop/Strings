@@ -161,18 +161,23 @@ let rec infer :
   | Bind (name, expr) :: tls ->
       let infer_generalize =
         let* (expr' : texpr), (expr_ty : ty) = infer_expr expr in
-        let* _, metas = generalize [ (name, expr_ty) ] in
+        let* env, var_ty, var' = infer_pattern name in
+        let* subs = solver [ (var_ty, expr_ty) ] in
+        let env' = SubstitableTypeEnv.apply subs env in
+        let name'' = SubstitablePattern.apply subs var' in
+        let* env'', metas = generalize env' in
+
         Option.fold metas
           ~some:(fun metas ->
-            (TPoly (metas, expr'), Expr.Types.TPoly (metas, expr_ty)))
-          ~none:(expr', expr_ty)
+            (Bind (PTPoly (metas, name''), TPoly (metas, expr')), env''))
+          ~none:(Bind (name'', expr'), env'')
         |> return
       in
       let expr', letters' = run infer_generalize env letters in
-      Result.bind expr' (fun (expr'', expr_ty) ->
-          infer ((name, expr_ty) :: env) letters' tls
+      Result.bind expr' (fun (expr'', env'') ->
+          infer (env'' @ env) letters' tls
           |> Result.map (fun (program, letters') ->
-                 (Bind (name, expr'') :: program, letters')))
+                 (expr'' :: program, letters')))
   | Expr expr :: tls ->
       let expr', letters' = run (infer_expr expr) env letters in
       Result.bind expr' (fun (expr'', _) ->
