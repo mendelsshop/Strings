@@ -183,9 +183,9 @@ let rec unify t1 t2 =
         unify (SubstitableType.apply subs t2) (SubstitableType.apply subs t2')
       in
       compose subs subs' |> return
-  | TRecord _, _ | TRowEmpty, _ | TRowExtend _, _ ->
-      failwith "record not implemented"
-  | _, TRowEmpty | _, TRowExtend _ | _, TRecord _ ->
+  | TRecord (TRowExtend _ as r1), TRecord (TRowExtend _ as r2) -> unify r1 r2
+  (*TODO: can we be a bit more general about what row2 is?*)
+  | (TRowExtend (_label, _ty, _rest_row), (TRowExtend _ as _row2))  ->
       failwith "record not implemented"
   | _ ->
       "unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 |> fail
