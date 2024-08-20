@@ -166,6 +166,7 @@ let instantiate : ty -> ty ResultReader.t = function
 
 let rec unify t1 t2 =
   let open Types in
+  let rewrite_row _label _row2 = failwith "record not implemented" in
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
   | TMeta t, ty when occurs_check t ty -> fail ""
@@ -185,8 +186,23 @@ let rec unify t1 t2 =
       compose subs subs' |> return
   | TRecord (TRowExtend _ as r1), TRecord (TRowExtend _ as r2) -> unify r1 r2
   (*TODO: can we be a bit more general about what row2 is?*)
-  | (TRowExtend (_label, _ty, _rest_row), (TRowExtend _ as _row2))  ->
-      failwith "record not implemented"
+  | TRowExtend (label, ty, rest_row), (TRowExtend _ as row2) ->
+      let* row2_ty, row2_rest_row, subs = rewrite_row label row2 in
+      (*TODO: termination check *)
+      (*if Subst.exists (fun sub sub_ty -> failwith "") subs then fail ""*)
+      (*else*)
+      let* subs' =
+        unify
+          (SubstitableType.apply subs ty)
+          (SubstitableType.apply subs row2_ty)
+      in
+      let subs = compose subs' subs in
+      let* subs' =
+        unify
+          (SubstitableType.apply subs rest_row)
+          (SubstitableType.apply subs row2_rest_row)
+      in
+      compose subs subs' |> return
   | _ ->
       "unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 |> fail
 
