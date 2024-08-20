@@ -166,11 +166,27 @@ let instantiate : ty -> ty ResultReader.t = function
 
 let rec unify t1 t2 =
   let open Types in
-  let rewrite_row _label _row2 = failwith "record not implemented" in
+  let rec rewrite_row label row2 =
+    match row2 with
+    | TMeta m ->
+        let* b = new_meta in
+        let* y = new_meta in
+        (y, b, Subst.singleton m (TRowExtend (label, y, b))) |> return
+    | TRowEmpty -> "cannot add label " ^ label ^ "to row" |> fail
+    | TRowExtend (label2, field_ty2, rest_row2) when label = label2 ->
+        return (field_ty2, rest_row2, Subst.empty)
+    | TRowExtend (label2, field_ty2, rest_row2) ->
+        let* field_ty, rest_row, subs = rewrite_row label rest_row2 in
+        return (field_ty, TRowExtend (label2, field_ty2, rest_row), subs)
+    | _ ->
+        type_to_string row2 ^ " is not a row, so it cannot be extended with "
+        ^ label
+        |> fail
+  in
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
-  | TMeta t, ty when occurs_check t ty -> fail ""
-  | ty, TMeta t when occurs_check t ty -> fail ""
+  | TMeta t, ty when occurs_check t ty -> fail "occurs check fails"
+  | ty, TMeta t when occurs_check t ty -> fail "occurs check fails"
   | TMeta t, ty | ty, TMeta t -> Subst.singleton t ty |> return
   | TArrow (t1, t2), TArrow (t1', t2') ->
       let* subs = unify t1 t1' in

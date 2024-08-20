@@ -241,7 +241,7 @@ let rec texpr_to_string indent =
   | TLambda (var, abs, _) ->
       "\\" ^ tpattern_to_string var ^ ".( " ^ texpr_to_string indent abs ^ " )"
   | TApplication (abs, arg, _) ->
-      "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg
+      "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg ^ " )"
   | TPoly (_, e) -> texpr_to_string indent e
   | TTuple (e1, e2, _) ->
       "( " ^ texpr_to_string indent e1 ^ " , " ^ texpr_to_string indent e2
