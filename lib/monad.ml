@@ -40,7 +40,7 @@ let get x =
   let* env = lift (R.read ()) in
   Option.fold
     ~some:(fun x -> return x)
-    ~none:("unbound variable " ^ x |> ResultReaderOps.fail)
+    ~none:("Unbound variable " ^ x ^ "." |> ResultReaderOps.fail)
     (env
     |> Stdlib.List.find_map (fun ((name : string), ty) ->
            if name = x then Some ty else None))

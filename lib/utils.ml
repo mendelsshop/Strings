@@ -145,7 +145,7 @@ let new_meta =
   let* letters = ST.get () |> R.lift |> lift in
   let* letter, letters' =
     Stdlib.Option.fold
-      ~none:(fail "ran out of fresh type variables")
+      ~none:(fail "Ran out of fresh type variables.")
       ~some:(fun (letter, letters') -> (TMeta letter, letters') |> return)
       (Stdlib.Seq.uncons letters)
   in
@@ -172,22 +172,25 @@ let rec unify t1 t2 =
         let* b = new_meta in
         let* y = new_meta in
         (y, b, Subst.singleton m (TRowExtend (label, y, b))) |> return
-    | TRowEmpty -> "cannot add label " ^ label ^ "to row" |> fail
+    | TRowEmpty -> "Cannot add label `" ^ label ^ "` to row." |> fail
     | TRowExtend (label2, field_ty2, rest_row2) when label = label2 ->
         return (field_ty2, rest_row2, Subst.empty)
     | TRowExtend (label2, field_ty2, rest_row2) ->
         let* field_ty, rest_row, subs = rewrite_row label rest_row2 in
         return (field_ty, TRowExtend (label2, field_ty2, rest_row), subs)
     | _ ->
-        type_to_string row2 ^ " is not a row, so it cannot be extended with "
-        ^ label
+        type_to_string row2
+        ^ " is not a row, so it cannot be extended with label `" ^ label ^ "`."
         |> fail
   in
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
-  | TMeta t, ty when occurs_check t ty -> fail "occurs check fails"
-  | ty, TMeta t when occurs_check t ty -> fail "occurs check fails"
-  | TMeta t, ty | ty, TMeta t -> Subst.singleton t ty |> return
+  | TMeta t, ty | ty, TMeta t ->
+      if occurs_check t ty then
+        "Occurs check fails, for type " ^ t ^ " in type " ^ type_to_string ty
+        ^ "."
+        |> fail
+      else Subst.singleton t ty |> return
   | TArrow (t1, t2), TArrow (t1', t2') ->
       let* subs = unify t1 t1' in
       let* subs' =
@@ -220,7 +223,8 @@ let rec unify t1 t2 =
       in
       compose subs subs' |> return
   | _ ->
-      "unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 |> fail
+      "Unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 ^ "."
+      |> fail
 
 let generalize ty =
   let ty_ftv = SubstitableType.ftv ty in
