@@ -73,6 +73,9 @@ let record wrapper ident_wrapper expr =
           >> !(char '}'))))
   <$> Row.of_list <$> wrapper
 
+let variant_parser wrapper expr =
+  seq ident expr <$> fun (name, expr) -> wrapper name expr
+
 let rec pattern input =
   let basic_forms =
     choice
@@ -83,6 +86,7 @@ let rec pattern input =
         number_parser (fun n -> PNumber n);
         boolean_parser (fun b -> PBoolean b);
         record (fun r -> PRecord r) (fun i -> PVar i) pattern;
+        variant_parser (fun name p -> PConstructor (name, p)) pattern;
       ]
   in
   tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2)) input
@@ -107,8 +111,7 @@ let let_parser expr =
   !(char '=') >>= fun _ ->
   expr >>= fun e1 ->
   !(string "in") >>= fun _ ->
-  expr <$> fun e2 -> 
-  Let (ident, e1, e2)
+  expr <$> fun e2 -> Let (ident, e1, e2)
 
 let record_acces_parser expr =
   expr >>= fun record ->
@@ -128,6 +131,7 @@ let rec expr_inner input =
           record (fun r -> Record r) (fun i -> Var i) expr_inner;
           lambda_parser expr_inner;
           if_parser expr_inner;
+          variant_parser (fun name p -> Constructor (name, p)) expr_inner;
         ])
   in
   let basic_forms =

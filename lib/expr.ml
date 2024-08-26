@@ -1,6 +1,7 @@
 module MetaVariables = Set.Make (String)
 module Row = Map.Make (String)
 
+(*TODO: unit type for empty adts*)
 module Types = struct
   type ty =
     | TInt
@@ -12,6 +13,7 @@ module Types = struct
     | TRowEmpty
     | TRowExtend of string * ty * ty
     | TRecord of ty
+    | TVariant of ty
     | TPoly of MetaVariables.t * ty
 
   let rec type_to_string ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") =
@@ -31,6 +33,7 @@ module Types = struct
         label ^ type_delim ^ type_to_string field ^ delim
         ^ type_to_string row_extension ~type_delim ~delim ~unit
     | TRowEmpty -> unit
+    | TVariant row -> type_to_string row ~unit:"" ~delim:"|\n" ~type_delim:" "
 end
 
 open Types
@@ -42,6 +45,7 @@ type pattern =
   | PBoolean of bool
   | PTuple of pattern * pattern
   | PRecord of pattern Row.t
+  | PConstructor of string * pattern
 
 let rec pattern_to_string = function
   | PVar s -> s
@@ -56,7 +60,8 @@ let rec pattern_to_string = function
         |> List.map (fun (label, pat) -> label ^ " = " ^ pattern_to_string pat)
         |> String.concat "; ")
       ^ " }"
-(*| PRecord row -> *)
+  | PConstructor (name, pattern) ->
+      name ^ " (" ^ pattern_to_string pattern ^ ")"
 
 type tpattern =
   | PTVar of string * ty
@@ -66,6 +71,7 @@ type tpattern =
   | PTTuple of tpattern * tpattern * ty
   | PTPoly of MetaVariables.t * tpattern
   | PTRecord of tpattern Row.t * ty
+  | PTConstructor of string * tpattern * ty
 
 let rec tpattern_to_string = function
   | PTVar (s, ty) -> s ^ " : " ^ type_to_string ty
@@ -84,6 +90,8 @@ let rec tpattern_to_string = function
         |> List.map (fun (label, pat) -> label ^ " = " ^ tpattern_to_string pat)
         |> String.concat "; ")
       ^ " }"
+  | PTConstructor (name, pattern, _ty) ->
+      name ^ " (" ^ tpattern_to_string pattern ^ ")"
 
 let rec type_of_pattern pattern =
   match pattern with
@@ -92,6 +100,7 @@ let rec type_of_pattern pattern =
   | PTNumber (_, ty)
   | PTTuple (_, _, ty)
   | PTRecord (_, ty)
+  | PTConstructor (_, _, ty)
   | PTWildcard ty ->
       ty
   | PTPoly (metas, expr) -> TPoly (metas, type_of_pattern expr)
@@ -151,6 +160,7 @@ type expr =
   | Tuple of expr * expr
   | Record of expr Row.t
   | RecordAcces of expr * string
+  | Constructor of string * expr
 
 (*bad expression format*)
 let rec expr_to_string indent =
@@ -186,6 +196,7 @@ let rec expr_to_string indent =
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
   | RecordAcces (record, label) -> expr_to_string indent record ^ "." ^ label
+  | Constructor (name, expr) -> name ^ " (" ^ expr_to_string indent expr ^ ")"
 
 let expr_to_string = expr_to_string 0
 
@@ -202,6 +213,7 @@ type texpr =
   | TTuple of texpr * texpr * ty
   | TRecord of texpr Row.t * ty
   | TRecordAcces of texpr * string * ty
+  | TConstructor of string * texpr * ty
 
 let rec type_of expr =
   match expr with
@@ -214,6 +226,7 @@ let rec type_of expr =
   | TRecordAcces (_, _, ty)
   | TApplication (_, _, ty)
   | TRecord (_, ty)
+  | TConstructor (_, _, ty)
   | TTuple (_, _, ty) ->
       ty
   | TPoly (metas, expr) -> TPoly (metas, type_of expr)
@@ -241,7 +254,8 @@ let rec texpr_to_string indent =
   | TLambda (var, abs, _) ->
       "\\" ^ tpattern_to_string var ^ ".( " ^ texpr_to_string indent abs ^ " )"
   | TApplication (abs, arg, _) ->
-      "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg ^ " )"
+      "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg
+      ^ " )"
   | TPoly (_, e) -> texpr_to_string indent e
   | TTuple (e1, e2, _) ->
       "( " ^ texpr_to_string indent e1 ^ " , " ^ texpr_to_string indent e2
@@ -255,6 +269,8 @@ let rec texpr_to_string indent =
       ^ "\n}"
   | TRecordAcces (record, label, _ty) ->
       texpr_to_string indent record ^ "." ^ label
+  | TConstructor (name, expr, _ty) ->
+      name ^ " (" ^ texpr_to_string indent expr ^ ")"
 
 let texpr_to_string = texpr_to_string 0
 
