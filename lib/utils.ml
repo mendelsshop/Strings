@@ -33,6 +33,7 @@ module SubstitableType : Substitable with type t = ty = struct
         TPoly (metas, apply subst' ty)
     | TRowEmpty -> TRowEmpty
     | TRecord row -> TRecord (apply subst row)
+    | TVariant row -> TRecord (apply subst row)
     | TRowExtend (label, ty, row) ->
         TRowExtend (label, apply subst ty, apply subst row)
 
@@ -40,6 +41,7 @@ module SubstitableType : Substitable with type t = ty = struct
     | TBool | TInt | TRowEmpty -> MetaVariables.empty
     | TMeta meta -> MetaVariables.singleton meta
     | TRecord row -> ftv row
+    | TVariant row -> ftv row
     | TRowExtend (_, ty, row) -> MetaVariables.union (ftv ty) (ftv row)
     | TArrow (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
     | TTuple (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
@@ -94,6 +96,8 @@ module SubstitablePattern : Substitable with type t = tpattern = struct
         PTPoly (metas, apply subst' pat)
     | PTRecord (row, ty) ->
         PTRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
+    | PTConstructor (name, row, ty) ->
+        PTConstructor (name, (apply subs) row, SubstitableType.apply subs ty)
 
   let ftv pattern = type_of_pattern pattern |> SubstitableType.ftv
 end
@@ -132,6 +136,8 @@ module SubstitableExpr : Substitable with type t = texpr = struct
         TPoly (metas, apply subst' expr)
     | TRecord (row, ty) ->
         TRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
+    | TConstructor (name, row, ty) ->
+        TConstructor (name, (apply subs) row, SubstitableType.apply subs ty)
     | TRecordAcces (record, label, ty) ->
         TRecordAcces (apply subs record, label, SubstitableType.apply subs ty)
 

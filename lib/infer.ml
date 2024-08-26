@@ -39,6 +39,11 @@ let rec infer_pattern = function
       let* env2, e2_ty, t2' = infer_pattern t2 in
       let ty = Types.TTuple (e1_ty, e2_ty) in
       return (env1 @ env2, ty, PTTuple (t1', t2', ty))
+  | PConstructor (name, pattern) ->
+      let* other_variants = new_meta in
+      let* env, ty, pattern' = infer_pattern pattern in
+      let ty' = TVariant (TRowExtend (name, ty, other_variants)) in
+      (env, ty', PTConstructor (name, pattern', ty')) |> return
   | PRecord row ->
       let row_init =
         let* meta = new_meta in
@@ -140,6 +145,11 @@ let infer_expr expr =
         in
         let ty = Types.TRecord row_ty in
         return (cs, ty, TRecord (row', ty))
+    | Constructor (name, expr) ->
+        let* other_variants = new_meta in
+        let* cs, ty, expr' = infer_inner expr in
+        let ty' = TVariant (TRowExtend (name, ty, other_variants)) in
+        (cs, ty', TConstructor (name, expr', ty')) |> return
     | RecordAcces (record, label) ->
         let* ty = new_meta in
         let* rest_row = new_meta in
