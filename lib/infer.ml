@@ -23,6 +23,7 @@ let rec solver = function
       let* subs = unify t1 t2 in
       let open SubstitableA (SubstitableConstraint) in
       let* subs' = apply subs cs' |> solver in
+      let subs = Subst.map (SubstitableType.apply subs') subs in
       compose subs subs' |> return
 
 let rec infer_pattern = function
@@ -158,7 +159,20 @@ let infer_expr expr =
           ( (Types.TRecord (TRowExtend (label, ty, rest_row)), record_ty) :: cs,
             ty,
             TRecordAcces (record', label, ty) )
-    | Match _ -> failwith "TODO infer match"
+    | Match (expr, cases) ->
+        (*TODO: exhaustiveness*)
+        let* cs, ty, expr' = infer_inner expr in
+        let* ret = new_meta in
+        let* cs', cases' =
+          List.fold cases
+            ~f:(fun (cs, cases) (pat, case) ->
+              let* env, pat_ty, pat' = infer_pattern pat in
+              let* cs', case_ty, case' = in_env env (infer_inner case) in
+              let cs'' = cs @ cs' @ [ (ty, pat_ty); (ret, case_ty) ] in
+              return (cs'', cases @ [ (pat', case') ]))
+            ~init:(cs, [])
+        in
+        (cs', ret, TMatch (expr', cases', ret)) |> return
   in
   let* cs, _ty, expr' = infer_inner expr in
   let* subs = solver cs in

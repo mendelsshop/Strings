@@ -33,7 +33,7 @@ module SubstitableType : Substitable with type t = ty = struct
         TPoly (metas, apply subst' ty)
     | TRowEmpty -> TRowEmpty
     | TRecord row -> TRecord (apply subst row)
-    | TVariant row -> TRecord (apply subst row)
+    | TVariant row -> TVariant (apply subst row)
     | TRowExtend (label, ty, row) ->
         TRowExtend (label, apply subst ty, apply subst row)
 
@@ -97,7 +97,7 @@ module SubstitablePattern : Substitable with type t = tpattern = struct
     | PTRecord (row, ty) ->
         PTRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
     | PTConstructor (name, row, ty) ->
-        PTConstructor (name, (apply subs) row, SubstitableType.apply subs ty)
+        PTConstructor (name, apply subs row, SubstitableType.apply subs ty)
 
   let ftv pattern = type_of_pattern pattern |> SubstitableType.ftv
 end
@@ -140,7 +140,14 @@ module SubstitableExpr : Substitable with type t = texpr = struct
         TConstructor (name, (apply subs) row, SubstitableType.apply subs ty)
     | TRecordAcces (record, label, ty) ->
         TRecordAcces (apply subs record, label, SubstitableType.apply subs ty)
-    | TMatch _ -> failwith "TODO apply match"
+    | TMatch (expr, cases, ty) ->
+        TMatch
+          ( apply subs expr,
+            Stdlib.List.map
+              (fun (pat, case) ->
+                (SubstitablePattern.apply subs pat, apply subs case))
+              cases,
+            SubstitableType.apply subs ty )
 
   let ftv expr = type_of expr |> SubstitableType.ftv
 end
@@ -211,6 +218,7 @@ let rec unify t1 t2 =
       in
       compose subs subs' |> return
   | TRecord (TRowExtend _ as r1), TRecord (TRowExtend _ as r2) -> unify r1 r2
+  | TVariant (TRowExtend _ as r1), TVariant (TRowExtend _ as r2) -> unify r1 r2
   (*TODO: can we be a bit more general about what row2 is?*)
   | TRowExtend (label, ty, rest_row), (TRowExtend _ as row2) ->
       let* row2_ty, row2_rest_row, subs = rewrite_row label row2 in

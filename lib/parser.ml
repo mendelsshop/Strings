@@ -32,7 +32,13 @@ let boolean_parser wrapper =
 let ident =
   let idents = many alphanum in
   let flatten (f, rest) = f :: rest in
-  seq letter idents <$> flatten <$> implode
+  seq lower idents <$> flatten <$> implode
+  |> check (fun x -> not (List.mem x key_words))
+
+let variant_ident =
+  let idents = many alphanum in
+  let flatten (f, rest) = f :: rest in
+  seq upper idents <$> flatten <$> implode
   |> check (fun x -> not (List.mem x key_words))
 
 let ident_parser wrapper = ident <$> wrapper
@@ -75,7 +81,7 @@ let record wrapper ident_wrapper expr =
   <$> Row.of_list <$> wrapper
 
 let variant_parser wrapper expr =
-  seq ident expr <$> fun (name, expr) -> wrapper name expr
+  seq variant_ident expr <$> fun (name, expr) -> wrapper name expr
 
 let rec pattern input =
   let basic_forms =

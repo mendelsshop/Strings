@@ -33,7 +33,7 @@ module Types = struct
         label ^ type_delim ^ type_to_string field ^ delim
         ^ type_to_string row_extension ~type_delim ~delim ~unit
     | TRowEmpty -> unit
-    | TVariant row -> type_to_string row ~unit:"" ~delim:"|\n" ~type_delim:" "
+    | TVariant row -> type_to_string row ~unit:"" ~delim:"| " ~type_delim:" "
 end
 
 open Types
