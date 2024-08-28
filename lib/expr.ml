@@ -161,6 +161,7 @@ type expr =
   | Record of expr Row.t
   | RecordAcces of expr * string
   | Constructor of string * expr
+  | Match of expr * (pattern * expr) list
 
 (*bad expression format*)
 let rec expr_to_string indent =
@@ -197,6 +198,14 @@ let rec expr_to_string indent =
       ^ "\n" ^ indent_string ^ "}"
   | RecordAcces (record, label) -> expr_to_string indent record ^ "." ^ label
   | Constructor (name, expr) -> name ^ " (" ^ expr_to_string indent expr ^ ")"
+  | Match (expr, cases) ->
+      "match ( " ^ expr_to_string indent expr ^ " ) with \n"
+      ^ indent_string
+        (* we have an indent before the first case as it does not get indented by concat *)
+      ^ (cases
+        |> List.map (fun (pat, case) ->
+               pattern_to_string pat ^ " -> " ^ expr_to_string next_level case)
+        |> String.concat ("\n" ^ indent_string ^ "|"))
 
 let expr_to_string = expr_to_string 0
 
@@ -214,6 +223,7 @@ type texpr =
   | TRecord of texpr Row.t * ty
   | TRecordAcces of texpr * string * ty
   | TConstructor of string * texpr * ty
+  | TMatch of texpr * (tpattern * texpr) list * ty
 
 let rec type_of expr =
   match expr with
@@ -226,6 +236,7 @@ let rec type_of expr =
   | TRecordAcces (_, _, ty)
   | TApplication (_, _, ty)
   | TRecord (_, ty)
+  | TMatch (_, _, ty)
   | TConstructor (_, _, ty)
   | TTuple (_, _, ty) ->
       ty
@@ -271,6 +282,16 @@ let rec texpr_to_string indent =
       texpr_to_string indent record ^ "." ^ label
   | TConstructor (name, expr, _ty) ->
       name ^ " (" ^ texpr_to_string indent expr ^ ")"
+  | TMatch (expr, cases, _) ->
+      "match ( "
+      ^ texpr_to_string indent expr
+      ^ " ) with \n"
+      ^ indent_string
+        (* we have an indent before the first case as it does not get indented by concat *)
+      ^ (cases
+        |> List.map (fun (pat, case) ->
+               tpattern_to_string pat ^ " -> " ^ texpr_to_string next_level case)
+        |> String.concat ("\n" ^ indent_string ^ "|"))
 
 let texpr_to_string = texpr_to_string 0
 

@@ -140,6 +140,7 @@ module SubstitableExpr : Substitable with type t = texpr = struct
         TConstructor (name, (apply subs) row, SubstitableType.apply subs ty)
     | TRecordAcces (record, label, ty) ->
         TRecordAcces (apply subs record, label, SubstitableType.apply subs ty)
+    | TMatch _ -> failwith "TODO apply match"
 
   let ftv expr = type_of expr |> SubstitableType.ftv
 end

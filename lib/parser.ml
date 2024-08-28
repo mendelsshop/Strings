@@ -1,7 +1,8 @@
 open AMPCL
 open Expr
 
-let key_words = [ "in"; "let"; "if"; "rec"; "then"; "else"; "\\" ]
+let key_words =
+  [ "match"; "with"; "in"; "let"; "if"; "rec"; "then"; "else"; "\\"; "."; "|" ]
 
 let junk =
   let non_newline = sat (fun c -> c != '\n') in
@@ -120,6 +121,17 @@ let record_acces_parser expr =
     (fun record field -> RecordAcces (record, field))
     record acceses
 
+let match_parser expr =
+  let case = seq pattern (!(string "->") >>= fun _ -> expr) in
+  string "match" >>= fun _ ->
+  expr >>= fun expr ->
+  !(string "with") >>= fun _ ->
+  ( seq
+      (!(char '|') |> opt >>= fun _ -> case)
+      (!(char '|') >>= (fun _ -> case) |> many)
+  <$> fun (c, cs) -> c :: cs )
+  <$> fun cases -> Match (expr, cases)
+
 let rec expr_inner input =
   let basic_forms =
     !(choice
@@ -131,6 +143,7 @@ let rec expr_inner input =
           record (fun r -> Record r) (fun i -> Var i) expr_inner;
           lambda_parser expr_inner;
           if_parser expr_inner;
+          match_parser expr_inner;
           variant_parser (fun name p -> Constructor (name, p)) expr_inner;
         ])
   in

@@ -158,6 +158,7 @@ let infer_expr expr =
           ( (Types.TRecord (TRowExtend (label, ty, rest_row)), record_ty) :: cs,
             ty,
             TRecordAcces (record', label, ty) )
+    | Match _ -> failwith "TODO infer match"
   in
   let* cs, _ty, expr' = infer_inner expr in
   let* subs = solver cs in
