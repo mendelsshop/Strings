@@ -46,22 +46,20 @@ let rec infer_pattern = function
       let ty' = TVariant (TRowExtend (name, ty, other_variants)) in
       (env, ty', PTConstructor (name, pattern', ty')) |> return
   | PRecord row ->
-      let row_init =
+      let* row_init =
         let* meta = new_meta in
-        return ([], meta, Row.empty)
+        return ([], meta, [])
       in
-
       let* env, pattern_ty, pattern =
-        (*TODO: right fold*)
-        Row.fold
-          (fun label pattern result ->
-            let* env, row_ty, row = result in
+        List.fold_right
+          ~f:(fun (label, pattern) result ->
+            let env, row_ty, row = result in
             let* env', pat_ty, pat' = infer_pattern pattern in
             return
               ( env @ env',
                 TRowExtend (label, pat_ty, row_ty),
-                Row.add label pat' row ))
-          row row_init
+                (label, pat') :: row ))
+          row ~init:row_init
       in
       let ty = Types.TRecord pattern_ty in
       return (env, ty, PTRecord (pattern, ty))
@@ -130,19 +128,18 @@ let infer_expr expr =
         let ty = Types.TTuple (e1_ty, e2_ty) in
         return (cs @ cs', ty, TTuple (e1', e2', ty))
     | Record row ->
-        let row_init = return ([], TRowEmpty, Row.empty) in
+        let* row_init = return ([], TRowEmpty, []) in
 
         let* cs, row_ty, row' =
-          (*TODO: right fold*)
-          Row.fold
-            (fun label expr result ->
-              let* cs, row_ty, row = result in
+          List.fold_right
+            ~f:(fun (label, expr) result ->
+              let cs, row_ty, row = result in
               let* cs', expr_ty, expr' = infer_inner expr in
               return
                 ( cs @ cs',
                   TRowExtend (label, expr_ty, row_ty),
-                  Row.add label expr' row ))
-            row row_init
+                  (label, expr') :: row ))
+            row ~init:row_init
         in
         let ty = Types.TRecord row_ty in
         return (cs, ty, TRecord (row', ty))
@@ -173,6 +170,26 @@ let infer_expr expr =
             ~init:(cs, [])
         in
         (cs', ret, TMatch (expr', cases', ret)) |> return
+    | RecordExtend (record, row) ->
+        let* cs, record_ty, record' = infer_inner record in
+        let* record_check = new_meta in
+        let* row_init = return (cs, record_check, []) in
+
+        let* cs', row_ty, row' =
+          List.fold_right
+            ~f:(fun (label, expr) result ->
+              let cs, row_ty, row = result in
+              let* cs', expr_ty, expr' = infer_inner expr in
+              return
+                ( cs @ cs',
+                  TRowExtend (label, expr_ty, row_ty),
+                  (label, expr') :: row ))
+            row ~init:row_init
+        in
+        ( (Types.TRecord record_check, record_ty) :: cs',
+          row_ty,
+          TRecordExtend (record', row', row_ty) )
+        |> return
   in
   let* cs, _ty, expr' = infer_inner expr in
   let* subs = solver cs in

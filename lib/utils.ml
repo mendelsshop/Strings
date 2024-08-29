@@ -95,7 +95,9 @@ module SubstitablePattern : Substitable with type t = tpattern = struct
         let subst' = MetaVariables.fold Subst.remove metas subs in
         PTPoly (metas, apply subst' pat)
     | PTRecord (row, ty) ->
-        PTRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
+        PTRecord
+          ( Stdlib.List.map (fun (field, ty) -> (field, apply subs ty)) row,
+            SubstitableType.apply subs ty )
     | PTConstructor (name, row, ty) ->
         PTConstructor (name, apply subs row, SubstitableType.apply subs ty)
 
@@ -135,7 +137,14 @@ module SubstitableExpr : Substitable with type t = texpr = struct
         let subst' = MetaVariables.fold Subst.remove metas subs in
         TPoly (metas, apply subst' expr)
     | TRecord (row, ty) ->
-        TRecord (Row.map (apply subs) row, SubstitableType.apply subs ty)
+        TRecord
+          ( Stdlib.List.map (fun (field, ty) -> (field, apply subs ty)) row,
+            SubstitableType.apply subs ty )
+    | TRecordExtend (expr, row, ty) ->
+        TRecordExtend
+          ( apply subs expr,
+            Stdlib.List.map (fun (field, ty) -> (field, apply subs ty)) row,
+            SubstitableType.apply subs ty )
     | TConstructor (name, row, ty) ->
         TConstructor (name, (apply subs) row, SubstitableType.apply subs ty)
     | TRecordAcces (record, label, ty) ->
@@ -217,8 +226,8 @@ let rec unify t1 t2 =
         unify (SubstitableType.apply subs t2) (SubstitableType.apply subs t2')
       in
       compose subs subs' |> return
-  | TRecord (TRowExtend _ as r1), TRecord (TRowExtend _ as r2) -> unify r1 r2
-  | TVariant (TRowExtend _ as r1), TVariant (TRowExtend _ as r2) -> unify r1 r2
+  | TRecord r1, TRecord r2 -> unify r1 r2
+  | TVariant r1, TVariant r2 -> unify r1 r2
   (*TODO: can we be a bit more general about what row2 is?*)
   | TRowExtend (label, ty, rest_row), (TRowExtend _ as row2) ->
       let* row2_ty, row2_rest_row, subs = rewrite_row label row2 in

@@ -64,11 +64,11 @@ let tuple expr wrapper =
 (*function*)
 (*| [] -> e1*)
 (*| tuples -> wrapper (e1, e2)*)
-let record wrapper ident_wrapper expr =
+let record expr =
   (let ( << ) = keep_right in
    let record =
      seq !ident (opt (!(char '=') << expr)) <$> function
-     | name, None -> (name, ident_wrapper name)
+     | name, None -> (name, PVar name)
      | name, Some value -> (name, value)
    in
    let record_mid = record >> !(char ';') in
@@ -78,7 +78,7 @@ let record wrapper ident_wrapper expr =
       <|> (seq (many record_mid) record
           <$> (fun (rs, r) -> rs @ [ r ])
           >> !(char '}'))))
-  <$> Row.of_list <$> wrapper
+  <$> fun r -> PRecord r
 
 let variant_parser wrapper expr =
   seq variant_ident expr <$> fun (name, expr) -> wrapper name expr
@@ -92,7 +92,7 @@ let rec pattern input =
         ident_parser (fun i -> PVar i);
         number_parser (fun n -> PNumber n);
         boolean_parser (fun b -> PBoolean b);
-        record (fun r -> PRecord r) (fun i -> PVar i) pattern;
+        record pattern;
         variant_parser (fun name p -> PConstructor (name, p)) pattern;
       ]
   in
@@ -111,6 +111,26 @@ let if_parser expr =
   expr >>= fun cons ->
   !(string "else") >>= fun _ ->
   expr <$> fun alt -> If (cond, cons, alt)
+
+let record expr =
+  (let ( << ) = keep_right in
+   let record =
+     seq !ident (opt (!(char '=') << expr)) <$> function
+     | name, None -> (name, Var name)
+     | name, Some value -> (name, value)
+   in
+   let record_mid = record >> !(char ';') in
+   !(char '{')
+   << seq
+        (expr >> !(string "with") |> opt)
+        (many1 record_mid
+        >> !(char '}')
+        <|> (seq (many record_mid) record
+            <$> (fun (rs, r) -> rs @ [ r ])
+            >> !(char '}'))))
+  <$> function
+  | Some init, rows -> RecordExtend (init, rows)
+  | None, rows -> Record rows
 
 let let_parser expr =
   string "let" >>= fun _ ->
@@ -146,7 +166,7 @@ let rec expr_inner input =
           boolean_parser (fun b -> Boolean b);
           number_parser (fun n -> Number n);
           ident_parser (fun i -> Var i);
-          record (fun r -> Record r) (fun i -> Var i) expr_inner;
+          record expr_inner;
           lambda_parser expr_inner;
           if_parser expr_inner;
           match_parser expr_inner;
