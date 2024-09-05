@@ -232,22 +232,25 @@ let rec unify t1 t2 =
   | TRowExtend (label, ty, rest_row), (TRowExtend _ as row2) ->
       let* row2_ty, row2_rest_row, subs = rewrite_row label row2 in
       (*TODO: termination check *)
-      (*if Subst.exists (fun sub sub_ty -> failwith "") subs then fail ""*)
-      (*else*)
-      let* subs' =
-        unify
-          (SubstitableType.apply subs ty)
-          (SubstitableType.apply subs row2_ty)
-      in
-      let subs = compose subs' subs in
-      let* subs' =
-        unify
-          (SubstitableType.apply subs rest_row)
-          (SubstitableType.apply subs row2_rest_row)
-      in
-      compose subs subs' |> return
+      if
+        row_tail rest_row
+        |> Option.fold ~none:false ~some:(fun tv -> Subst.mem tv subs)
+      then fail "recursive row"
+      else
+        let* subs' =
+          unify
+            (SubstitableType.apply subs ty)
+            (SubstitableType.apply subs row2_ty)
+        in
+        let subs = compose subs' subs in
+        let* subs' =
+          unify
+            (SubstitableType.apply subs rest_row)
+            (SubstitableType.apply subs row2_rest_row)
+        in
+        compose subs subs' |> return
   | _ ->
-      "Unification error " ^ type_to_string t1 ^ " " ^ type_to_string t2 ^ "."
+      "Unification error " ^ type_to_string t1 ^ ", " ^ type_to_string t2 ^ "."
       |> fail
 
 let generalize ty =

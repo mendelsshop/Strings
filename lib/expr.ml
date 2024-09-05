@@ -33,6 +33,13 @@ module Types = struct
         ^ type_to_string row_extension ~type_delim ~delim ~unit
     | TRowEmpty -> unit
     | TVariant row -> type_to_string row ~unit:"" ~delim:"| " ~type_delim:" "
+
+  let rec row_tail = function
+    | TMeta m -> Some m
+    | TRowEmpty -> None
+    | TRowExtend (_, _, r) -> row_tail r
+    | TRecord r -> row_tail r
+    | _ -> None
 end
 
 open Types
@@ -46,7 +53,7 @@ type pattern =
   | PBoolean of bool
   | PTuple of pattern * pattern
   | PRecord of pattern row
-(*   TODO: does record extension makes sense for patterns   *)
+  (*   TODO: does record extension makes sense for patterns   *)
   | PConstructor of string * pattern
 
 let rec pattern_to_string = function
@@ -305,7 +312,9 @@ let rec texpr_to_string indent =
                tpattern_to_string pat ^ " -> " ^ texpr_to_string next_level case)
         |> String.concat ("\n" ^ indent_string ^ "|"))
   | TRecordExtend (expr, row, _) ->
-      "{" ^ texpr_to_string indent expr ^ " with "
+      "{"
+      ^ texpr_to_string indent expr
+      ^ " with "
       ^ (row
         |> List.map (fun (label, pat) ->
                indent_string ^ label ^ " = " ^ texpr_to_string indent pat)

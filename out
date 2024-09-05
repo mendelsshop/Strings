@@ -1,0 +1,100 @@
+tests/a.hs
+tuple = \x.( \y.( ( x , ( y , ( x , y ) ) ) ) )
+∀a, b.tuple : a -> b -> ( a * ( b * ( a * b ) ) ) = \x : a.( \y : b.( ( x , ( y , ( x , y ) ) ) ) )
+tests/b.hs
+( 1. , ( 2. , ( 3. , ( 4. , 1. ) ) ) )
+( 1. , ( 2. , ( 3. , ( 4. , 1. ) ) ) )
+tests/c.hs
+let ( x , y ) = ( ( 5. , 6. ) )
+  in ( ( x , ( 1. , 3. ) ) )
+let ( x : number , y : number ) = ( ( 5. , 6. ) )
+  in ( ( x , ( 1. , 3. ) ) )
+tests/d.hs
+let ( f , g ) = ( ( \x.( 5. ) , \y.( y ) ) )
+  in ( f )
+let ∀a, b.( f : a -> number , g : b -> b ) = ( ( \x : a.( 5. ) , \y : b.( y ) ) )
+  in ( f )
+tests/e.hs
+z = let ( x , y ) = ( ( \x.( x ) , \y.( 1. ) ) )
+  in ( ( x ) ( ( y ) ( 1. ) ) )
+id = \x.( x )
+y = ( id ) ( 5. )
+u = y
+z : number = let ∀a, b.( x : a -> a , y : b -> number ) = ( ( \x : a.( x ) , \y : b.( 1. ) ) )
+  in ( ( x ) ( ( y ) ( 1. ) ) )
+∀j.id : j -> j = \x : j.( x )
+y : number = ( id ) ( 5. )
+u : number = y
+tests/f.hs
+id = \x.( x )
+let f = ( 1. )
+  in ( ( id ) ( 5. ) )
+∀a.id : a -> a = \x : a.( x )
+let f : number = ( 1. )
+  in ( ( id ) ( 5. ) )
+tests/g.hs
+y = 5.
+x = {
+  y = y;   f = 5.;   z = if ( true )
+  then ( \x.( x ) )
+  else ( \y.( y ) )
+  }
+( _ , u ) = ( 5. , 5. )
+_ = x.y
+y : number = 5.
+∀c.x : { y: number; f: number; z: c -> c;  } = {
+  y = y;
+  f = 5.;
+  z = if ( true )
+    then ( \x : c.( x ) )
+    else ( \y : c.( y ) )
+}
+( _ , u : number ) = ( 5. , 5. )
+_ = x.y
+tests/h.hs
+f = \x.( x.foo )
+c = ( f ) ( {
+  a = 4.;   foo = 5.
+  } )
+∀b, c.f : { foo: b; c } -> b = \x : { foo: b; c }.( x.foo )
+c : number = ( f ) ( {
+  a = 4.;
+  foo = 5.
+} )
+tests/i.hs
+h = {
+  x = 1.
+  }
+h : { x: number;  } = {
+  x = 1.
+}
+tests/j.hs
+f = if ( true )
+  then ( Some (8.) )
+  else ( None (5.) )
+∀c.f : Some number| None number| c = if ( true )
+  then ( Some (8.) )
+  else ( None (5.) )
+tests/k.hs
+x = \a.( match ( a ) with 
+  M (z) -> 2.
+  |C (b) -> 2. )
+∀f, g, h.x : M h| C f| g -> number = \a : M h| C f| g.( match ( a ) with 
+  M (z : h) -> 2.
+  |C (b : f) -> 2. )
+tests/l.hs
+z = \x.( ( {x with   a = 4.;   c = 4.
+  } , x.foo ) )
+∀c, d.z : { foo: c; d } -> ( a: number; c: number; foo: c; d * c ) = \x : { foo: c; d }.( ( {x with   a = 4.;   c = 4.
+  } , x.foo ) )
+tests/t.hs
+id = \x.( x )
+let id = ( \x.( x ) )
+  in ( 5. )
+let cd = ( \x.( x ) )
+  in ( ( id ) ( ( cd ) ( 5. ) ) )
+∀a.id : a -> a = \x : a.( x )
+let ∀c.id : c -> c = ( \x : c.( x ) )
+  in ( 5. )
+let ∀e.cd : e -> e = ( \x : e.( x ) )
+  in ( ( id ) ( ( cd ) ( 5. ) ) )

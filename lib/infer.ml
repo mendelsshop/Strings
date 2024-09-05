@@ -187,7 +187,7 @@ let infer_expr expr =
             row ~init:row_init
         in
         ( (Types.TRecord record_check, record_ty) :: cs',
-          row_ty,
+        Types.TRecord  row_ty,
           TRecordExtend (record', row', row_ty) )
         |> return
   in
