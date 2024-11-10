@@ -3,9 +3,7 @@ open Strings.Parser
 let () =
   let open Alcotest in
   let parse_result =
-    string_parser [ 'f'; 'o'; 'o' ] |> function
-    | Some (s, []) -> Some s
-    | _ -> Some ""
+    Strings.Parser.run string_parser "foo" |> function Ok s -> Some s | _ -> Some ""
   in
   let actual = Some "foo" in
   run "Parsers"

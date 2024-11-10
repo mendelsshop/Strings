@@ -1,3 +1,10 @@
+module Unit = struct
+  include Unit
+
+  let show _ = ""
+end
+
+open AMPCL.Parser.Char.CharList.Show.Make (Unit)
 open AMPCL
 open Ast
 open Types
@@ -7,7 +14,9 @@ let key_words =
 
 let reserved_operators = [ "|" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
+let string i = string (explode i) <$> implode
 
+let explode = explode
 let skip_garbage =
   let ws = sat is_ws <$> fun c -> String.make 1 c in
   let line_comment =
@@ -16,31 +25,39 @@ let skip_garbage =
   in
   many (ws <|> line_comment)
 
-let rec type_parser input =
-  let basic_type =
-    skip_garbage << char '(' << skip_garbage << char ')'
-    <$> (fun _ -> TUnit)
-    <|> between
-          (skip_garbage << char '(')
-          (skip_garbage << char ')')
-          type_parser
-    <|> (skip_garbage << string "int" <$> fun _ -> TInteger)
-    <|> (skip_garbage << string "unit" <$> fun _ -> TUnit)
-    <|> (skip_garbage << string "float" <$> fun _ -> TFloat)
-    <|> (skip_garbage << string "bool" <$> fun _ -> TBool)
-    <|> (skip_garbage << string "string" <$> fun _ -> TString)
-  in
-  let tuple_type =
-    skip_garbage << char '*' << basic_type |> many1 |> opt |> seq basic_type
-    <$> function
-    | ty, None -> ty
-    | ty, Some tys -> TTuple (ty :: tys)
-  in
-  let opt_fn = opt (skip_garbage << string "->" << type_parser) in
-  let full_parser = seq tuple_type opt_fn in
-  ( full_parser <$> fun (t1, (opt_t2 : ty option)) ->
-    Option.fold ~none:t1 ~some:(fun t2 -> TFunction (t1, t2)) opt_t2 )
-    input
+let rec type_parser =
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let basic_type =
+            skip_garbage << char '(' << skip_garbage << char ')'
+            <$> (fun _ -> TUnit)
+            <|> between
+                  (skip_garbage << char '(')
+                  (skip_garbage << char ')')
+                  type_parser
+            <|> (skip_garbage << string "int" <$> fun _ -> TInteger)
+            <|> (skip_garbage << string "unit" <$> fun _ -> TUnit)
+            <|> (skip_garbage << string "float" <$> fun _ -> TFloat)
+            <|> (skip_garbage << string "bool" <$> fun _ -> TBool)
+            <|> (skip_garbage << string "string" <$> fun _ -> TString)
+          in
+          let tuple_type =
+            skip_garbage << char '*' << basic_type |> many1 |> opt
+            |> seq basic_type
+            <$> function
+            | ty, None -> ty
+            | ty, Some tys -> TTuple (ty :: tys)
+          in
+          let opt_fn = opt (skip_garbage << string "->" << type_parser) in
+          let full_parser = seq tuple_type opt_fn in
+          let (Parser { unParse }) =
+            full_parser <$> fun (t1, (opt_t2 : ty option)) ->
+            Option.fold ~none:t1 ~some:(fun t2 -> TFunction (t1, t2)) opt_t2
+          in
+          unParse s ok err);
+    }
 
 let octal_digit = sat (fun o -> '0' <= o && o <= '7')
 
@@ -184,7 +201,7 @@ let if_then_else expr =
        (skip_garbage << string "then" << expr)
        (skip_garbage << string "else" << expr))
   <$> fun (condition, (consequent, alternative)) ->
-  Ast.If { condition; consequent; alternative }
+  Ast.If { condition; consequent; alternative }  
 
 let number wrapper =
   many1 digit <$> fun ns -> implode ns |> int_of_string |> wrapper
@@ -226,17 +243,26 @@ let variant wrapper expr =
 let parens expr =
   expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
 
-let rec pattern_parser input =
-  input
-  |> (parens pattern_parser
-     <|> float (fun f -> Ast.PFloat f)
-     <|> variant (fun name value -> PConstructor { name; value }) pattern_parser
-     <|> number (fun i -> Ast.PInt i)
-     <|> (ident <$> fun i -> if i = "_" then PWildCard else Ast.PIdent i)
-     <|> ( skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ ->
-           Ast.PUnit )
-     <|> record (fun r -> PRecord r) (fun i -> PIdent i) pattern_parser
-     |> tuple (fun t -> PTuple t))
+let rec pattern_parser =
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let (Parser { unParse }) =
+            parens pattern_parser
+            <|> float (fun f -> Ast.PFloat f)
+            <|> variant
+                  (fun name value -> PConstructor { name; value })
+                  pattern_parser
+            <|> number (fun i -> Ast.PInt i)
+            <|> (ident <$> fun i -> if i = "_" then PWildCard else Ast.PIdent i)
+            <|> ( skip_garbage << char '(' << skip_garbage << char ')'
+                <$> fun _ -> Ast.PUnit )
+            <|> record (fun r -> PRecord r) (fun i -> PIdent i) pattern_parser
+            |> tuple (fun t -> PTuple t)
+          in
+          unParse s ok err);
+    }
 
 let case_parser expr =
   let case =
@@ -312,69 +338,97 @@ let let_expr_parser expr =
   in
   skip_garbage << string "let" << skip_garbage << (rec_parser <|> let_parser)
 
-let rec expr input =
-  let constant =
-    float (fun f -> Ast.Float f)
-    <|> number (fun i -> Ast.Int i)
-    (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
-    <|> (char '\"'
-        << sat (fun c -> c <> '\n')
-        >>= (fun c ->
-              string_parser <$> fun str -> Ast.String (string_of_char c ^ str))
-        >> char '\"')
-  in
-  (* TODO: differtiate between tuple and record projection *)
-  let project expr =
-    skip_garbage << char '.'
-    << (ident_parser <|> infix_ident
-       <|> (skip_garbage << many1 digit <$> implode))
-    |> opt |> seq expr
-    <$> function
-    | value, Some projector ->
-        Option.fold
-          ~none:(RecordAcces { value; projector })
-          ~some:(fun projector -> TupleAcces { value; projector })
-          (int_of_string_opt projector)
-    | value, None -> value
-  in
-  let ident = ident <$> fun i -> Ast.Ident i in
-  let atom = parens expr <|> (skip_garbage << constant) <|> ident in
-  let basic_forms =
-    let_expr_parser expr <|> if_then_else expr <|> fun_parser expr
-    <|> variant (fun name value -> Constructor { name; value }) expr
-    <|> record (fun r -> Record r) (fun i -> Ident i) expr
-    <|> case_parser expr <|> atom
-  in
-  let basic_forms = tuple (fun t -> Tuple t) (project basic_forms) in
-  let application =
-    let rec application_tail func input =
-      ( basic_forms >>= fun arguement ->
-        let new_func = Ast.Application { func; arguement } in
-        application_tail new_func <|> return new_func )
-        input
-    in
-    basic_forms >>= fun func -> application_tail func <|> return func
-  in
-  let rec infix_application input =
-    ( seq application (opt (seq infix infix_application)) <$> fun (e1, infix) ->
-      match infix with
-      | Some (infix, e2) ->
-          Ast.InfixApplication { infix; arguements = (e1, e2) }
-      | None -> e1 )
-      input
-  in
-  infix_application input
+let rec expr =
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let constant =
+            float (fun f -> Ast.Float f)
+            <|> number (fun i -> Ast.Int i)
+            (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
+            <|> (char '\"'
+                << sat (fun c -> c <> '\n')
+                >>= (fun c ->
+                      string_parser <$> fun str ->
+                      Ast.String (string_of_char c ^ str))
+                >> char '\"')
+          in
+          (* TODO: differtiate between tuple and record projection *)
+          let project expr =
+            skip_garbage << char '.'
+            << (ident_parser <|> infix_ident
+               <|> (skip_garbage << many1 digit <$> implode))
+            |> opt |> seq expr
+            <$> function
+            | value, Some projector ->
+                Option.fold
+                  ~none:(RecordAcces { value; projector })
+                  ~some:(fun projector -> TupleAcces { value; projector })
+                  (int_of_string_opt projector)
+            | value, None -> value
+          in
+          let ident = ident <$> fun i -> Ast.Ident i in
+          let atom = parens expr <|> (skip_garbage << constant) <|> ident in
+          let basic_forms =
+            let_expr_parser expr <|> if_then_else expr |> label "if"  <|> fun_parser expr
+            <|> variant (fun name value -> Constructor { name; value }) expr
+            <|> record (fun r -> Record r) (fun i -> Ident i) expr
+            <|> case_parser expr <|> atom
+          in
+          let basic_forms = tuple (fun t -> Tuple t) (project basic_forms) in
+          let application =
+            let rec application_tail func =
+              Parser
+                {
+                  unParse =
+                    (fun s ok err ->
+                      let (Parser { unParse }) =
+                        basic_forms >>= fun arguement ->
+                        let new_func = Ast.Application { func; arguement } in
+                        application_tail new_func <|> return new_func
+                      in
+
+                      unParse s ok err);
+                }
+            in
+            basic_forms >>= fun func -> application_tail func <|> return func
+          in
+          let rec infix_application =
+            Parser
+              {
+                unParse =
+                  (fun s ok err ->
+                    let (Parser { unParse }) =
+                      seq application (opt (seq infix infix_application))
+                      <$> fun (e1, infix) ->
+                      match infix with
+                      | Some (infix, e2) ->
+                          Ast.InfixApplication { infix; arguements = (e1, e2) }
+                      | None -> e1
+                    in
+
+                    unParse s ok err);
+              }
+          in
+
+          let (Parser { unParse }) = infix_application in
+
+          unParse s ok err);
+    }
 
 let top_level = expr <$> fun exp -> Ast.Bind { name = PWildCard; value = exp }
 
 let parser =
-  many
+  (skip_garbage << eof <$> fun _ -> []) <|>
+  (
+  many1
     (string_parser1
     <$> (fun x -> x :: [])
     <|> (char '\"'
         (* top level has to be attempted before top level let b/c let will parse let .. in as let with the remaining in left unparsed *)
-        << many (top_level <|> let_parser expr <|> type_def_parser)
+        << many1 (top_level <|> let_parser expr <|> type_def_parser)
         >> (skip_garbage << char '\"')))
-  <$> List.concat
+  <$> List.concat >> eof)
 
-let run = run
+let run = run_show
