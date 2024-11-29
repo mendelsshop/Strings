@@ -15,8 +15,8 @@ let key_words =
 let reserved_operators = [ "|" ]
 let is_ws x = x = ' ' || x = '\n' || x == '\t'
 let string i = string (explode i) <$> implode
-
 let explode = explode
+
 let skip_garbage =
   let ws = sat is_ws <$> fun c -> String.make 1 c in
   let line_comment =
@@ -108,17 +108,12 @@ let escaped =
        ]
 
 let string_of_char = String.make 1
-
-let string_parser =
-  seq (opt escaped) (sat (fun c -> c != '\"')) <$> fun (esc, str) ->
-  Option.fold ~none:(str :: []) ~some:(fun esc -> [ esc; str ]) esc
+let string_parser = escaped <|> sat (fun c -> c != '\"')
 
 let string_parser1 =
-  many1 string_parser <$> fun ss ->
-  Ast.PrintString (implode (List.concat_map Fun.id ss))
+  many1 string_parser <$> fun ss -> Ast.PrintString (implode ss)
 
-let string_parser =
-  many string_parser <$> fun ss -> implode (List.concat_map Fun.id ss)
+let string_parser = many string_parser <$> fun ss -> implode ss
 
 let ident_parser =
   check
@@ -201,7 +196,7 @@ let if_then_else expr =
        (skip_garbage << string "then" << expr)
        (skip_garbage << string "else" << expr))
   <$> fun (condition, (consequent, alternative)) ->
-  Ast.If { condition; consequent; alternative }  
+  Ast.If { condition; consequent; alternative }
 
 let number wrapper =
   many1 digit <$> fun ns -> implode ns |> int_of_string |> wrapper
@@ -338,6 +333,8 @@ let let_expr_parser expr =
   in
   skip_garbage << string "let" << skip_garbage << (rec_parser <|> let_parser)
 
+let empty = Parser { unParse = (fun s ok _ -> ok () s) }
+
 let rec expr =
   Parser
     {
@@ -348,10 +345,13 @@ let rec expr =
             <|> number (fun i -> Ast.Int i)
             (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
             <|> (char '\"'
-                << sat (fun c -> c <> '\n')
-                >>= (fun c ->
-                      string_parser <$> fun str ->
-                      Ast.String (string_of_char c ^ str))
+                (* TODO: allow empty string *)
+                << ( escaped
+                   <|> sat (fun c -> c <> '\n')
+                   >>= (fun c ->
+                         string_parser <$> fun str -> string_of_char c ^ str)
+                   <|> (empty <$> fun _ -> "")
+                   <$> fun s -> Ast.String s )
                 >> char '\"')
           in
           (* TODO: differtiate between tuple and record projection *)
@@ -371,7 +371,8 @@ let rec expr =
           let ident = ident <$> fun i -> Ast.Ident i in
           let atom = parens expr <|> (skip_garbage << constant) <|> ident in
           let basic_forms =
-            let_expr_parser expr <|> if_then_else expr |> label "if"  <|> fun_parser expr
+            let_expr_parser expr <|> if_then_else expr |> label "if"
+            <|> fun_parser expr
             <|> variant (fun name value -> Constructor { name; value }) expr
             <|> record (fun r -> Record r) (fun i -> Ident i) expr
             <|> case_parser expr <|> atom
@@ -420,15 +421,15 @@ let rec expr =
 let top_level = expr <$> fun exp -> Ast.Bind { name = PWildCard; value = exp }
 
 let parser =
-  (skip_garbage << eof <$> fun _ -> []) <|>
-  (
-  many1
-    (string_parser1
-    <$> (fun x -> x :: [])
-    <|> (char '\"'
-        (* top level has to be attempted before top level let b/c let will parse let .. in as let with the remaining in left unparsed *)
-        << many1 (top_level <|> let_parser expr <|> type_def_parser)
-        >> (skip_garbage << char '\"')))
-  <$> List.concat >> eof)
+  skip_garbage << eof
+  <$> (fun _ -> [])
+  <|> (many1
+         (string_parser1
+         <$> (fun x -> x :: [])
+         <|> (char '\"'
+             (* top level has to be attempted before top level let b/c let will parse let .. in as let with the remaining in left unparsed *)
+             << many1 (top_level <|> let_parser expr <|> type_def_parser)
+             >> (skip_garbage << char '\"')))
+      <$> List.concat >> eof)
 
 let run = run_show
