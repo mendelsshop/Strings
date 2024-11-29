@@ -344,13 +344,11 @@ let rec expr =
             float (fun f -> Ast.Float f)
             <|> number (fun i -> Ast.Int i)
             (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
+            <|> (string "\"\"" <$> fun _ -> Ast.String "")
             <|> (char '\"'
                 (* TODO: allow empty string *)
-                << ( escaped
-                   <|> sat (fun c -> c <> '\n')
-                   >>= (fun c ->
-                         string_parser <$> fun str -> string_of_char c ^ str)
-                   <|> (empty <$> fun _ -> "")
+                << ( ( escaped <|> sat (fun c -> c <> '\n') >>= fun c ->
+                       string_parser <$> fun str -> string_of_char c ^ str )
                    <$> fun s -> Ast.String s )
                 >> char '\"')
           in
