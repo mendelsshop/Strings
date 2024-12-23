@@ -1,0 +1,24 @@
+identifier = [a-zA-Z][0-9a-zA-Z]*
+string+ = [^"]+ # TODO: escape sequences
+string* = <string+>?
+comment = (#[^#]*#)|(--[^\n](\n|eof)) # TODO: How do comments and strings interact (what if you see a " in a comment do we go back to 'string mode'?, if so how do you have " in a comment? (maybe escape sequences?))
+
+expr =
+    |fun (fun <identifier> -> <expr>)
+    |let (let <identifier> = <expr> in <expr>)
+    |app (<expr> <expr>+)
+    |string (\"string\")
+    |if (if <expr> then <expr> else <expr>)
+    |var (<identifier>)
+finish_expr =
+    |fun (fun <identifier> -> <finish_expr>)
+    |let (let <identifier> = <expr> in <finish_expr>)
+    |app (<expr> <expr>* <finish_expr>)
+    |string (\"string)
+    |if (if <expr> then <expr> else <finish_expr>)
+    |var (<identifier>\")
+program_element =
+    |expr (\"<finish_expr>)
+    |declaration (\"let <identifier> = <finish_expr>)
+    |string (<string>)
+program = <program_element>*
