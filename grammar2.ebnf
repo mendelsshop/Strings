@@ -1,12 +1,12 @@
 infix_identifier = [^a-zA-Z0-9()[]{}"]+ # TODO infix regular identifiers
+type_identifier = [a-zA-Z][0-9a-zA-Z]*
 identifier = [a-zA-Z][0-9a-zA-Z]*|\( <infix_identifier> \)
 string+ = [^"]+ # TODO: escape sequences
 string* = <string+>?
 number = [0-9]+
 float = ([0-9]+.[0-9]*)|([0-9]*.[0-9]+)
-comment = (#[^#]*#)|(--[^\n](\n|eof)) # TODO: How do comments and strings interact (what if you see a " in a comment do we go back to 'string mode'?, if so how do you have " in a comment? (maybe escape sequences?))
+comment = (#[^#]*#)|(--[^\n"]*(\n|eof|")) # single line comment can end with newline or quote (the quote should not be absorbed)
 
-type_identifier = [a-zA-Z][0-9a-zA-Z]*
 type =
     |var (<type_identifier>)
     |unit (\(\))
