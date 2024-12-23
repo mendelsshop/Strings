@@ -1,9 +1,13 @@
 infix_identifier = [^a-zA-Z0-9()[]{}"]+ # TODO infix regular identifiers
 type_identifier = [a-zA-Z][0-9a-zA-Z]*
 identifier = [a-zA-Z][0-9a-zA-Z]*|\( <infix_identifier> \)
-string+ = [^"]+ # TODO: escape sequences
-string* = <string+>?
 number = [0-9]+
+octal = [0-7]
+decimal = [0-9]
+hexadecimal = [0-9a-zA-z]
+escaped = \\(\\ | \" | n | r | f | a | b | t | v | 0 | (<octal> <octal> <octal>) | (x <hexadecimal> <hexadecimal>) |  (u <hexadecimal> <hexadecimal> <hexadecimal> <hexadecimal>) | (U <hexadecimal> <hexadecimal> <hexadecimal> <hexadecimal> <hexadecimal> <hexadecimal> <hexadecimal> <hexadecimal>))
+string+ = ([^"]|escaped)+
+string* = <string+>?
 float = ([0-9]+.[0-9]*)|([0-9]*.[0-9]+)
 comment = (#[^#]*#)|(--[^\n"]*(\n|eof|")) # single line comment can end with newline or quote (the quote should not be absorbed)
 
@@ -15,8 +19,8 @@ type =
     |integer (integer)
     |float (float)
     |function (<type> -> <type>)
-    |variant ((\|<type_identifier> <type>)+) # TODO variant extension syntax sugar (use [])
-    |record ({(<identifier>: <type>),+}) # TODO record extension syntax sugar (use [])
+    |variant (((\|)?<type_identifier> <type>)(\|<type_identifier> <type>)+) # TODO variant extension syntax sugar (use [])
+    |record ({(<identifier>: <type>)(,<identifier>: <type>)*,?}) # TODO record extension syntax sugar (use [])
     |row ([]|[<type_identifier>: <type>; <type>] # we use [] do denote row types
     |forall (∀(<type_identifier>,)+.<type>)
     |tuple (\(<type> (,<type)+\))
@@ -25,7 +29,7 @@ pattern =
     |string (\"string\")
     |number (<number>)
     |float (<float>)
-    |tuple (\(<pattern> (,<pattern)+\))
+    |tuple (\(<pattern> (,<pattern)+,?\))
     |record ({(<identifier>|(<identifier> = <pattern>)),*}) # TODO maybe a rest row or ... pattern
     |unit (\(\))
     |wildcard (\_)
@@ -49,7 +53,7 @@ expr =
     |tuple_access (<expr>.<number>)
     |record_access (<expr>.<identifier>)
     |constructor (<identifier> <expr>)
-    |match (match <expr> with (\|<pattern> -> <expr>)+) # TODO allow first matcher to not need |
+    |match (match <expr> with ((\|<pattern>)+ -> <expr>)+) # TODO allow first matcher to not need |
     |ascription (<expr>: <type>)
 finish_expr =
     |fun (fun <pattern>+ -> <finish_expr>)
@@ -68,10 +72,11 @@ finish_expr =
     |tuple_access (<expr>.<number>\")
     |record_access (<expr>.<identifier>\")
     |constructor (<identifier> <expr>\")
-    |match (match <expr> with (\|<pattern> -> <expr>)*\|<pattern> -> <finish_expr>) # TODO allow first matcher to not need |
+    |match (match <expr> with ((\|<pattern>)+ -> <expr>)*(\|<pattern>)+ -> <finish_expr>) # TODO allow first matcher to not need |
     |ascription (<expr>: <type>\")
 program_element =
     |expr (\"<finish_expr>)
     |declaration (\"let rec? <identifier> = <finish_expr>)
     |string (<string>)
+    |type_declaration (\"type <type_identifier> = <type>\")
 program = <program_element>*
