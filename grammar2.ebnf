@@ -20,7 +20,8 @@ type =
     |float (float)
     |function (<type> -> <type>)
     |variant (((\|)?<type_identifier> <type>)(\|<type_identifier> <type>)+) # TODO variant extension syntax sugar (use [])
-    |record ({(<identifier>: <type>)(,<identifier>: <type>)*,?}) # TODO record extension syntax sugar (use [])
+    |record ({(<identifier>: <type>)(;<identifier>: <type>)*,?}) # TODO: record extension syntax sugar (use [])
+                                                                 # TODO: maybe allow <identifier> where there is a type with that name
     |row ([]|[<type_identifier>: <type>; <type>] # we use [] do denote row types
     |forall (∀(<type_identifier>,)+.<type>)
     |tuple (\(<type> (,<type)+\))
@@ -30,7 +31,7 @@ pattern =
     |number (<number>)
     |float (<float>)
     |tuple (\(<pattern> (,<pattern)+,?\))
-    |record ({(<identifier>|(<identifier> = <pattern>)),*}) # TODO maybe a rest row or ... pattern
+    |record ({(<identifier>|(<identifier> = <pattern>));*}) # TODO maybe a rest row or ... pattern
     |unit (\(\))
     |wildcard (\_)
     |paren (\(<pattern>\))
@@ -47,7 +48,7 @@ expr =
     |number (<number>)
     |float (<float>)
     |tuple (\(<expr> (,<expr)+\))
-    |record ({(<identifier>|(<identifier> = <expr>)),*}) # TODO record extension syntax sugar
+    |record ({(<identifier>|(<identifier> = <expr>));*}) # TODO record extension syntax sugar
     |unit (\(\))
     |paren (\(<expr>\))
     |tuple_access (<expr>.<number>)

@@ -50,13 +50,10 @@ let number = number1_inner <$> int_of_string <?> "number"
 
 let float =
   number1_inner
-  >>= (fun first ->
-        char '.' << number_inner <$> fun rest ->
-        first ^ "." ^ rest |> float_of_string)
+  >>= (fun first -> char '.' << number_inner <$> ( ^ ) (first ^ "."))
   <|> ( number_inner >>= fun first ->
-        char '.' << number1_inner <$> fun rest ->
-        first ^ "." ^ rest |> float_of_string )
-  <?> "float"
+        char '.' << number1_inner <$> ( ^ ) (first ^ ".") )
+  <$> float_of_string <?> "float"
 
 let line_comment =
   between (string "--")
@@ -65,3 +62,23 @@ let line_comment =
 
 let multi_line_comment = between (char '#') (char '#') (takeWhile (( <> ) '#'))
 let comment = line_comment <|> multi_line_comment
+let unit = string "()" <?> "unit"
+let paren = between (char '(') (char ')')
+let tuple = Fun.flip sepby1 (char ',')
+
+let record p identifier_short_hand assign =
+  let field = seq identifier (char assign << p) in
+  let field =
+    match identifier_short_hand with
+    | Some f -> field <|> (identifier <$> fun field -> (field, f field))
+    | None -> field
+  in
+  between (char '{') (char '}') (sepby field (char ';'))
+
+let variant p =
+  opt (char '|') << seq identifier p >>= fun first ->
+  many (char '|' << seq identifier p) <$> List.cons first
+
+let constructor = seq identifier
+let typeP = failwith "TODO: type parsing"
+let ascription = Fun.flip seq (char ':' << typeP)
