@@ -1,3 +1,5 @@
+open Types
+
 module Unit = struct
   include Unit
 
@@ -102,5 +104,32 @@ let variant p =
   many (junk << char '|' << seq identifier p) <$> List.cons first
 
 let constructor = seq identifier
-let typeP = failwith "TODO: type parsing"
+
+let rec typeP =
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let basic_type =
+            choice
+              [
+                unit <$> Fun.const TUnit;
+                paren typeP;
+                junk << string "int" <$> Fun.const TInteger;
+                junk << string "float" <$> Fun.const TInteger;
+                junk << string "string" <$> Fun.const TInteger;
+                junk << string "bool" <$> Fun.const TInteger;
+                ( record typeP None ':'
+                <$> Fun.flip
+                      (List.fold_right (fun (name, ty) row ->
+                           TRowExtension
+                             { label = name; field = ty; row_extension = row }))
+                      TEmptyRow
+                <$> fun row -> TRecord row );
+              ]
+          in
+          let (Parser { unParse }) = basic_type in
+          unParse s ok err);
+    }
+
 let ascription = Fun.flip seq (junk << char ':' << typeP)
