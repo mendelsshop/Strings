@@ -1,4 +1,5 @@
 open Types
+open Ast
 
 module Unit = struct
   include Unit
@@ -86,11 +87,50 @@ let float =
            char '.' << number1_inner <$> ( ^ ) (first ^ ".") ))
   <$> float_of_string <?> "float"
 
+let escaped =
+  let parse_to_char format =
+    char_of_int & int_of_string & ( ^ ) format & AMPCL.implode
+  in
+  let slash = char '\\' in
+  let quote = char '\"' in
+  let newline = char 'n' <$> fun _ -> '\n' in
+  let carriage = char 'r' <$> fun _ -> '\r' in
+  let form_feed = char 'f' <$> fun _ -> '\x0c' in
+  let bell = char 'a' <$> fun _ -> '\x08' in
+  let backspace = char 'b' <$> fun _ -> '\b' in
+  let tab = char 't' <$> fun _ -> '\t' in
+  let vertical_tab = char 'v' <$> fun _ -> '\x09' in
+  let null = char '0' <$> fun _ -> '\x00' in
+  let octal = count 3 (sat is_octal) <$> parse_to_char "0o" in
+  let hex2 = char 'x' << count 2 alphanum <$> parse_to_char "0x" in
+  let hex4 = char 'u' << count 4 alphanum <$> parse_to_char "0x" in
+  let hex8 = char 'U' << count 8 alphanum <$> parse_to_char "0x" in
+  char '\\'
+  << choice
+       [
+         slash;
+         quote;
+         newline;
+         carriage;
+         form_feed;
+         bell;
+         backspace;
+         tab;
+         vertical_tab;
+         null;
+         octal;
+         hex2;
+         hex4;
+         hex8;
+       ]
+
+let string_parser = escaped <|> sat (fun c -> c != '\"')
+let string_parser = many string_parser <$> AMPCL.implode
+
 let unit : unit t =
   junk << char '(' << junk << char ')' <$> Fun.const () <?> "unit"
 
 let paren = between (junk << char '(') (junk << char ')')
-let tuple = Fun.flip sepby1 (junk << char ',')
 
 let record p identifier_short_hand assign =
   let field = seq identifier (junk << char assign << p) in
@@ -153,4 +193,36 @@ let rec typeP =
           unParse s ok err);
     }
 
-let ascription = Fun.flip seq (junk << char ':' << typeP)
+let ascription p = seq p (junk << char ':' << typeP)
+
+let rec pattern =
+  let paren = between (junk << char '(') (junk << char ')') in
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let (Parser { unParse }) =
+            let basic_pattern =
+              choice
+                [
+                  paren pattern;
+                  (float <$> fun f -> Ast.PFloat f);
+                  ( constructor pattern <$> fun (name, value) ->
+                    PConstructor { name; value } );
+                  (number <$> fun i -> Ast.PInt i);
+                  ( identifier <$> fun i ->
+                    if i = "_" then PWildCard else Ast.PIdent i );
+                  unit <$> Fun.const PUnit;
+                  ( record pattern (Some (fun i -> PIdent i)) '='
+                  <$> List.map (fun (name, value) -> { name; value })
+                  <$> fun r -> PRecord r );
+                ]
+            in
+
+            sepby1 basic_pattern (junk << char ',') <$> function
+            | t :: [] -> t
+            | t -> PTuple t
+          in
+
+          unParse s ok err);
+    }
