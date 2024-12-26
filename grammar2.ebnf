@@ -1,4 +1,4 @@
-infix_identifier = [^a-zA-Z0-9()[]{}"]+ # TODO infix regular identifiers
+infix_identifier = [^a-zA-Z0-9()[]{}`"][^a-zA-Z0-9()[]{}"]* # TODO infix regular identifiers
 type_identifier = [a-zA-Z][0-9a-zA-Z]*
 identifier = [a-zA-Z][0-9a-zA-Z]*|\( <infix_identifier> \)
 number = [0-9]+
@@ -19,7 +19,8 @@ type =
     |integer (integer)
     |float (float)
     |function (<type> -> <type>)
-    |variant (((\|)?<type_identifier> <type>)(\|<type_identifier> <type>)+) # TODO variant extension syntax sugar (use [])
+    |variant ((`<type_identifier> <type>?)+) # TODO: variant extension syntax sugar (use [])
+                                             # TODO: should variants get their own bracket syntax to help with ambiguouity 
     |record ({(<identifier>: <type>)(;<identifier>: <type>)*,?}) # TODO: record extension syntax sugar (use [])
                                                                  # TODO: maybe allow <identifier> where there is a type with that name
     |row ([]|[<type_identifier>: <type>; <type>] # we use [] do denote row types
@@ -35,7 +36,7 @@ pattern =
     |unit (\(\))
     |wildcard (\_)
     |paren (\(<pattern>\))
-    |constructor (<identifier> <pattern>)
+    |constructor (`<type-identifier> <pattern>*)
     |ascription (<pattern>: <type>)
 expr =
     |fun (fun <pattern>+ -> <expr>)
@@ -53,7 +54,7 @@ expr =
     |paren (\(<expr>\))
     |tuple_access (<expr>.<number>)
     |record_access (<expr>.<identifier>)
-    |constructor (<identifier> <expr>)
+    |constructor (`<type-identifier> <expr>*)
     |match (match <expr> with ((\|<pattern>)+ -> <expr>)+) # TODO allow first matcher to not need |
     |ascription (<expr>: <type>)
 finish_expr =
