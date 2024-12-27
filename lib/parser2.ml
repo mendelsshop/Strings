@@ -234,7 +234,7 @@ let unless b p = if b then return None else p <$> fun x -> Some x
 
 let rec expr is_end =
   let paren = between (junk << char '(') (junk << char ')') in
-  let last_quote is_end = unless (not is_end) (char '\"') in
+  let last_quote is_end = unless (not is_end) (junk << char '\"') in
   Parser
     {
       unParse =
@@ -245,7 +245,7 @@ let rec expr is_end =
                 [
                   paren (expr false) >> last_quote is_end;
                   junk << char '\"' << stringP
-                  >> unless is_end (char '\"')
+                  >> unless is_end (junk << char '\"')
                   <$> (fun s -> String s)
                   >> last_quote is_end;
                   float <$> (fun f -> Ast.Float f) >> last_quote is_end;
@@ -261,12 +261,23 @@ let rec expr is_end =
                   >> last_quote is_end;
                 ]
             in
+            let rec project is_end =
+              basic_pattern false <|> project false >>= fun value ->
+              opt
+                (junk << char '.'
+                << (identifier
+                   <$> (fun projector -> RecordAcces { value; projector })
+                   <|> ( number <$> fun projector ->
+                         TupleAcces { value; projector } )))
+              <$> Option.value ~default:value
+              >> last_quote is_end
+            in
 
             seq
               (opt
-                 (sepby1 (basic_pattern false) (junk << char ',')
+                 (sepby1 (project false) (junk << char ',')
                  >> (junk << char ',')))
-              (basic_pattern is_end)
+              (project is_end)
             <$> function
             | None, t -> t
             | Some ts, t -> Tuple (ts @ [ t ])
