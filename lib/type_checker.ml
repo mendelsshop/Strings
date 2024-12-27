@@ -597,11 +597,19 @@ let rec typify_pattern pat =
       new_meta >>= fun ty ->
       typify_pattern value <$> fun value' ->
       PConstructor { value = value'; name; ty }
+  | Ast.PAscribe (expr, ty) ->
+      typify_pattern expr >>= fun pattern' ->
+      let ty' = type_of_pattern pattern' in
+      Result.fold
+        (Unifier.unify [ (ty, ty') ] 0) (* TODO: limit pattern to ty' *)
+        ~ok:(fun _ -> return pattern')
+        ~error:(fun e -> zero e)
 
 let id x = x
 
 let rec typify expr =
   match expr with
+  | Ast2.Unit -> return (Unit { ty = TUnit })
   | Ast2.Int i -> return (Int { ty = TInteger; value = i })
   | Ast2.Float i -> return (Float { ty = TFloat; value = i })
   | Ast2.String i -> return (String { ty = TString; value = i })
@@ -684,6 +692,13 @@ let rec typify expr =
           { result = result'; pattern = pattern' } :: cases')
         (return []) cases
       <$> fun cases' -> Match { cases = cases'; expr = expr'; ty }
+  | Ast2.Ascribe (expr, ty) ->
+      typify expr >>= fun expr' ->
+      let ty' = type_of expr' in
+      Result.fold
+        (Unifier.unify [ (ty, ty') ] 0) (* TODO: limit expr to ty' *)
+        ~ok:(fun _ -> return expr')
+        ~error:(fun e -> zero e)
 
 let unify generator mapper expr s =
   let s, m, t = s in

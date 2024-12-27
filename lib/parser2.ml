@@ -124,8 +124,8 @@ let escaped =
          hex8;
        ]
 
-let string_parser = escaped <|> sat (fun c -> c != '\"')
-let string_parser = many string_parser <$> AMPCL.implode
+let stringP = escaped <|> sat (fun c -> c != '\"')
+let stringP = many stringP <$> AMPCL.implode
 
 let unit : unit t =
   junk << char '(' << junk << char ')' <$> Fun.const () <?> "unit"
@@ -142,7 +142,7 @@ let record p identifier_short_hand assign =
   between (junk << char '{') (junk << char '}') (sepby field (junk << char ';'))
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
-let constructor = seq variant_identifier
+let constructor p = seq variant_identifier p
 
 let rec typeP =
   let list_to_row =
@@ -197,6 +197,7 @@ let ascription p = seq p (junk << char ':' << typeP)
 
 let rec pattern =
   let paren = between (junk << char '(') (junk << char ')') in
+  (* TODO: what is ascription's precedence *)
   Parser
     {
       unParse =
@@ -206,6 +207,8 @@ let rec pattern =
               choice
                 [
                   paren pattern;
+                  ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
+                    PString s );
                   (float <$> fun f -> Ast.PFloat f);
                   ( constructor pattern <$> fun (name, value) ->
                     PConstructor { name; value } );
@@ -222,6 +225,51 @@ let rec pattern =
             sepby1 basic_pattern (junk << char ',') <$> function
             | t :: [] -> t
             | t -> PTuple t
+          in
+
+          unParse s ok err);
+    }
+
+let unless b p = if b then return None else p <$> fun x -> Some x
+
+let rec expr is_end =
+  let paren = between (junk << char '(') (junk << char ')') in
+  let last_quote is_end = unless (not is_end) (char '\"') in
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let (Parser { unParse }) =
+            let basic_pattern is_end =
+              choice
+                [
+                  paren (expr false) >> last_quote is_end;
+                  junk << char '\"' << stringP
+                  >> unless is_end (char '\"')
+                  <$> (fun s -> String s)
+                  >> last_quote is_end;
+                  float <$> (fun f -> Ast.Float f) >> last_quote is_end;
+                  constructor (expr is_end)
+                  <$> (fun (name, value) -> Constructor { name; value })
+                  >> last_quote is_end;
+                  number <$> (fun i -> Ast.Int i) >> last_quote is_end;
+                  identifier <$> (fun i -> Ast.Ident i) >> last_quote is_end;
+                  unit <$> Fun.const Unit >> last_quote is_end;
+                  record (expr false) (Some (fun i -> Ident i)) '='
+                  <$> List.map (fun (name, value) -> { name; value })
+                  <$> (fun r -> Record r)
+                  >> last_quote is_end;
+                ]
+            in
+
+            seq
+              (opt
+                 (sepby1 (basic_pattern false) (junk << char ',')
+                 >> (junk << char ',')))
+              (basic_pattern is_end)
+            <$> function
+            | None, t -> t
+            | Some ts, t -> Tuple (ts @ [ t ])
           in
 
           unParse s ok err);

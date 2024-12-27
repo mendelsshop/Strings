@@ -18,6 +18,8 @@ type ast2 =
   | RecordAcces of (ast2, string) projection
   | Constructor of { name : string; value : ast2 }
   | Match of { expr : ast2; cases : (pattern, ast2) case list }
+  | Ascribe of (ast2 * ty)
+  | Unit
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
@@ -35,6 +37,7 @@ let rec curry_ify ps abs =
 
 let rec ast_to_ast2 (ast : ast) =
   match ast with
+  | Unit -> Unit
   | Float f -> Float f
   | Int f -> Int f
   | String f -> String f
@@ -68,6 +71,7 @@ let rec ast_to_ast2 (ast : ast) =
            record)
   | Constructor { name; value } ->
       Constructor { name; value = ast_to_ast2 value }
+  | Ascribe (expr, ty) -> Ascribe (ast_to_ast2 expr, ty)
   | TupleAcces { projector; value } ->
       TupleAcces { projector; value = ast_to_ast2 value }
   | RecordAcces { projector; value } ->
@@ -129,6 +133,8 @@ let rec ast_to_string ast =
           (cases
           |> List.map (fun { pattern; result } ->
                  pattern_to_string pattern ^ " -> " ^ ast_to_string result))
+  | Ascribe (expr, _) -> ast_to_string expr
+  | Unit -> "()"
 
 let print_top_level tl =
   match tl with

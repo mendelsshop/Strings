@@ -16,6 +16,7 @@ type pattern =
   | PConstructor of { name : string; value : pattern }
   | PUnit
   | PWildCard
+  | PAscribe of (pattern * ty)
 
 type ast =
   | Float of float
@@ -35,6 +36,8 @@ type ast =
   | Let of { name : pattern; e1 : ast; e2 : ast }
   | LetRec of { name : string; e1 : ast; e2 : ast }
   | Match of { expr : ast; cases : (pattern, ast) case list }
+  | Ascribe of (ast * ty)
+  | Unit
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
@@ -64,6 +67,7 @@ let rec pattern_to_string pattern =
   | PConstructor { name; value } -> name ^ "( " ^ pattern_to_string value ^ " )"
   | PUnit -> "()"
   | PWildCard -> "_"
+  | PAscribe (pat, _) -> pattern_to_string pat
 
 let rec ast_to_string ast =
   match ast with
@@ -106,6 +110,8 @@ let rec ast_to_string ast =
           (cases
           |> List.map (fun { pattern; result } ->
                  pattern_to_string pattern ^ " -> " ^ ast_to_string result))
+  | Ascribe (expr, _) -> ast_to_string expr
+  | Unit -> "()"
 
 let print_program program =
   String.concat "\n"
