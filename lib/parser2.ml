@@ -235,53 +235,57 @@ let unless b p = if b then return None else p <$> fun x -> Some x
 let rec expr is_end =
   let paren = between (junk << char '(') (junk << char ')') in
   let last_quote is_end = unless (not is_end) (junk << char '\"') in
-  Parser
-    {
-      unParse =
-        (fun s ok err ->
-          let (Parser { unParse }) =
-            let basic_pattern is_end =
-              choice
-                [
-                  paren (expr false) >> last_quote is_end;
-                  junk << char '\"' << stringP
-                  >> unless is_end (junk << char '\"')
-                  <$> (fun s -> String s)
-                  >> last_quote is_end;
-                  float <$> (fun f -> Ast.Float f) >> last_quote is_end;
-                  constructor (expr is_end)
-                  <$> (fun (name, value) -> Constructor { name; value })
-                  >> last_quote is_end;
-                  number <$> (fun i -> Ast.Int i) >> last_quote is_end;
-                  identifier <$> (fun i -> Ast.Ident i) >> last_quote is_end;
-                  unit <$> Fun.const Unit >> last_quote is_end;
-                  record (expr false) (Some (fun i -> Ident i)) '='
-                  <$> List.map (fun (name, value) -> { name; value })
-                  <$> (fun r -> Record r)
-                  >> last_quote is_end;
-                ]
-            in
-            let rec project is_end =
-              basic_pattern false <|> project false >>= fun value ->
-              opt
-                (junk << char '.'
-                << (identifier
-                   <$> (fun projector -> RecordAcces { value; projector })
-                   <|> ( number <$> fun projector ->
-                         TupleAcces { value; projector } )))
-              <$> Option.value ~default:value
-              >> last_quote is_end
-            in
+  let basic_expr is_end =
+    choice
+      [
+        paren (expr false) >> last_quote is_end;
+        junk << char '\"' << stringP
+        >> unless is_end (junk << char '\"')
+        <$> (fun s -> String s)
+        >> last_quote is_end;
+        float <$> (fun f -> Ast.Float f) >> last_quote is_end;
+        constructor (expr is_end)
+        <$> (fun (name, value) -> Constructor { name; value })
+        >> last_quote is_end;
+        number <$> (fun i -> Ast.Int i) >> last_quote is_end;
+        identifier <$> (fun i -> Ast.Ident i) >> last_quote is_end;
+        unit <$> Fun.const Unit >> last_quote is_end;
+        record (expr false) (Some (fun i -> Ident i)) '='
+        <$> List.map (fun (name, value) -> { name; value })
+        <$> (fun r -> Record r)
+        >> last_quote is_end;
+      ]
+  in
+  let rec project is_end =
+    basic_expr false <|> project false
+    >>= (fun value ->
+          junk << char '.'
+          << (identifier
+             <$> (fun projector -> RecordAcces { value; projector })
+             <|> (number <$> fun projector -> TupleAcces { value; projector }))
+          >> last_quote is_end)
+    <|> basic_expr is_end
+  in
+  let application is_end =
+    (if is_end then
+       many (project false) >>= fun first ->
+       project is_end <$> fun last -> first @ [ last ]
+     else many1 (project false))
+    <$> function
+    | single :: list ->
+        List.fold_left
+          (fun app current -> Application { func = app; arguement = current })
+          single list
+    | [] -> failwith "unreachable"
+  in
 
-            seq
-              (opt
-                 (sepby1 (project false) (junk << char ',')
-                 >> (junk << char ',')))
-              (project is_end)
-            <$> function
-            | None, t -> t
-            | Some ts, t -> Tuple (ts @ [ t ])
-          in
+  (* TODO: infix *)
+  seq
+    (opt (sepby1 (application false) (junk << char ',') >> (junk << char ',')))
+    (application is_end)
+  <$> function
+  | None, t -> t
+  | Some ts, t -> Tuple (ts @ [ t ])
 
-          unParse s ok err);
-    }
+(* TODO: if *)
+(* TODO: match fun  let *)
