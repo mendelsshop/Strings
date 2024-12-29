@@ -124,8 +124,9 @@ let escaped =
          hex8;
        ]
 
-let stringP = escaped <|> sat (fun c -> c != '\"')
-let stringP = many stringP <$> AMPCL.implode
+let stringP_inner = escaped <|> sat (fun c -> c != '\"')
+let stringP = many stringP_inner <$> AMPCL.implode
+let stringP1 = many1 stringP_inner <$> AMPCL.implode
 
 let unit : unit t =
   junk << char '(' << junk << char ')' <$> Fun.const () <?> "unit"
@@ -231,12 +232,12 @@ let rec pattern =
     }
 
 let unless b p = if b then return None else p <$> fun x -> Some x
+let fun_params = many pattern
+let fun_params1 = many1 pattern
 
 let rec expr is_end =
   let paren = between (junk << char '(') (junk << char ')') in
   let last_quote is_end = unless (not is_end) (junk << char '\"') in
-  let fun_params = many pattern in
-  let fun_params1 = many1 pattern in
   let basic_expr is_end =
     choice
       [
@@ -361,3 +362,27 @@ let rec expr is_end =
     <|> letP expr is_end <|> expr' is_end
   in
   expr is_end
+
+let letP =
+  let rec_parser =
+    junk << string "rec" << seq identifier fun_params1
+    <$> (fun (name, params) e ->
+          RecBind
+            { name; value = Function { parameters = params; abstraction = e } })
+    <|> ( seq pattern fun_params <$> fun (name, params) e ->
+          Bind
+            { name; value = Function { parameters = params; abstraction = e } }
+        )
+    >>= fun cons -> junk << (char '=' << expr true) <$> cons
+  in
+  junk << string "let" << junk << rec_parser
+
+let top_level =
+  char '\"'
+  << (letP
+     <|> (expr true <$> fun expr -> Ast.Bind { name = PWildCard; value = expr })
+     )
+  <|> (stringP1 <$> fun string -> Ast.PrintString string)
+
+let parser = many top_level >> eof
+let run = run_show
