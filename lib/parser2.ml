@@ -235,6 +235,8 @@ let unless b p = if b then return None else p <$> fun x -> Some x
 let rec expr is_end =
   let paren = between (junk << char '(') (junk << char ')') in
   let last_quote is_end = unless (not is_end) (junk << char '\"') in
+  let fun_params = many pattern in
+  let fun_params1 = many1 pattern in
   let basic_expr is_end =
     choice
       [
@@ -280,12 +282,82 @@ let rec expr is_end =
   in
 
   (* TODO: infix *)
-  seq
-    (opt (sepby1 (application false) (junk << char ',') >> (junk << char ',')))
-    (application is_end)
-  <$> function
-  | None, t -> t
-  | Some ts, t -> Tuple (ts @ [ t ])
+  let tuple is_end =
+    seq
+      (* TODO: might need same shtick as application *)
+      (opt
+         (sepby1 (application false) (junk << char ',') >> (junk << char ',')))
+      (application is_end)
+    <$> function
+    | None, t -> t
+    | Some ts, t -> Tuple (ts @ [ t ])
+  in
+  let rec ifP is_end =
+    let expr is_end = ifP is_end <|> tuple is_end in
+    seq
+      (junk << string "if" << expr false)
+      (seq
+         (junk << string "then" << expr false)
+         (junk << string "else" << expr is_end))
+    <$> fun (condition, (consequent, alternative)) ->
+    Ast.If { condition; consequent; alternative }
+  in
+  let funP expr =
+    seq (junk << string "fun" << fun_params >> (junk << string "->")) expr
+    <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
+  in
 
-(* TODO: if *)
-(* TODO: match fun  let *)
+  let letP expr is_end =
+    let rec_parser =
+      junk << string "rec" << seq identifier fun_params1
+      <$> (fun (name, params) (e1, e2) ->
+            LetRec
+              {
+                name;
+                e1 = Function { parameters = params; abstraction = e1 };
+                e2;
+              })
+      <|> ( seq pattern fun_params <$> fun (name, params) (e1, e2) ->
+            Let
+              {
+                name;
+                e1 = Function { parameters = params; abstraction = e1 };
+                e2;
+              } )
+      >>= fun cons ->
+      junk
+      << seq (char '=' << expr false) (junk << string "in" << expr is_end)
+      <$> cons
+    in
+    junk << string "let" << junk << rec_parser
+  in
+  let case expr is_end =
+    let case is_end =
+      (* TODO: multi or pattern *)
+      seq (junk << pattern) (junk << string "->" << expr is_end)
+      <$> fun (pattern, result) -> { pattern; result }
+    in
+    junk << string "match" << junk << expr false >> junk >> string "with"
+    >>= fun expr ->
+    (if is_end then
+       seq
+         (junk << char '|' |> opt << case false)
+         (seq
+            (junk << char '|' << case false |> many)
+            (junk << char '|' |> opt << case is_end))
+       <$> (fun (c, (cs, last)) -> (c :: cs) @ [ last ])
+       <|> (junk << char '|' |> opt << case is_end <$> fun case -> [ case ])
+     else
+       seq
+         (junk << char '|' |> opt << case false)
+         (junk << char '|' << case false |> many)
+       <$> fun (c, cs) -> c :: cs)
+    <$> fun cases -> Ast.Match { cases; expr }
+  in
+  let expr' is_end = ifP is_end <|> tuple is_end in
+  let rec expr is_end =
+    case expr is_end
+    <|> funP (expr is_end)
+    <|> letP expr is_end <|> expr' is_end
+  in
+  expr is_end
