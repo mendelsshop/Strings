@@ -62,8 +62,9 @@ let basic_identifier_without_junk =
 let basic_identifier = junk << basic_identifier_without_junk
 
 let infix_identifier =
+  (* comment symbols are allowed in infix identifiers *)
   let not_infix_symbols =
-    is_hexadecimal
+    is_hexadecimal |-> is_white_space
     |-> (Fun.flip List.mem) [ '('; ')'; '['; ']'; '\"'; '{'; '}' ]
   in
   let infix_symbols = !->not_infix_symbols in
@@ -74,10 +75,9 @@ let infix_identifier =
 
 let identifier =
   basic_identifier
-  <|>
-  (* TODO: junk/comments *)
-  between (junk << char '(') (junk << char ')') infix_identifier
+  <|> between (junk << char '(') (junk << char ')') infix_identifier
 
+(* TODO: for infix too *)
 let variant_identifier = junk << char '`' << identifier
 let number_inner = takeWhile is_decimal
 let number1_inner = takeWhile1 is_decimal
