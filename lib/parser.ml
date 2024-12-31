@@ -1,67 +1,97 @@
+open Types
+open Ast
+
 module Unit = struct
   include Unit
 
   let show _ = ""
 end
 
-open AMPCL.Parser.Char.CharList.Show.Make (Unit)
-open AMPCL
-open Ast
-open Types
+module Parser = AMPCL.Parser.Char.String.Show.Make (Unit)
+open Parser
 
-let key_words =
-  [ "match"; "with"; "type"; "in"; "let"; "if"; "rec"; "then"; "else"; "fun" ]
+(* function composition *)
+let ( & ) f g x = f (g x)
 
-let reserved_operators = [ "|" ]
-let is_ws x = x = ' ' || x = '\n' || x == '\t'
-let string i = string (explode i) <$> implode
-let explode = explode
+(* function wise or - takes two functions that return boolean and ors when given an input *)
+let ( |-> ) f g x = f x || g x
 
-let skip_garbage =
-  let ws = sat is_ws <$> fun c -> String.make 1 c in
-  let line_comment =
-    seq (char '#') (many (sat (fun x -> x != '\n'))) <$> fun g ->
-    implode (fst g :: snd g)
+(* function wise and - takes two functions that return boolean and ands when given an input *)
+let ( &-> ) f g x = f x && g x
+
+(* function wise not - takes a function that returns a boolean and nots it when given an input *)
+let ( !-> ) f = not & f
+
+let keywords =
+  [ "fun"; "let"; "rec"; "in"; "if"; "then"; "else"; "match"; "with" ]
+
+let reserved_operators = [ "->"; "." ]
+let is_white_space = Fun.flip List.mem [ ' '; '\t'; '\n' ]
+let is_lower_case_letter = ( <= ) 'a' &-> ( >= ) 'z'
+let is_upper_case_letter = ( <= ) 'A' &-> ( >= ) 'Z'
+let is_letter = is_upper_case_letter |-> is_lower_case_letter
+let is_octal = ( <= ) '0' &-> ( >= ) '7'
+let is_decimal = is_octal |-> (( = ) '8' &-> ( = ) '9')
+let is_hexadecimal = is_decimal |-> is_letter
+let string_of_char = String.make 1
+let is_in list x = List.mem x list
+let not_in list x = not (List.mem x list)
+
+let line_comment =
+  between (string "--")
+    (char '\n' |> opt)
+    (takeWhile (( <> ) '\n' |-> ( <> ) '\"'))
+  <?> "comment"
+
+let multi_line_comment =
+  between (char '#') (char '#') (takeWhile (( <> ) '#')) <?> "comment"
+
+let white_space = takeWhile is_white_space
+let comment = line_comment <|> multi_line_comment
+let junk = many (comment <|> white_space)
+
+let basic_identifier_without_junk =
+  letter <$> string_of_char >>= fun first ->
+  takeWhile is_hexadecimal <$> ( ^ ) first
+  |> check (not_in keywords)
+  <?> "identifier"
+
+let basic_identifier = junk << basic_identifier_without_junk
+
+let infix_identifier =
+  let not_infix_symbols =
+    is_hexadecimal
+    |-> (Fun.flip List.mem) [ '('; ')'; '['; ']'; '\"'; '{'; '}' ]
   in
-  many (ws <|> line_comment)
+  let infix_symbols = !->not_infix_symbols in
+  junk << sat (infix_symbols &-> ( <> ) '`') <$> string_of_char >>= fun start ->
+  takeWhile infix_symbols <$> ( ^ ) start
+  |> check (not_in reserved_operators)
+  <?> "infix identifier"
 
-let rec type_parser =
-  Parser
-    {
-      unParse =
-        (fun s ok err ->
-          let basic_type =
-            skip_garbage << char '(' << skip_garbage << char ')'
-            <$> (fun _ -> TUnit)
-            <|> between
-                  (skip_garbage << char '(')
-                  (skip_garbage << char ')')
-                  type_parser
-            <|> (skip_garbage << string "int" <$> fun _ -> TInteger)
-            <|> (skip_garbage << string "unit" <$> fun _ -> TUnit)
-            <|> (skip_garbage << string "float" <$> fun _ -> TFloat)
-            <|> (skip_garbage << string "bool" <$> fun _ -> TBool)
-            <|> (skip_garbage << string "string" <$> fun _ -> TString)
-          in
-          let tuple_type =
-            skip_garbage << char '*' << basic_type |> many1 |> opt
-            |> seq basic_type
-            <$> function
-            | ty, None -> ty
-            | ty, Some tys -> TTuple (ty :: tys)
-          in
-          let opt_fn = opt (skip_garbage << string "->" << type_parser) in
-          let full_parser = seq tuple_type opt_fn in
-          let (Parser { unParse }) =
-            full_parser <$> fun (t1, (opt_t2 : ty option)) ->
-            Option.fold ~none:t1 ~some:(fun t2 -> TFunction (t1, t2)) opt_t2
-          in
-          unParse s ok err);
-    }
+let identifier =
+  basic_identifier
+  <|>
+  (* TODO: junk/comments *)
+  between (junk << char '(') (junk << char ')') infix_identifier
 
-let octal_digit = sat (fun o -> '0' <= o && o <= '7')
+let variant_identifier = junk << char '`' << identifier
+let number_inner = takeWhile is_decimal
+let number1_inner = check (( > ) 0 & String.length) (takeWhile is_decimal)
+let number = junk << number1_inner <$> int_of_string <?> "number"
+
+let float =
+  junk
+  << (number1_inner
+     >>= (fun first -> char '.' << number_inner <$> ( ^ ) (first ^ "."))
+     <|> ( number_inner >>= fun first ->
+           char '.' << number1_inner <$> ( ^ ) (first ^ ".") ))
+  <$> float_of_string <?> "float"
 
 let escaped =
+  let parse_to_char format =
+    char_of_int & int_of_string & ( ^ ) format & AMPCL.implode
+  in
   let slash = char '\\' in
   let quote = char '\"' in
   let newline = char 'n' <$> fun _ -> '\n' in
@@ -72,22 +102,10 @@ let escaped =
   let tab = char 't' <$> fun _ -> '\t' in
   let vertical_tab = char 'v' <$> fun _ -> '\x09' in
   let null = char '0' <$> fun _ -> '\x00' in
-  let octal =
-    count 3 octal_digit <$> fun o ->
-    "0o" ^ implode o |> int_of_string |> char_of_int
-  in
-  let hex2 =
-    char 'x' << count 2 alphanum <$> fun x ->
-    "0x" ^ implode x |> int_of_string |> char_of_int
-  in
-  let hex4 =
-    char 'u' << count 4 alphanum <$> fun x ->
-    "0x" ^ implode x |> int_of_string |> char_of_int
-  in
-  let hex8 =
-    char 'U' << count 8 alphanum <$> fun x ->
-    "0x" ^ implode x |> int_of_string |> char_of_int
-  in
+  let octal = count 3 (sat is_octal) <$> parse_to_char "0o" in
+  let hex2 = char 'x' << count 2 alphanum <$> parse_to_char "0x" in
+  let hex4 = char 'u' << count 4 alphanum <$> parse_to_char "0x" in
+  let hex8 = char 'U' << count 8 alphanum <$> parse_to_char "0x" in
   char '\\'
   << choice
        [
@@ -107,327 +125,283 @@ let escaped =
          hex8;
        ]
 
-let string_of_char = String.make 1
-let string_parser = escaped <|> sat (fun c -> c != '\"')
+let stringP_inner = escaped <|> sat (fun c -> c != '\"')
+let stringP = many stringP_inner <$> AMPCL.implode
+let stringP1 = many1 stringP_inner <$> AMPCL.implode
 
-let string_parser1 =
-  many1 string_parser <$> fun ss -> Ast.PrintString (implode ss)
+let unit : unit t =
+  junk << char '(' << junk << char ')' <$> Fun.const () <?> "unit"
 
-let string_parser = many string_parser <$> fun ss -> implode ss
+let paren p = between (junk << char '(') (junk << char ')') p
 
-let ident_parser =
-  check
-    (fun x -> not (List.mem x key_words))
-    ( skip_garbage << seq (lower <|> char '_') (many (alphanum <|> char '_'))
-    <$> fun (fst, snd) -> implode (fst :: snd) )
-
-let inspect chars =
-  implode chars |> print_endline;
-  Some ((), chars)
-
-let record_type_parser =
-  let record = seq ident_parser (skip_garbage << char ':' << type_parser) in
-  let record_mid = record >> (skip_garbage << char ';') in
-  skip_garbage << char '{'
-  << (many1 record_mid
-     >> (skip_garbage << char '}')
-     <|> (seq (many record_mid) record
-         <$> (fun (rs, r) -> rs @ [ r ])
-         >> (skip_garbage >> char '}')))
-  <$> fun rs ->
-  TRecord
-    (List.fold_left
-       (fun row field ->
-         TRowExtension
-           { label = fst field; field = snd field; row_extension = row })
-       TEmptyRow rs)
-
-let variant_ident_parser =
-  skip_garbage << seq upper (alphanum |> many) <$> fun (c, cs) ->
-  implode (c :: cs)
-
-let variant_type_parser =
-  let variant =
-    seq variant_ident_parser
-      (skip_garbage << string "of" << (record_type_parser <|> type_parser))
+let record p identifier_short_hand assign =
+  let field = seq identifier (junk << char assign << p) in
+  let field =
+    match identifier_short_hand with
+    | Some f -> field <|> (identifier <$> fun field -> (field, f field))
+    | None -> field
   in
-  let variant_with_sep f = skip_garbage << char '|' |> f << variant in
-  seq (variant_with_sep opt) (variant_with_sep Fun.id |> many)
-  <$> fun (v, vs) ->
-  TVariant
-    (List.fold_left
-       (fun row field ->
-         TRowExtension
-           { label = fst field; field = snd field; row_extension = row })
-       TEmptyRow (v :: vs))
+  between (junk << char '{') (junk << char '}') (sepby field (junk << char ';'))
 
-let type_def_parser =
-  seq
-    (string "type" << skip_garbage << ident_parser)
-    (skip_garbage << char '='
-    << (variant_type_parser <|> record_type_parser <|> type_parser))
-  <$> fun (name, ty) -> Ast.TypeBind { name; ty }
+(* variant parser is only used for types so it won't be ambiguous with application parser *)
+let constructor p = seq variant_identifier p
 
-let start_infix_symbols =
-  [ '$'; '%'; '&'; '*'; '+'; '-'; '.'; '/'; ':'; '<'; '='; '>'; '@'; '^'; '|' ]
-
-let infix_symbols = [ '!'; '?'; '~' ] @ start_infix_symbols
-
-let infix =
-  check
-    (fun x -> not (List.mem x reserved_operators))
-    ( (fun c -> List.mem c start_infix_symbols)
-    |> sat |> many
-    |> seq (skip_garbage << sat (fun c -> List.mem c start_infix_symbols))
-    <$> fun (fst, rst) -> implode (fst :: rst) )
-
-let infix_ident =
-  infix |> between (skip_garbage << char '(') (skip_garbage << char ')')
-
-let ident =
-  ident_parser <|> infix_ident
-  (* TODO: make unit expression instead of "()"*)
-  <|> (skip_garbage << char '(' << skip_garbage << char ')' <$> fun _ -> "()")
-
-let if_then_else expr =
-  seq
-    (skip_garbage << string "if" << expr)
-    (seq
-       (skip_garbage << string "then" << expr)
-       (skip_garbage << string "else" << expr))
-  <$> fun (condition, (consequent, alternative)) ->
-  Ast.If { condition; consequent; alternative }
-
-let number wrapper =
-  many1 digit <$> fun ns -> implode ns |> int_of_string |> wrapper
-
-let integer_opt = many digit
-let integer = many1 digit
-let decimal = char '.'
-
-let float wrapper =
-  let number_opt_dot_number = seq integer_opt (seq decimal integer)
-  and number_dot_number_opt = seq integer (seq decimal integer_opt) in
-  number_dot_number_opt <|> number_opt_dot_number
-  <$> fun (f, ((_ : char), s)) ->
-  Float.of_string (implode (f @ ('.' :: s))) |> wrapper
-
-let record wrapper ident expr =
-  let record =
-    seq ident_parser (opt (skip_garbage << char '=' << expr)) <$> function
-    | name, None -> { name; value = ident name }
-    | name, Some value -> { name; value }
+let rec typeP =
+  let list_to_row =
+    Fun.flip
+      (List.fold_right (fun (name, ty) row ->
+           TRowExtension { label = name; field = ty; row_extension = row }))
+      TEmptyRow
   in
-  let record_mid = record >> (skip_garbage << char ';') in
-  skip_garbage << char '{'
-  << (many1 record_mid
-     >> (skip_garbage << char '}')
-     <|> (seq (many record_mid) record
-         <$> (fun (rs, r) -> rs @ [ r ])
-         >> (skip_garbage >> char '}')))
-  <$> wrapper
 
-let tuple wrapper expr =
-  skip_garbage << char ',' << expr |> many |> seq expr <$> function
-  | x, [] -> x
-  | x, xs -> x :: xs |> wrapper
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let basic_type =
+            choice
+              [
+                unit <$> Fun.const TUnit;
+                paren typeP;
+                junk << string "int" <$> Fun.const TInteger;
+                junk << string "float" <$> Fun.const TFloat;
+                junk << string "string" <$> Fun.const TString;
+                junk << string "bool" <$> Fun.const TBool;
+                record typeP None ':'
+                <$> ((fun row -> TRecord row) & list_to_row)
+                <?> "record";
+              ]
+          in
+          let tuple =
+            sepby1 basic_type (junk << char '*') <$> function
+            | t :: [] -> t
+            | t -> TTuple t
+          in
+          let variant =
+            many1
+              (seq variant_identifier
+                 (opt basic_type <$> Option.value ~default:TUnit))
+            <$> ((fun row -> TVariant row) & list_to_row)
+          in
+          let functionP =
+            variant <|> tuple >>= fun first ->
+            opt (junk << string "->" << typeP)
+            <$> Option.fold
+                  ~some:(fun return -> TFunction (first, return))
+                  ~none:first
+          in
 
-let variant wrapper expr =
-  seq variant_ident_parser expr <$> fun (name, value) -> wrapper name value
+          let (Parser { unParse }) = functionP in
+          unParse s ok err);
+    }
 
-let parens expr =
-  expr |> between (skip_garbage << char '(') (skip_garbage << char ')')
+let ascription p = seq p (junk << char ':' << typeP)
 
-let rec pattern_parser =
+let rec pattern =
+  let paren = between (junk << char '(') (junk << char ')') in
+  (* TODO: what is ascription's precedence *)
   Parser
     {
       unParse =
         (fun s ok err ->
           let (Parser { unParse }) =
-            parens pattern_parser
-            <|> float (fun f -> Ast.PFloat f)
-            <|> variant
-                  (fun name value -> PConstructor { name; value })
-                  pattern_parser
-            <|> number (fun i -> Ast.PInt i)
-            <|> (ident <$> fun i -> if i = "_" then PWildCard else Ast.PIdent i)
-            <|> ( skip_garbage << char '(' << skip_garbage << char ')'
-                <$> fun _ -> Ast.PUnit )
-            <|> record (fun r -> PRecord r) (fun i -> PIdent i) pattern_parser
-            |> tuple (fun t -> PTuple t)
+            let basic_pattern =
+              choice
+                [
+                  paren pattern;
+                  ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
+                    PString s );
+                  (float <$> fun f -> Ast.PFloat f);
+                  ( constructor pattern <$> fun (name, value) ->
+                    PConstructor { name; value } );
+                  (number <$> fun i -> Ast.PInt i);
+                  ( identifier <$> fun i ->
+                    if i = "_" then PWildCard else Ast.PIdent i );
+                  unit <$> Fun.const PUnit;
+                  ( record pattern (Some (fun i -> PIdent i)) '='
+                  <$> List.map (fun (name, value) -> { name; value })
+                  <$> fun r -> PRecord r );
+                ]
+            in
+
+            sepby1 basic_pattern (junk << char ',') <$> function
+            | t :: [] -> t
+            | t -> PTuple t
           in
+
           unParse s ok err);
     }
 
-let case_parser expr =
-  let case =
-    seq (skip_garbage << pattern_parser) (skip_garbage << string "->" << expr)
-    <$> fun (pattern, result) -> { pattern; result }
-  in
-  skip_garbage << string "match" << skip_garbage << expr >> skip_garbage
-  >> string "with"
-  >>= fun expr ->
-  ( seq
-      (skip_garbage << char '|' |> opt << case)
-      (skip_garbage << char '|' << case |> many)
-  <$> fun (c, cs) -> c :: cs )
-  <$> fun cases -> Ast.Match { cases; expr }
+let unless b p = if b then return None else p <$> fun x -> Some x
+let fun_params = many pattern
+let fun_params1 = many1 pattern
 
-let fun_params = many1 pattern_parser
-
-let fun_parser expr =
-  seq
-    (skip_garbage << string "fun" << fun_params >> (skip_garbage << string "->"))
-    expr
-  <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
-
-(* TODO: lets that have parameters (functions) should not be allowed to have anything but normal idents as their name *)
-let let_parser expr =
-  let rec_parser =
-    seq
-      (opt (string "rec"))
-      (seq ident_parser (seq fun_params (skip_garbage << (char '=' << expr))))
-    <$> fun (is_rec, (name, (params, expr))) ->
-    if Option.is_some is_rec then
-      RecBind
-        { name; value = Function { parameters = params; abstraction = expr } }
-    else
-      Bind
-        {
-          name = PIdent name;
-          value = Function { parameters = params; abstraction = expr };
-        }
-  in
-  let let_parser =
-    seq pattern_parser (skip_garbage << (char '=' << expr))
-    <$> fun (name, expr) -> Bind { name; value = expr }
-  in
-  skip_garbage << string "let" << skip_garbage << (rec_parser <|> let_parser)
-
-let let_expr_parser expr =
-  let rec_parser =
-    seq
-      (opt (string "rec"))
-      (seq ident_parser
-         (seq fun_params
-            (skip_garbage
-            << seq (char '=' << expr) (skip_garbage << string "in" << expr))))
-    <$> fun (is_rec, (name, (params, (e1, e2)))) ->
-    if Option.is_some is_rec then
-      LetRec
-        { name; e1 = Function { parameters = params; abstraction = e1 }; e2 }
-    else
-      Let
-        {
-          name = PIdent name;
-          e1 = Function { parameters = params; abstraction = e1 };
-          e2;
-        }
-  in
-
-  let let_parser =
-    seq pattern_parser
-      (skip_garbage
-      << (char '=' << seq expr (skip_garbage << string "in" << expr)))
-    <$> fun (name, (e1, e2)) -> Let { name; e1; e2 }
-  in
-  skip_garbage << string "let" << skip_garbage << (rec_parser <|> let_parser)
-
-let empty = Parser { unParse = (fun s ok _ -> ok () s) }
-
-let rec expr =
+let rec expr is_end =
   Parser
     {
       unParse =
         (fun s ok err ->
-          let constant =
-            float (fun f -> Ast.Float f)
-            <|> number (fun i -> Ast.Int i)
-            (* if a quote within a quoted expression is found before a new line it means the quoted expression is done otherwise whattever follows untill next quote is to be part of the quoted expression *)
-            <|> (string "\"\"" <$> fun _ -> Ast.String "")
-            <|> (char '\"'
-                (* TODO: allow empty string *)
-                << ( ( escaped <|> sat (fun c -> c <> '\n') >>= fun c ->
-                       string_parser <$> fun str -> string_of_char c ^ str )
-                   <$> fun s -> Ast.String s )
-                >> char '\"')
-          in
-          (* TODO: differtiate between tuple and record projection *)
-          let project expr =
-            skip_garbage << char '.'
-            << (ident_parser <|> infix_ident
-               <|> (skip_garbage << many1 digit <$> implode))
-            |> opt |> seq expr
-            <$> function
-            | value, Some projector ->
-                Option.fold
-                  ~none:(RecordAcces { value; projector })
-                  ~some:(fun projector -> TupleAcces { value; projector })
-                  (int_of_string_opt projector)
-            | value, None -> value
-          in
-          let ident = ident <$> fun i -> Ast.Ident i in
-          let atom = parens expr <|> (skip_garbage << constant) <|> ident in
-          let basic_forms =
-            let_expr_parser expr <|> if_then_else expr |> label "if"
-            <|> fun_parser expr
-            <|> variant (fun name value -> Constructor { name; value }) expr
-            <|> record (fun r -> Record r) (fun i -> Ident i) expr
-            <|> case_parser expr <|> atom
-          in
-          let basic_forms = tuple (fun t -> Tuple t) (project basic_forms) in
-          let application =
-            let rec application_tail func =
-              Parser
-                {
-                  unParse =
-                    (fun s ok err ->
-                      let (Parser { unParse }) =
-                        basic_forms >>= fun arguement ->
-                        let new_func = Ast.Application { func; arguement } in
-                        application_tail new_func <|> return new_func
-                      in
-
-                      unParse s ok err);
-                }
+          let (Parser { unParse }) =
+            let paren = between (junk << char '(') (junk << char ')') in
+            let last_quote is_end = unless (not is_end) (junk << char '\"') in
+            let rec basic_expr is_end =
+              choice
+                [
+                  paren (expr false) >> last_quote is_end;
+                  junk << char '\"' << stringP
+                  >> unless is_end (junk << char '\"')
+                  <$> (fun s -> String s)
+                  >> last_quote is_end;
+                  float <$> (fun f -> Ast.Float f) >> last_quote is_end;
+                  constructor (basic_expr is_end)
+                  <$> (fun (name, value) -> Constructor { name; value })
+                  >> last_quote is_end;
+                  number <$> (fun i -> Ast.Int i) >> last_quote is_end;
+                  identifier <$> (fun i -> Ast.Ident i) >> last_quote is_end;
+                  unit <$> Fun.const Unit >> last_quote is_end;
+                  record (expr false) (Some (fun i -> Ident i)) '='
+                  <$> List.map (fun (name, value) -> { name; value })
+                  <$> (fun r -> Record r)
+                  >> last_quote is_end;
+                ]
             in
-            basic_forms >>= fun func -> application_tail func <|> return func
+            let rec project is_end =
+              basic_expr false <|> project false
+              >>= (fun value ->
+              junk << char '.'
+              << (identifier
+                 <$> (fun projector -> RecordAcces { value; projector })
+                 <|> ( number <$> fun projector ->
+                       TupleAcces { value; projector } ))
+              >> last_quote is_end)
+              <|> basic_expr is_end
+            in
+            let application is_end =
+              (if is_end then
+                 many (project false) >>= fun first ->
+                 project is_end <$> fun last -> first @ [ last ]
+               else many1 (project false))
+              <$> function
+              | single :: list ->
+                  List.fold_left
+                    (fun app current ->
+                      Application { func = app; arguement = current })
+                    single list
+              | [] -> failwith "unreachable"
+            in
+
+            (* TODO: infix *)
+            let tuple is_end =
+              seq
+                (* TODO: might need same shtick as application *)
+                (opt
+                   (sepby1 (application false) (junk << char ',')
+                   >> (junk << char ',')))
+                (application is_end)
+              <$> function
+              | None, t -> t
+              | Some ts, t -> Tuple (ts @ [ t ])
+            in
+            let rec ifP is_end =
+              let expr is_end = ifP is_end <|> tuple is_end in
+              seq
+                (junk << string "if" << expr false)
+                (seq
+                   (junk << string "then" << expr false)
+                   (junk << string "else" << expr is_end))
+              <$> fun (condition, (consequent, alternative)) ->
+              Ast.If { condition; consequent; alternative }
+            in
+            let funP expr =
+              seq
+                (junk << string "fun" << fun_params >> (junk << string "->"))
+                expr
+              <$> fun (ps, exp) ->
+              Ast.Function { parameters = ps; abstraction = exp }
+            in
+
+            let letP expr is_end =
+              let rec_parser =
+                junk << string "rec" << seq identifier fun_params1
+                <$> (fun (name, params) (e1, e2) ->
+                LetRec
+                  {
+                    name;
+                    e1 = Function { parameters = params; abstraction = e1 };
+                    e2;
+                  })
+                <|> ( seq pattern fun_params <$> fun (name, params) (e1, e2) ->
+                      Let
+                        {
+                          name;
+                          e1 =
+                            Function { parameters = params; abstraction = e1 };
+                          e2;
+                        } )
+                >>= fun cons ->
+                junk
+                << seq
+                     (char '=' << expr false)
+                     (junk << string "in" << expr is_end)
+                <$> cons
+              in
+              junk << string "let" << junk << rec_parser
+            in
+            let case expr is_end =
+              let case is_end =
+                (* TODO: multi or pattern *)
+                seq (junk << pattern) (junk << string "->" << expr is_end)
+                <$> fun (pattern, result) -> { pattern; result }
+              in
+              junk << string "match" << junk << expr false >> junk
+              >> string "with"
+              >>= fun expr ->
+              (if is_end then
+                 seq
+                   (junk << char '|' |> opt << case false)
+                   (seq
+                      (junk << char '|' << case false |> many)
+                      (junk << char '|' |> opt << case is_end))
+                 <$> (fun (c, (cs, last)) -> (c :: cs) @ [ last ])
+                 <|> ( junk << char '|' |> opt << case is_end <$> fun case ->
+                       [ case ] )
+               else
+                 seq
+                   (junk << char '|' |> opt << case false)
+                   (junk << char '|' << case false |> many)
+                 <$> fun (c, cs) -> c :: cs)
+              <$> fun cases -> Ast.Match { cases; expr }
+            in
+            let expr' is_end = ifP is_end <|> tuple is_end in
+            let rec expr is_end =
+              case expr is_end
+              <|> funP (expr is_end)
+              <|> letP expr is_end <|> expr' is_end
+            in
+            expr is_end
           in
-          let rec infix_application =
-            Parser
-              {
-                unParse =
-                  (fun s ok err ->
-                    let (Parser { unParse }) =
-                      seq application (opt (seq infix infix_application))
-                      <$> fun (e1, infix) ->
-                      match infix with
-                      | Some (infix, e2) ->
-                          Ast.InfixApplication { infix; arguements = (e1, e2) }
-                      | None -> e1
-                    in
-
-                    unParse s ok err);
-              }
-          in
-
-          let (Parser { unParse }) = infix_application in
-
           unParse s ok err);
     }
 
-let top_level = expr <$> fun exp -> Ast.Bind { name = PWildCard; value = exp }
+let letP =
+  let rec_parser =
+    junk << string "rec" << seq identifier fun_params1
+    <$> (fun (name, params) e ->
+    RecBind { name; value = Function { parameters = params; abstraction = e } })
+    <|> ( seq pattern fun_params <$> fun (name, params) e ->
+          Bind
+            { name; value = Function { parameters = params; abstraction = e } }
+        )
+    >>= fun cons -> junk << (char '=' << expr true) <$> cons
+  in
+  junk << string "let" << junk << rec_parser
 
-let parser =
-  skip_garbage << eof
-  <$> (fun _ -> [])
-  <|> (many1
-         (string_parser1
-         <$> (fun x -> x :: [])
-         <|> (char '\"'
-             (* top level has to be attempted before top level let b/c let will parse let .. in as let with the remaining in left unparsed *)
-             << many1 (top_level <|> let_parser expr <|> type_def_parser)
-             >> (skip_garbage << char '\"')))
-      <$> List.concat >> eof)
+let top_level =
+  char '\"'
+  << (letP
+     <|> (expr true <$> fun expr -> Ast.Bind { name = PWildCard; value = expr })
+     )
+  <|> (stringP1 <$> fun string -> Ast.PrintString string)
 
+let parser = many top_level >> eof
 let run = run_show
