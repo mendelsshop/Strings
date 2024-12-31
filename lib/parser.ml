@@ -25,7 +25,7 @@ let ( !-> ) f = not & f
 let keywords =
   [ "fun"; "let"; "rec"; "in"; "if"; "then"; "else"; "match"; "with" ]
 
-let reserved_operators = [ "->"; "." ]
+let reserved_operators = [ "->"; "."; "_" ]
 let is_white_space = Fun.flip List.mem [ ' '; '\t'; '\n' ]
 let is_lower_case_letter = ( <= ) 'a' &-> ( >= ) 'z'
 let is_upper_case_letter = ( <= ) 'A' &-> ( >= ) 'Z'
@@ -40,13 +40,16 @@ let not_in list x = not (List.mem x list)
 let line_comment =
   between (string "--")
     (char '\n' |> opt)
-    (takeWhile (( <> ) '\n' |-> ( <> ) '\"'))
+    (takeWhile (( <> ) '\n' &-> ( <> ) '\"'))
   <?> "comment"
 
 let multi_line_comment =
   between (char '#') (char '#') (takeWhile (( <> ) '#')) <?> "comment"
 
-let white_space = takeWhile is_white_space
+let takeWhile1 p =
+  sat p <$> string_of_char >>= fun first -> takeWhile p <$> ( ^ ) first
+
+let white_space = takeWhile1 is_white_space
 let comment = line_comment <|> multi_line_comment
 let junk = many (comment <|> white_space)
 
@@ -77,7 +80,7 @@ let identifier =
 
 let variant_identifier = junk << char '`' << identifier
 let number_inner = takeWhile is_decimal
-let number1_inner = check (( > ) 0 & String.length) (takeWhile is_decimal)
+let number1_inner = takeWhile1 is_decimal
 let number = junk << number1_inner <$> int_of_string <?> "number"
 
 let float =
@@ -125,7 +128,7 @@ let escaped =
          hex8;
        ]
 
-let stringP_inner = escaped <|> sat (fun c -> c != '\"')
+let stringP_inner = escaped <|> sat (fun c -> c <> '\"')
 let stringP = many stringP_inner <$> AMPCL.implode
 let stringP1 = many1 stringP_inner <$> AMPCL.implode
 
@@ -215,8 +218,8 @@ let rec pattern =
                   ( constructor pattern <$> fun (name, value) ->
                     PConstructor { name; value } );
                   (number <$> fun i -> Ast.PInt i);
-                  ( identifier <$> fun i ->
-                    if i = "_" then PWildCard else Ast.PIdent i );
+                  junk << char '_' <$> Fun.const PWildCard;
+                  (identifier <$> fun i -> Ast.PIdent i);
                   unit <$> Fun.const PUnit;
                   ( record pattern (Some (fun i -> PIdent i)) '='
                   <$> List.map (fun (name, value) -> { name; value })

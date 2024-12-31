@@ -10,9 +10,7 @@ let () =
         exit 1
   in
   let input = read_to_string file in
-  let parsed =
-    Strings.Parser.run Strings.Parser.parser input
-  in
+  let parsed = Strings.Parser.run Strings.Parser.parser input in
   Result.fold ~error:Fun.id ~ok:Fun.id
     (Result.map
        (fun t ->
