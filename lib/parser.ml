@@ -75,7 +75,8 @@ let infix_identifier =
 
 let identifier =
   basic_identifier
-  <|> between (junk << char '(') (junk << char ')') infix_identifier
+  <|> (between (junk << char '(') (junk << char ')') infix_identifier
+      <?> "infix identifier")
 
 (* TODO: for infix too *)
 let variant_identifier = junk << char '`' << identifier
@@ -128,14 +129,14 @@ let escaped =
          hex8;
        ]
 
-let stringP_inner = escaped <|> sat (fun c -> c <> '\"')
-let stringP = many stringP_inner <$> AMPCL.implode
-let stringP1 = many1 stringP_inner <$> AMPCL.implode
+let stringP_inner = escaped <|> sat (( <> ) '\"')
+let stringP = many stringP_inner <$> AMPCL.implode <?> "string"
+let stringP1 = many1 stringP_inner <$> AMPCL.implode <?> "string"
 
 let unit : unit t =
   junk << char '(' << junk << char ')' <$> Fun.const () <?> "unit"
 
-let paren p = between (junk << char '(') (junk << char ')') p
+let paren p = between (junk << char '(') (junk << char ')') p <?> "paren"
 
 let record p identifier_short_hand assign =
   let field = seq identifier (junk << char assign << p) in
@@ -145,9 +146,10 @@ let record p identifier_short_hand assign =
     | None -> field
   in
   between (junk << char '{') (junk << char '}') (sepby field (junk << char ';'))
+  <?> "record"
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
-let constructor p = seq variant_identifier p
+let constructor p = seq variant_identifier p <?> "constructor"
 
 let rec typeP =
   let list_to_row =
@@ -201,7 +203,6 @@ let rec typeP =
 let ascription p = seq p (junk << char ':' << typeP)
 
 let rec pattern =
-  let paren = between (junk << char '(') (junk << char ')') in
   (* TODO: what is ascription's precedence *)
   Parser
     {
@@ -240,21 +241,21 @@ let fun_params = many pattern
 let fun_params1 = many1 pattern
 
 let rec expr is_end =
-  Parser
-    {
-      unParse =
-        (fun s ok err ->
-          let (Parser { unParse }) =
-            let paren = between (junk << char '(') (junk << char ')') in
-            let last_quote is_end = unless (not is_end) (junk << char '\"') in
-            let rec basic_expr is_end =
+  let last_quote is_end =
+    unless (not is_end) (char '\"' <?> "end of expression")
+  in
+  let rec basic_expr is_end =
+    Parser
+      {
+        unParse =
+          (fun s ok err ->
+            let (Parser { unParse }) =
               choice
                 [
                   paren (expr false) >> last_quote is_end;
-                  junk << char '\"' << stringP
-                  >> unless is_end (junk << char '\"')
-                  <$> (fun s -> String s)
-                  >> last_quote is_end;
+                  ( junk << char '\"' <?> "start of string" << stringP1
+                  >> unless is_end (char '\"' <?> "end of expression")
+                  <$> fun s -> String s );
                   float <$> (fun f -> Ast.Float f) >> last_quote is_end;
                   constructor (basic_expr is_end)
                   <$> (fun (name, value) -> Constructor { name; value })
@@ -268,45 +269,75 @@ let rec expr is_end =
                   >> last_quote is_end;
                 ]
             in
-            let rec project is_end =
-              basic_expr false <|> project false
-              >>= (fun value ->
-              junk << char '.'
-              << (identifier
-                 <$> (fun projector -> RecordAcces { value; projector })
-                 <|> ( number <$> fun projector ->
-                       TupleAcces { value; projector } ))
-              >> last_quote is_end)
-              <|> basic_expr is_end
-            in
-            let application is_end =
-              (if is_end then
-                 many (project false) >>= fun first ->
-                 project is_end <$> fun last -> first @ [ last ]
-               else many1 (project false))
-              <$> function
-              | single :: list ->
-                  List.fold_left
-                    (fun app current ->
-                      Application { func = app; arguement = current })
-                    single list
-              | [] -> failwith "unreachable"
-            in
+            unParse s ok err);
+      }
+  in
 
-            (* TODO: infix *)
-            let tuple is_end =
-              seq
-                (* TODO: might need same shtick as application *)
-                (opt
-                   (sepby1 (application false) (junk << char ',')
-                   >> (junk << char ',')))
-                (application is_end)
-              <$> function
-              | None, t -> t
-              | Some ts, t -> Tuple (ts @ [ t ])
-            in
-            let rec ifP is_end =
-              let expr is_end = ifP is_end <|> tuple is_end in
+  let project is_end () =
+    basic_expr false
+    >>= (fun value ->
+    many
+      (junk << char '.'
+      << (identifier
+         <$> (fun projector value -> RecordAcces { value; projector })
+         <|> (number <$> fun projector value -> TupleAcces { value; projector })
+         ))
+    <$> List.fold_left ( |> ) value
+    >> last_quote is_end)
+    <|> basic_expr is_end
+  in
+  let application is_end =
+    (* TODO: what to do about last \" ambiguoutity ie (\"func x y z") is it (((func x) y) z) or ((((func x) y) z) "") *)
+    if is_end then
+      let rec go func =
+        let get_func func arguement =
+          Option.fold ~none:arguement
+            ~some:(fun func -> Application { func; arguement })
+            func
+        in
+        project false ()
+        >>= (go & Option.some & get_func func)
+        <|> (project true () >>= (return & get_func func))
+      in
+      go None
+    else
+      many1 (project false ()) <$> function
+      | single :: list ->
+          List.fold_left
+            (fun app current -> Application { func = app; arguement = current })
+            single list
+      | [] -> failwith "unreachable"
+  in
+
+  (* TODO: infix *)
+  let tuple is_end =
+    (if is_end then
+       let rec go =
+         Parser
+           {
+             unParse =
+               (fun s ok err ->
+                 let (Parser { unParse }) =
+                   return List.cons <*> application false >> char ',' <*> go
+                   <|> (application true <$> Fun.flip List.cons [])
+                 in
+                 unParse s ok err);
+           }
+       in
+       go
+     else many1 (application false))
+    <$> function
+    | x :: [] -> x
+    | xs -> Tuple xs
+  in
+
+  let rec ifP is_end =
+    let expr is_end = ifP is_end <|> tuple is_end in
+    Parser
+      {
+        unParse =
+          (fun s ok err ->
+            let (Parser { unParse }) =
               seq
                 (junk << string "if" << expr false)
                 (seq
@@ -315,76 +346,73 @@ let rec expr is_end =
               <$> fun (condition, (consequent, alternative)) ->
               Ast.If { condition; consequent; alternative }
             in
-            let funP expr =
-              seq
-                (junk << string "fun" << fun_params >> (junk << string "->"))
-                expr
-              <$> fun (ps, exp) ->
-              Ast.Function { parameters = ps; abstraction = exp }
-            in
-
-            let letP expr is_end =
-              let rec_parser =
-                junk << string "rec" << seq identifier fun_params1
-                <$> (fun (name, params) (e1, e2) ->
-                LetRec
-                  {
-                    name;
-                    e1 = Function { parameters = params; abstraction = e1 };
-                    e2;
-                  })
-                <|> ( seq pattern fun_params <$> fun (name, params) (e1, e2) ->
-                      Let
-                        {
-                          name;
-                          e1 =
-                            Function { parameters = params; abstraction = e1 };
-                          e2;
-                        } )
-                >>= fun cons ->
-                junk
-                << seq
-                     (char '=' << expr false)
-                     (junk << string "in" << expr is_end)
-                <$> cons
-              in
-              junk << string "let" << junk << rec_parser
-            in
-            let case expr is_end =
-              let case is_end =
-                (* TODO: multi or pattern *)
-                seq (junk << pattern) (junk << string "->" << expr is_end)
-                <$> fun (pattern, result) -> { pattern; result }
-              in
-              junk << string "match" << junk << expr false >> junk
-              >> string "with"
-              >>= fun expr ->
-              (if is_end then
-                 seq
-                   (junk << char '|' |> opt << case false)
-                   (seq
-                      (junk << char '|' << case false |> many)
-                      (junk << char '|' |> opt << case is_end))
-                 <$> (fun (c, (cs, last)) -> (c :: cs) @ [ last ])
-                 <|> ( junk << char '|' |> opt << case is_end <$> fun case ->
-                       [ case ] )
-               else
-                 seq
-                   (junk << char '|' |> opt << case false)
-                   (junk << char '|' << case false |> many)
-                 <$> fun (c, cs) -> c :: cs)
-              <$> fun cases -> Ast.Match { cases; expr }
-            in
-            let expr' is_end = ifP is_end <|> tuple is_end in
-            let rec expr is_end =
+            unParse s ok err);
+      }
+  in
+  let funP expr =
+    seq (junk << string "fun" << fun_params >> (junk << string "->")) expr
+    <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
+  in
+  let letP expr is_end =
+    let rec_parser =
+      junk << string "rec" << seq identifier fun_params1
+      <$> (fun (name, params) (e1, e2) ->
+      LetRec
+        { name; e1 = Function { parameters = params; abstraction = e1 }; e2 })
+      <|> ( seq pattern fun_params <$> fun (name, params) (e1, e2) ->
+            Let
+              {
+                name;
+                e1 =
+                  (if List.is_empty params then e1
+                   else Function { parameters = params; abstraction = e1 });
+                e2;
+              } )
+      >>= fun cons ->
+      junk
+      << seq (char '=' << expr false) (junk << string "in" << expr is_end)
+      <$> cons
+    in
+    junk << string "let" << junk << rec_parser
+  in
+  let case expr is_end =
+    let case is_end =
+      (* TODO: multi or pattern *)
+      seq (junk << pattern) (junk << string "->" << expr is_end)
+      <$> fun (pattern, result) -> { pattern; result }
+    in
+    junk << string "match" << junk << expr false >> junk >> string "with"
+    >>= fun expr ->
+    (if is_end then
+       seq
+         (junk << char '|' |> opt << case false)
+         (seq
+            (junk << char '|' << case false |> many)
+            (junk << char '|' |> opt << case is_end))
+       <$> (fun (c, (cs, last)) -> (c :: cs) @ [ last ])
+       <|> (junk << char '|' |> opt << case is_end <$> fun case -> [ case ])
+     else
+       seq
+         (junk << char '|' |> opt << case false)
+         (junk << char '|' << case false |> many)
+       <$> fun (c, cs) -> c :: cs)
+    <$> fun cases -> Ast.Match { cases; expr }
+  in
+  let expr' is_end = ifP is_end <|> tuple is_end in
+  let rec expr is_end =
+    Parser
+      {
+        unParse =
+          (fun s ok err ->
+            let (Parser { unParse }) =
               case expr is_end
               <|> funP (expr is_end)
               <|> letP expr is_end <|> expr' is_end
             in
-            expr is_end
-          in
-          unParse s ok err);
-    }
+            unParse s ok err);
+      }
+  in
+  expr is_end
 
 let letP =
   let rec_parser =
@@ -393,8 +421,12 @@ let letP =
     RecBind { name; value = Function { parameters = params; abstraction = e } })
     <|> ( seq pattern fun_params <$> fun (name, params) e ->
           Bind
-            { name; value = Function { parameters = params; abstraction = e } }
-        )
+            {
+              name;
+              value =
+                (if List.is_empty params then e
+                 else Function { parameters = params; abstraction = e });
+            } )
     >>= fun cons -> junk << (char '=' << expr true) <$> cons
   in
   junk << string "let" << junk << rec_parser
@@ -404,7 +436,7 @@ let top_level =
   << (letP
      <|> (expr true <$> fun expr -> Ast.Bind { name = PWildCard; value = expr })
      )
-  <|> (stringP1 <$> fun string -> Ast.PrintString string)
+  <|> (stringP1 <?> "top level string" <$> fun string -> Ast.PrintString string)
 
-let parser = many top_level >> eof
+let parser = many1 top_level >> eof
 let run = run_show

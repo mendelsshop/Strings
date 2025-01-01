@@ -7,6 +7,11 @@ let pattern =
   let equal = ( = ) in
   Alcotest.testable pp equal
 
+let ast =
+  let pp f t = Fmt.pf f "@[default=%s]" (ast_to_string t) in
+  let equal = ( = ) in
+  Alcotest.testable pp equal
+
 let junk =
   let comment_mutli_line =
     Strings.Parser.run comment "#fff#kf" |> Result.to_option
@@ -107,5 +112,30 @@ let pattern =
           Alcotest.(check (option pattern)) "record" actual_record record);
     ] )
 
-let expression = ("expressions", [])
+let expression =
+  let application =
+    Strings.Parser.run (Strings.Parser.expr true) "foo  \"abc\" 4.4\""
+    |> Result.to_option
+  in
+  let actual_application =
+    Some
+      (Application
+         {
+           func = Application { func = Ident "foo"; arguement = String "abc" };
+           arguement = Float 4.4;
+         })
+  in
+  let tuple =
+    Strings.Parser.run (Strings.Parser.expr true) "abc,1\"" |> Result.to_option
+  in
+  let actual_tuple = Some (Tuple [ Ident "abc"; Int 1 ]) in
+  ( "expressions",
+    [
+      test_case "tuple" `Quick (fun () ->
+          Alcotest.(check (option ast)) "tuple" actual_tuple tuple);
+      test_case "application" `Quick (fun () ->
+          Alcotest.(check (option ast))
+            "application" actual_application application);
+    ] )
+
 let () = run "Parsers" [ junk; pattern; expression ]
