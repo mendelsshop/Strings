@@ -149,7 +149,7 @@ let record p identifier_short_hand assign =
   <?> "record"
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
-let constructor p = seq variant_identifier p <?> "constructor"
+let constructor p zero = seq variant_identifier (p <|> zero) <?> "constructor"
 
 let rec typeP =
   let list_to_row =
@@ -216,7 +216,7 @@ let rec pattern =
                   ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
                     PString s );
                   (float <$> fun f -> Ast.PFloat f);
-                  ( constructor pattern <$> fun (name, value) ->
+                  ( constructor pattern (return PUnit) <$> fun (name, value) ->
                     PConstructor { name; value } );
                   (number <$> fun i -> Ast.PInt i);
                   junk << char '_' <$> Fun.const PWildCard;
@@ -262,7 +262,9 @@ let rec expr is_end =
                   >> unless is_end (char '\"' <?> "end of expression")
                   <$> fun s -> String s );
                   float <$> (fun f -> Ast.Float f) >> last_quote is_end;
+                  (* TODO: for construction should a "constructor" be no different than an application, meaning that each constructor is a n-ary function, that can be destructed into its values, would also have to update type parsing to handle this *)
                   constructor (basic_expr is_end)
+                    (last_quote is_end <$> Fun.const Unit)
                   <$> (fun (name, value) -> Constructor { name; value })
                   >> last_quote is_end;
                   number <$> (fun i -> Ast.Int i) >> last_quote is_end;
