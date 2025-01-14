@@ -242,7 +242,7 @@ let fun_params1 = many1 pattern
 
 let rec expr is_end =
   let last_quote is_end =
-    unless (not is_end) (char '\"' <?> "end of expression")
+    unless (not is_end) (junk << char '\"' << char '\n' <?> "end of expression")
   in
   let rec basic_expr is_end =
     Parser
@@ -253,7 +253,12 @@ let rec expr is_end =
               choice
                 [
                   paren (expr false) >> last_quote is_end;
-                  ( junk << char '\"' <?> "start of string" << stringP1
+                  ( junk << char '\"' <?> "start of string"
+                  << check
+                       (* make sure that last expression is not string starting with newline *)
+                       (Fun.const (not is_end)
+                       |-> !->(String.starts_with ~prefix:"\n"))
+                       stringP
                   >> unless is_end (char '\"' <?> "end of expression")
                   <$> fun s -> String s );
                   float <$> (fun f -> Ast.Float f) >> last_quote is_end;
@@ -287,7 +292,6 @@ let rec expr is_end =
     <|> basic_expr is_end
   in
   let application is_end =
-    (* TODO: what to do about last \" ambiguoutity ie (\"func x y z") is it (((func x) y) z) or ((((func x) y) z) "") *)
     if is_end then
       let rec go func =
         let get_func func arguement =
@@ -297,7 +301,7 @@ let rec expr is_end =
         in
         project false ()
         >>= (go & Option.some & get_func func)
-        <|> (project true () >>= (return & get_func func))
+        <|> (project true () <$> get_func func)
       in
       go None
     else
@@ -325,7 +329,7 @@ let rec expr is_end =
            }
        in
        go
-     else many1 (application false))
+     else sepby1 (application false) (junk << char ','))
     <$> function
     | x :: [] -> x
     | xs -> Tuple xs
@@ -399,15 +403,16 @@ let rec expr is_end =
     <$> fun cases -> Ast.Match { cases; expr }
   in
   let expr' is_end = ifP is_end <|> tuple is_end in
+
   let rec expr is_end =
     Parser
       {
         unParse =
           (fun s ok err ->
             let (Parser { unParse }) =
-              case expr is_end
+              expr' is_end
               <|> funP (expr is_end)
-              <|> letP expr is_end <|> expr' is_end
+              <|> case expr is_end <|> letP expr is_end
             in
             unParse s ok err);
       }

@@ -62,20 +62,20 @@ finish_expr =
     |let (let rec? <pattern> = <expr> in <finish_expr>)
     |app (<expr> <expr>* <finish_expr>) # does not show when to stop i.e. "f x y\nfoo bar baz" does the application go to baz?, what about with strings, or (top level?) lets
     |infix_app (<expr> <infix_identifier> <finish_expr>)
-    |string (\"string)
+    |string (\"string) except when string start with newline
     |if (if <expr> then <expr> else <finish_expr>)
-    |var (<identifier>\")
-    |number (<number>\")
-    |float (<float>\")
-    |tuple (\(<expr> (,<expr)+\)\")
-    |record ({(<identifier>|(<identifier> = <expr>)),*}\") # TODO record extension syntax sugar
-    |unit (\(\)\")
-    |paren (\(<expr>\)\")
-    |tuple_access (<expr>.<number>\")
-    |record_access (<expr>.<identifier>\")
-    |constructor (<identifier> <expr>\")
+    |var (<identifier>\"\n)
+    |number (<number>\"\n)
+    |float (<float>\"\n)
+    |tuple (\(<expr> (,<expr)+\)\"\n)
+    |record ({(<identifier>|(<identifier> = <expr>)),*}\"\n) # TODO record extension syntax sugar
+    |unit (\(\)\"\n)
+    |paren (\(<expr>\)\"\n)
+    |tuple_access (<expr>.<number>\"\n)
+    |record_access (<expr>.<identifier>\"\n)
+    |constructor (<identifier> <expr>\"\n)
     |match (match <expr> with ((\|<pattern>)+ -> <expr>)*(\|<pattern>)+ -> <finish_expr>) # TODO allow first matcher to not need |
-    |ascription (<expr>: <type>\")
+    |ascription (<expr>: <type>\"\n)
 program_element =
     |expr (\"<finish_expr>)
     |declaration (\"let rec? <identifier> = <finish_expr>)
