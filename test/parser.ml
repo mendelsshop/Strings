@@ -69,19 +69,15 @@ let pattern =
     Strings.Parser.run Strings.Parser.pattern "_" |> Result.to_option
   in
   let actual_wildcard = Some PWildCard in
-  let tuple =
-    Strings.Parser.run Strings.Parser.pattern "_, abc, 1" |> Result.to_option
-  in
-  let actual_tuple = Some (PTuple [ PWildCard; PIdent "abc"; PInt 1 ]) in
-  let constructor =
-    Strings.Parser.run Strings.Parser.pattern "`foobar (5.5, \"baz\")"
-    |> Result.to_option
-  in
-  let actual_constructor =
-    Some
-      (PConstructor
-         { name = "foobar"; value = PTuple [ PFloat 5.5; PString "baz" ] })
-  in
+  (*   let constructor = *)
+  (*   Strings.Parser.run Strings.Parser.pattern "`foobar (5.5, \"baz\")" *)
+  (*   |> Result.to_option *)
+  (* in *)
+  (* let actual_constructor = *)
+  (*   Some *)
+  (*     (PConstructor *)
+  (*        { name = "foobar"; value = PTuple [ PFloat 5.5; PString "baz" ] }) *)
+  (* in *)
   let record =
     Strings.Parser.run Strings.Parser.pattern " { ( >> ) = 5; lag = \"baz\" }"
     |> Result.to_option
@@ -103,18 +99,19 @@ let pattern =
             "string" actual_quoted_string quoted_string);
       test_case "wildcard" `Quick (fun () ->
           Alcotest.(check (option pattern)) "wildcard" actual_wildcard wildcard);
-      test_case "tuple" `Quick (fun () ->
-          Alcotest.(check (option pattern)) "tuple" actual_tuple tuple);
-      test_case "constructor" `Quick (fun () ->
-          Alcotest.(check (option pattern))
-            "constructor" actual_constructor constructor);
+      (* test_case "constructor" `Quick (fun () -> *)
+      (*     Alcotest.(check (option pattern)) *)
+      (*       "constructor" actual_constructor constructor); *)
       test_case "record" `Quick (fun () ->
           Alcotest.(check (option pattern)) "record" actual_record record);
     ] )
 
 let expression =
   let application =
-    Strings.Parser.run (Strings.Parser.expr true) "foo  \"abc\" 4.4\""
+    Strings.Parser.run (Strings.Parser.expr true) "foo  \"abc\" 4.4\"\n"
+    |> Result.map_error (fun e ->
+           print_endline e;
+           e)
     |> Result.to_option
   in
   let actual_application =
@@ -125,14 +122,8 @@ let expression =
            arguement = Float 4.4;
          })
   in
-  let tuple =
-    Strings.Parser.run (Strings.Parser.expr true) "abc,1\"" |> Result.to_option
-  in
-  let actual_tuple = Some (Tuple [ Ident "abc"; Int 1 ]) in
   ( "expressions",
     [
-      test_case "tuple" `Quick (fun () ->
-          Alcotest.(check (option ast)) "tuple" actual_tuple tuple);
       test_case "application" `Quick (fun () ->
           Alcotest.(check (option ast))
             "application" actual_application application);

@@ -11,10 +11,7 @@ type ast2 =
   | If of { condition : ast2; consequent : ast2; alternative : ast2 }
   | Let of { name : pattern; e1 : ast2; e2 : ast2 }
   | LetRec of { name : string; e1 : ast2; e2 : ast2 }
-  (* tuples and record can be made into one form *)
-  | Tuple of ast2 list
   | Record of ast2 field list
-  | TupleAcces of (ast2, int) projection
   | RecordAcces of (ast2, string) projection
   | Constructor of { name : string; value : ast2 }
   | Match of { expr : ast2; cases : (pattern, ast2) case list }
@@ -63,7 +60,6 @@ let rec ast_to_ast2 (ast : ast) =
       Let { name; e1 = ast_to_ast2 e1; e2 = ast_to_ast2 e2 }
   | Function { parameters; abstraction } ->
       curry_ify parameters (ast_to_ast2 abstraction)
-  | Tuple tuple -> Tuple (List.map ast_to_ast2 tuple)
   | Record record ->
       Record
         (List.map
@@ -72,8 +68,6 @@ let rec ast_to_ast2 (ast : ast) =
   | Constructor { name; value } ->
       Constructor { name; value = ast_to_ast2 value }
   | Ascribe (expr, ty) -> Ascribe (ast_to_ast2 expr, ty)
-  | TupleAcces { projector; value } ->
-      TupleAcces { projector; value = ast_to_ast2 value }
   | RecordAcces { projector; value } ->
       RecordAcces { projector; value = ast_to_ast2 value }
   | Match { expr; cases } ->
@@ -114,8 +108,6 @@ let rec ast_to_string ast =
       "fun "
       ^ (parameter |> pattern_to_string)
       ^ "-> " ^ ast_to_string abstraction
-  | Tuple tuple ->
-      "( " ^ (tuple |> List.map ast_to_string |> String.concat " , ") ^ " )"
   | Record record ->
       "{ "
       ^ (record
@@ -123,8 +115,6 @@ let rec ast_to_string ast =
                name ^ ": " ^ ast_to_string value)
         |> String.concat " , ")
       ^ " }"
-  | TupleAcces { value; projector } ->
-      ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value
   | Match { expr; cases } ->

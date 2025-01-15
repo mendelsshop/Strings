@@ -42,12 +42,7 @@ let rec get_bindings pattern expr =
   match (pattern, expr) with
   | PIdent { ident; _ }, _ -> [ (ident, expr) ]
   | (PFloat _ | PInt _ | PString _ | PUnit _ | PWildCard _), _ -> []
-  | PTuple { pair = ppair; _ }, Tuple pair ->
-      (* TODO: if tuple become row polymorphic(ish) combining the lists of patterns and expression might not work, in that case we want to join up to length of pattern list  *)
-      List.combine ppair pair
-      |> List.concat_map (fun (pat, expr) -> get_bindings pat expr)
-  | PTuple _, _ -> error "not a tuple"
-  | PRecord { fields = pfields; _ }, Record fields ->
+    | PRecord { fields = pfields; _ }, Record fields ->
       pfields
       |> List.concat_map (fun { name; value } ->
              let value' = List.assoc name fields in

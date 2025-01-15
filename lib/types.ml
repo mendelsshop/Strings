@@ -10,9 +10,9 @@ type ty =
   | TRowExtension of { label : string; field : ty; row_extension : ty }
     (* todo gadts so the row_extension can only be empty row or row extension *)
   | TEmptyRow
-  | TRecord of
-      ty (* todo gadts so this can only be empty row or row extension *)
-  | TTuple of ty list (* todo variants are also rows *)
+  | TRecord of ty
+  (* todo gadts so this can only be empty row or row extension *)
+  (* todo variants are also rows *)
   | TVariant of ty
 
 let rec type_to_string ty type_delim delim empty =
@@ -39,9 +39,6 @@ let rec type_to_string ty type_delim delim empty =
       (* to make printing work if we swithc variants/adts to rows is call type_to_string with delim = " | " and type_delim = " of " *)
   | TVariant fields ->
       type_to_string fields " " "| " ""
-  | TTuple fields ->
-      String.concat " * "
-        (List.map (fun ty -> type_to_string ty ": " "; " "{}") fields)
   | TEmptyRow -> empty
   | TRowExtension { label; field; row_extension = TEmptyRow } ->
       label ^ type_delim ^ type_to_string field ": " "; " "{}"

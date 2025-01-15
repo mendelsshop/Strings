@@ -25,13 +25,11 @@ type =
                                                                  # TODO: maybe allow <identifier> where there is a type with that name
     |row ([]|[<type_identifier>: <type>; <type>] # we use [] do denote row types
     |forall (∀(<type_identifier>,)+.<type>)
-    |tuple (\(<type> (,<type)+\))
 pattern =
     |var (<identifier>)
     |string (\"string\")
     |number (<number>)
     |float (<float>)
-    |tuple (\(<pattern> (,<pattern)+,?\))
     |record ({(<identifier>|(<identifier> = <pattern>));*}) # TODO maybe a rest row or ... pattern
     |unit (\(\))
     |wildcard (\_)
@@ -48,11 +46,9 @@ expr =
     |string (\"string\")
     |number (<number>)
     |float (<float>)
-    |tuple (\(<expr> (,<expr)+\))
     |record ({(<identifier>|(<identifier> = <expr>));*}) # TODO record extension syntax sugar
     |unit (\(\))
     |paren (\(<expr>\))
-    |tuple_access (<expr>.<number>)
     |record_access (<expr>.<identifier>)
     |constructor (`<type-identifier> <expr>*)
     |match (match <expr> with ((\|<pattern>)+ -> <expr>)+) # TODO allow first matcher to not need |
@@ -67,11 +63,9 @@ finish_expr =
     |var (<identifier>\"\n)
     |number (<number>\"\n)
     |float (<float>\"\n)
-    |tuple (\(<expr> (,<expr)+\)\"\n)
     |record ({(<identifier>|(<identifier> = <expr>)),*}\"\n) # TODO record extension syntax sugar
     |unit (\(\)\"\n)
     |paren (\(<expr>\)\"\n)
-    |tuple_access (<expr>.<number>\"\n)
     |record_access (<expr>.<identifier>\"\n)
     |constructor (<identifier> <expr>\"\n)
     |match (match <expr> with ((\|<pattern>)+ -> <expr>)*(\|<pattern>)+ -> <finish_expr>) # TODO allow first matcher to not need |

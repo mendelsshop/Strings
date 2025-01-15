@@ -22,9 +22,7 @@ type ast =
   | Float of float
   | Int of int
   (* tuples and record can be made into one form *)
-  | Tuple of ast list
   | Record of ast field list
-  | TupleAcces of (ast, int) projection
   | RecordAcces of (ast, string) projection
   | Constructor of { name : string; value : ast }
   | String of string
@@ -53,8 +51,6 @@ let rec pattern_to_string pattern =
   match pattern with
   | PFloat f -> string_of_float f
   | PInt i -> string_of_int i
-  | PTuple t ->
-      "( " ^ (t |> List.map pattern_to_string |> String.concat ", ") ^ " )"
   | PRecord r ->
       "( "
       ^ (r
@@ -91,8 +87,6 @@ let rec ast_to_string ast =
       "fun "
       ^ list_to_string (List.map pattern_to_string parameters)
       ^ "->" ^ ast_to_string abstraction
-  | Tuple tuple ->
-      "( " ^ (tuple |> List.map ast_to_string |> String.concat " , ") ^ " )"
   | Record record ->
       "{ "
       ^ (record
@@ -100,8 +94,6 @@ let rec ast_to_string ast =
                name ^ ": " ^ ast_to_string value)
         |> String.concat " , ")
       ^ " }"
-  | TupleAcces { value; projector } ->
-      ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value
   | Match { expr; cases } ->

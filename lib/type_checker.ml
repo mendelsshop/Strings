@@ -71,14 +71,6 @@ let rec instantiate ty (tmap : ty IntMap.t) =
       instantiate row_extension tmap <$> fun row_extension' ->
       TRowExtension { row_extension = row_extension'; label; field = field' }
   | TInteger | TFloat | TUnit | TEmptyRow | TString | TBool -> return ty
-  | TTuple pair ->
-      List.fold_left
-        (fun instantiated item ->
-          instantiated >>= fun instantiated' ->
-          instantiate item tmap <$> fun item' -> item' :: instantiated')
-        (return []) pair
-      <$> fun pair' -> TTuple pair'
-
 type constraints = (ty * ty) list
 
 let todo string =
@@ -155,16 +147,7 @@ end = struct
                  }),
             ty ) )
         ++ generate_constraints_pattern value
-    | PTuple t ->
-        return (t.ty, TTuple (List.map type_of_pattern t.pair))
-        ++ (t.pair
-           |> List.map generate_constraints_pattern
-           |> List.fold_left
-                (fun tys ty ->
-                  tys >>= fun tys' ->
-                  ty <$> fun ty' -> List.append ty' tys')
-                (return []))
-
+   
   let rec generate_constraints expr =
     match expr with
     | Int _ | Float _ | String _ | Unit _ | Ident _ -> return []
@@ -214,8 +197,6 @@ end = struct
                   tys >>= fun tys' ->
                   ty <$> fun ty' -> List.append ty' tys')
                 (return []))
-    | TupleAcces { ty = _ty; value = _value; _ } ->
-        todo "generate constraints for tuple access"
     | RecordAcces { value; ty; projector } ->
         ( new_meta <$> fun rest_row ->
           ( TRecord
@@ -234,16 +215,7 @@ end = struct
                  }),
             ty ) )
         ++ generate_constraints value
-    | Tuple t ->
-        return (t.ty, TTuple (List.map type_of t.pair))
-        ++ (t.pair
-           |> List.map generate_constraints
-           |> List.fold_left
-                (fun tys ty ->
-                  tys >>= fun tys' ->
-                  ty <$> fun ty' -> List.append ty' tys')
-                (return []))
-    | Match { cases; ty; expr } ->
+      | Match { cases; ty; expr } ->
         List.fold_left
           (fun cs { pattern; result } ->
             let pattern_ty = type_of_pattern pattern in
@@ -276,7 +248,6 @@ let rec mini_sub (m, s_ty) ty =
           field = mini_sub (m, s_ty) field;
           row_extension = mini_sub (m, s_ty) row_extension;
         }
-  | TTuple pair -> TTuple (List.map (mini_sub (m, ty)) pair)
   | TVariant t -> TVariant (mini_sub (m, s_ty) t)
   | TPoly (ms, ty) when List.mem m ms |> not -> mini_sub (m, s_ty) ty
   | Meta _ | TUnit | TBool | TInteger | TFloat | TString | TEmptyRow | TPoly _
@@ -292,7 +263,6 @@ let rec substitute_pattern substitutions pattern =
   let substitute_pattern = substitute_pattern substitutions in
   let ty = subs substitutions (type_of_pattern pattern) in
   match pattern with
-  | PTuple { pair; _ } -> PTuple { ty; pair = List.map substitute_pattern pair }
   | PRecord { fields; _ } ->
       PRecord
         {
@@ -355,7 +325,6 @@ let rec substitute substitutions expr =
           ty;
         }
   (* TODO: subsitite non polymorphic type variables in poly *)
-  | Tuple { pair; _ } -> Tuple { ty; pair = List.map substitute pair }
   | Match { cases; expr; _ } ->
       let substitute_case { pattern; result } =
         { pattern = substitute_pattern pattern; result = substitute result }
@@ -365,7 +334,6 @@ let rec substitute substitutions expr =
   | Unit _ | Float _ | String _ | Int _ | Poly _ -> expr
   | Constructor { name; value; _ } ->
       Constructor { name; value = substitute value; ty }
-  | TupleAcces _ -> todo "substitute tuple access"
 
 let substitute_top_level substitutions tl =
   List.iter
@@ -388,10 +356,6 @@ let rec metas ty =
   | TFunction (t1, t2) -> metas t2 |> (metas t1 |> MetaS.union)
   | TRecord t -> metas t
   | TVariant t -> metas t
-  | TTuple pair ->
-      List.fold_left
-        (fun meta_set current -> MetaS.union (metas current) meta_set)
-        MetaS.empty pair
   | TRowExtension { field; row_extension; _ } ->
       metas field |> (metas row_extension |> MetaS.union)
   | TInteger | TFloat | TUnit | TEmptyRow | TPoly _ | TString | TBool ->
@@ -449,8 +413,6 @@ end = struct
         | t1, t2 when t1 = t2 -> unify constraints
         | TFunction (t1, t2), TFunction (t3, t4) ->
             (t1, t3) :: (t2, t4) :: constraints |> unify
-        | TTuple t1, TTuple t2 when List.length t1 = List.length t2 ->
-            List.append (List.combine t1 t2) constraints |> unify
         | Meta m, t | t, Meta m ->
             (m, t)
             ++ (constraints
@@ -514,7 +476,6 @@ let rec get_binders pattern metas =
   let get_binders p = get_binders p metas in
   match pattern with
   | PIdent { ident; ty } -> [ (ident, metas ty) ]
-  | PTuple { pair; _ } -> List.concat_map get_binders pair
   | PRecord { fields; _ } ->
       List.concat_map
         (function
@@ -575,14 +536,6 @@ let rec typify_pattern pat =
   | Ast.PString i -> PString { ty = TString; value = i } |> return
   | Ast.PUnit -> PUnit { ty = TUnit } |> return
   | Ast.PWildCard -> new_meta <$> fun ty -> PWildCard { ty }
-  | Ast.PTuple pair ->
-      new_meta >>= fun ty ->
-      List.fold_left
-        (fun pair (ti : Ast.pattern) ->
-          pair >>= fun pair' ->
-          typify_pattern ti <$> fun ti' -> ti' :: pair')
-        (return []) pair
-      <$> fun pair' -> PTuple { ty; pair = pair' }
   | Ast.PRecord fields ->
       new_meta >>= fun ty ->
       List.fold_left
@@ -655,14 +608,6 @@ let rec typify expr =
              e1 = Rec { ty = type_of e1''; expr = e1''; name };
              e2;
            })
-  | Ast2.Tuple tuple ->
-      new_meta >>= fun ty ->
-      List.fold_right
-        (fun expr tuple ->
-          typify expr >>= fun expr' ->
-          tuple <$> fun tuple' -> expr' :: tuple')
-        tuple (return [])
-      <$> fun pair -> Tuple { pair; ty }
   | Ast2.Record record ->
       new_meta >>= fun ty ->
       List.fold_left
@@ -677,9 +622,6 @@ let rec typify expr =
   | Ast2.RecordAcces { projector; value } ->
       new_meta >>= fun ty ->
       typify value <$> fun value -> RecordAcces { projector; value; ty }
-  | Ast2.TupleAcces { projector; value } ->
-      new_meta >>= fun ty ->
-      typify value <$> fun value -> TupleAcces { projector; value; ty }
   | Ast2.Match { cases; expr } ->
       new_meta >>= fun ty ->
       typify expr >>= fun expr' ->

@@ -8,7 +8,6 @@ type ('a, 'b) projection = { ty : ty; value : 'a; projector : 'b }
 type typed_pattern =
   | PFloat of { value : float; ty : ty }
   | PInt of { value : int; ty : ty }
-  | PTuple of { pair : typed_pattern list; ty : ty }
   | PRecord of { fields : typed_pattern field list; ty : ty }
   | PString of { value : string; ty : ty }
   | PIdent of { ident : ident; ty : ty }
@@ -33,10 +32,7 @@ type typed_ast =
   | Let of { ty : ty; binding : typed_pattern; e1 : typed_ast; e2 : typed_ast }
   | Rec of { ty : ty; name : ident; expr : typed_ast }
   | Poly of { metas : int list; e : typed_ast }
-  (* tuples and record can be made into one form *)
-  | Tuple of { ty : ty; pair : typed_ast list }
   | Record of { ty : ty; fields : typed_ast field list }
-  | TupleAcces of (typed_ast, int) projection
   | RecordAcces of (typed_ast, string) projection
   | Constructor of { ty : ty; name : string; value : typed_ast }
   | Match of {
@@ -60,7 +56,6 @@ let type_of_pattern pattern =
   | PIdent a -> a.ty
   | PUnit a -> a.ty
   | PRecord r -> r.ty
-  | PTuple t -> t.ty
   | PWildCard t -> t.ty
   | PConstructor c -> c.ty
 
@@ -79,9 +74,7 @@ let rec type_of expr =
   | Poly p -> TPoly (p.metas, type_of p.e)
   | Rec r -> r.ty
   | Record r -> r.ty
-  | TupleAcces a -> a.ty
   | RecordAcces a -> a.ty
-  | Tuple t -> t.ty
   | Constructor c -> c.ty
   | Match m -> m.ty
 
@@ -89,8 +82,6 @@ let rec pattern_to_string pattern =
   match pattern with
   | PFloat f -> string_of_float f.value
   | PInt i -> string_of_int i.value
-  | PTuple t ->
-      "( " ^ (t.pair |> List.map pattern_to_string |> String.concat ", ") ^ " )"
   | PRecord r ->
       "( "
       ^ (r.fields
@@ -129,8 +120,6 @@ let rec ast_to_string ast =
       ^ String.concat "," (List.map string_of_int p.metas)
       ^ "." ^ ast_to_string p.e
   | Rec { name; expr; _ } -> "rec " ^ name ^ " " ^ ast_to_string expr
-  | Tuple { pair; _ } ->
-      "( " ^ (pair |> List.map ast_to_string |> String.concat " , ") ^ " )"
   | Record { fields; _ } ->
       "{ "
       ^ (fields
@@ -138,8 +127,6 @@ let rec ast_to_string ast =
                name ^ ": " ^ ast_to_string value)
         |> String.concat " , ")
       ^ " }"
-  | TupleAcces { value; projector; _ } ->
-      ast_to_string value ^ "." ^ string_of_int projector
   | RecordAcces { value; projector; _ } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value; _ } -> name ^ " " ^ ast_to_string value
   | Match { expr; cases; _ } ->

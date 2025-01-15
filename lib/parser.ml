@@ -177,11 +177,6 @@ let rec typeP =
                 <?> "record";
               ]
           in
-          let tuple =
-            sepby1 basic_type (junk << char '*') <$> function
-            | t :: [] -> t
-            | t -> TTuple t
-          in
           let variant =
             many1
               (seq variant_identifier
@@ -189,7 +184,7 @@ let rec typeP =
             <$> ((fun row -> TVariant row) & list_to_row)
           in
           let functionP =
-            variant <|> tuple >>= fun first ->
+            variant <|> basic_type >>= fun first ->
             opt (junk << string "->" << typeP)
             <$> Option.fold
                   ~some:(fun return -> TFunction (first, return))
@@ -209,30 +204,23 @@ let rec pattern =
       unParse =
         (fun s ok err ->
           let (Parser { unParse }) =
-            let basic_pattern =
-              choice
-                [
-                  paren pattern;
-                  ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
-                    PString s );
-                  (float <$> fun f -> Ast.PFloat f);
-                  ( constructor pattern (return PUnit) <$> fun (name, value) ->
-                    PConstructor { name; value } );
-                  (number <$> fun i -> Ast.PInt i);
-                  junk << char '_' <$> Fun.const PWildCard;
-                  (identifier <$> fun i -> Ast.PIdent i);
-                  unit <$> Fun.const PUnit;
-                  ( record pattern (Some (fun i -> PIdent i)) '='
-                  <$> List.map (fun (name, value) -> { name; value })
-                  <$> fun r -> PRecord r );
-                ]
-            in
-
-            sepby1 basic_pattern (junk << char ',') <$> function
-            | t :: [] -> t
-            | t -> PTuple t
+            choice
+              [
+                paren pattern;
+                ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
+                  PString s );
+                (float <$> fun f -> Ast.PFloat f);
+                ( constructor pattern (return PUnit) <$> fun (name, value) ->
+                  PConstructor { name; value } );
+                (number <$> fun i -> Ast.PInt i);
+                junk << char '_' <$> Fun.const PWildCard;
+                (identifier <$> fun i -> Ast.PIdent i);
+                unit <$> Fun.const PUnit;
+                ( record pattern (Some (fun i -> PIdent i)) '='
+                <$> List.map (fun (name, value) -> { name; value })
+                <$> fun r -> PRecord r );
+              ]
           in
-
           unParse s ok err);
     }
 
@@ -285,10 +273,8 @@ let rec expr is_end =
     >>= (fun value ->
     many
       (junk << char '.'
-      << (identifier
-         <$> (fun projector value -> RecordAcces { value; projector })
-         <|> (number <$> fun projector value -> TupleAcces { value; projector })
-         ))
+      << (identifier <$> fun projector value -> RecordAcces { value; projector })
+      )
     <$> List.fold_left ( |> ) value
     >> last_quote is_end)
     <|> basic_expr is_end
@@ -316,29 +302,8 @@ let rec expr is_end =
   in
 
   (* TODO: infix *)
-  let tuple is_end =
-    (if is_end then
-       let rec go =
-         Parser
-           {
-             unParse =
-               (fun s ok err ->
-                 let (Parser { unParse }) =
-                   return List.cons <*> application false >> char ',' <*> go
-                   <|> (application true <$> Fun.flip List.cons [])
-                 in
-                 unParse s ok err);
-           }
-       in
-       go
-     else sepby1 (application false) (junk << char ','))
-    <$> function
-    | x :: [] -> x
-    | xs -> Tuple xs
-  in
-
   let rec ifP is_end =
-    let expr is_end = ifP is_end <|> tuple is_end in
+    let expr is_end = ifP is_end <|> application is_end in
     Parser
       {
         unParse =
@@ -404,7 +369,7 @@ let rec expr is_end =
        <$> fun (c, cs) -> c :: cs)
     <$> fun cases -> Ast.Match { cases; expr }
   in
-  let expr' is_end = ifP is_end <|> tuple is_end in
+  let expr' is_end = ifP is_end <|> application is_end in
 
   let rec expr is_end =
     Parser
