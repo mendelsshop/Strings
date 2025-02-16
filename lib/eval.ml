@@ -42,7 +42,7 @@ let rec get_bindings pattern expr =
   match (pattern, expr) with
   | PIdent { ident; _ }, _ -> [ (ident, expr) ]
   | (PFloat _ | PInt _ | PString _ | PUnit _ | PWildCard _), _ -> []
-    | PRecord { fields = pfields; _ }, Record fields ->
+  | PRecord { fields = pfields; _ }, Record fields ->
       pfields
       |> List.concat_map (fun { name; value } ->
              let value' = List.assoc name fields in

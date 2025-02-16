@@ -43,7 +43,7 @@ expr =
     |infix_app (<expr> <infix_identifier> <expr>)
     |if (if <expr> then <expr> else <expr>)
     |var (<identifier>)
-    |string (\"string\")
+    |string (\"string\") except when string start with newline
     |number (<number>)
     |float (<float>)
     |record ({(<identifier>|(<identifier> = <expr>));*}) # TODO record extension syntax sugar

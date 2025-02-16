@@ -9,7 +9,6 @@ type ('a, 'b) case = { pattern : 'a; result : 'b }
 type pattern =
   | PFloat of float
   | PInt of int
-  | PTuple of pattern list
   | PRecord of pattern field list
   | PString of string
   | PIdent of ident
@@ -52,12 +51,12 @@ let rec pattern_to_string pattern =
   | PFloat f -> string_of_float f
   | PInt i -> string_of_int i
   | PRecord r ->
-      "( "
+      "{ "
       ^ (r
         |> List.map (fun { name; value } ->
                name ^ " = " ^ pattern_to_string value)
-        |> String.concat ", ")
-      ^ " )"
+        |> String.concat "; ")
+      ^ " }"
   | PString s -> "\"" ^ s ^ "\""
   | PIdent i -> i
   | PConstructor { name; value } -> name ^ "( " ^ pattern_to_string value ^ " )"
@@ -69,12 +68,12 @@ let rec ast_to_string ast =
   match ast with
   | Float f -> string_of_float f
   | Int i -> string_of_int i
-  | String i -> i
+  | String i -> "\"" ^ String.escaped i ^ "\""
   | Ident i -> i
   | InfixApplication { infix; arguements = e1, e2 } ->
-      "( " ^ ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2 ^ " )"
+      ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2
   | Application { func; arguement } ->
-      "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
+      ast_to_string func ^ " " ^ ast_to_string arguement
   | If { condition; consequent; alternative } ->
       "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
       ^ " else " ^ ast_to_string alternative
@@ -91,8 +90,8 @@ let rec ast_to_string ast =
       "{ "
       ^ (record
         |> List.map (function { name; value } ->
-               name ^ ": " ^ ast_to_string value)
-        |> String.concat " , ")
+               name ^ " = " ^ ast_to_string value)
+        |> String.concat "; ")
       ^ " }"
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value

@@ -244,8 +244,8 @@ let rec expr is_end =
                   ( junk << char '\"' <?> "start of string"
                   << check
                        (* make sure that last expression is not string starting with newline *)
-                       (Fun.const (not is_end)
-                       |-> !->(String.starts_with ~prefix:"\n"))
+                       (*TODO: maybe only do this if in application*)
+                       !->(String.starts_with ~prefix:"\n")
                        stringP
                   >> unless is_end (char '\"' <?> "end of expression")
                   <$> fun s -> String s );

@@ -37,10 +37,10 @@ let rec type_to_string ty type_delim delim empty =
   | TRecord fields ->
       "{ " ^ type_to_string fields ": " "; " "" ^ " }"
       (* to make printing work if we swithc variants/adts to rows is call type_to_string with delim = " | " and type_delim = " of " *)
-  | TVariant fields ->
-      type_to_string fields " " "| " ""
+  | TVariant fields -> type_to_string fields " " "| " ""
   | TEmptyRow -> empty
   | TRowExtension { label; field; row_extension = TEmptyRow } ->
+      (*TODO: is this case needed*)
       label ^ type_delim ^ type_to_string field ": " "; " "{}"
   | TRowExtension { label; field; row_extension } ->
       label ^ type_delim
