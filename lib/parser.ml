@@ -91,37 +91,21 @@ let record expr =
 let variant_parser wrapper expr =
   seq variant_ident expr <$> fun (name, expr) -> wrapper name expr
 
-let rec pattern =
-  Parser
-    {
-      unParse =
-        (fun s ok err ->
-          let (Parser { unParse }) =
-            let basic_forms =
-              choice
-                [
-                  parens_parser pattern;
-                  (char '_' <$> fun _ -> PWildcard);
-                  ident_parser (fun i -> PVar i);
-                  number_parser (fun n -> PNumber n);
-                  boolean_parser (fun b -> PBoolean b);
-                  record pattern;
-                  variant_parser (fun name p -> PConstructor (name, p)) pattern;
-                ]
-            in
-            tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2))
-          in
-          unParse s ok err);
-    }
-
-let rec makeRecParser p =
-  Parser
-    {
-      unParse =
-        (fun s ok err ->
-          let (Parser { unParse }) = p (makeRecParser p) in
-          unParse s ok err);
-    }
+let pattern =
+  makeRecParser (fun pattern ->
+      let basic_forms =
+        choice
+          [
+            parens_parser pattern;
+            (char '_' <$> fun _ -> PWildcard);
+            ident_parser (fun i -> PVar i);
+            number_parser (fun n -> PNumber n);
+            boolean_parser (fun b -> PBoolean b);
+            record pattern;
+            variant_parser (fun name p -> PConstructor (name, p)) pattern;
+          ]
+      in
+      tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2)))
 
 let lambda_parser expr =
   char '\\' >>= fun _ ->
@@ -183,35 +167,37 @@ let match_parser expr =
   <$> fun (c, cs) -> c :: cs )
   <$> fun cases -> Match (expr, cases)
 
-let expr_inner =
-  let basic_forms =
-    makeRecParser (fun expr_inner ->
-        !(choice
-            [
-              parens_parser (expr_inner <|> !(expr_inner |> let_parser));
-              boolean_parser (fun b -> Boolean b);
-              number_parser (fun n -> Number n);
-              ident_parser (fun i -> Var i);
-              record expr_inner;
-              lambda_parser expr_inner;
-              if_parser expr_inner;
-              match_parser expr_inner;
-              variant_parser (fun name p -> Constructor (name, p)) expr_inner;
-            ]))
-  in
-  let basic_forms =
-    tuple (record_acces_parser basic_forms) (fun t1 t2 -> Tuple (t1, t2))
-  in
-  let application_parser =
-    makeRecParser (fun application_parser ->
-        basic_forms >>= fun abs ->
-        application_parser
-        <$> (fun arg -> Application (abs, arg))
-        <|> return abs)
-  in
-  application_parser
-
-let expr = makeRecParser (fun expr -> expr_inner <|> !(expr |> let_parser))
+let expr =
+  makeRecParser (fun expr ->
+      let basic_forms =
+        makeRecParser (fun basic_forms ->
+            !(choice
+                [
+                  parens_parser expr;
+                  boolean_parser (fun b -> Boolean b);
+                  number_parser (fun n -> Number n);
+                  ident_parser (fun i -> Var i);
+                  record expr;
+                  variant_parser
+                    (fun name p -> Constructor (name, p))
+                    basic_forms;
+                ]))
+      in
+      let tuple =
+        tuple (record_acces_parser basic_forms) (fun t1 t2 -> Tuple (t1, t2))
+      in
+      let application_parser =
+        makeRecParser (fun application_parser ->
+            tuple >>= fun abs ->
+            application_parser
+            <$> (fun arg -> Application (abs, arg))
+            <|> return abs)
+      in
+      let if_parser =
+        makeRecParser (fun ifP -> if_parser ifP <|> application_parser)
+      in
+      !(choice
+          [ if_parser; lambda_parser expr; match_parser expr; let_parser expr ]))
 
 let let_parser =
   string "let" >>= fun _ ->
