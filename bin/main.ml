@@ -15,9 +15,9 @@ let () =
         exit 1
   in
   let input = read_to_string file in
-  let parsed = run parse input in
-  Option.fold ~none:"bad file"
-    ~some:(fun exprs ->
+  let parsed = Ml.Parser.run parse input in
+  Result.fold ~error:Fun.id
+    ~ok:(fun exprs ->
       List.map program_to_string exprs |> String.concat "\n" |> print_endline;
       infer [] exprs
       |> Result.fold ~error:Fun.id ~ok:(fun exprs' ->

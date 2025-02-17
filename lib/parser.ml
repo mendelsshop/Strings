@@ -1,6 +1,15 @@
 open AMPCL
 open Expr
 
+module Unit = struct
+  include Unit
+
+  let show _ = ""
+end
+
+module Parser = AMPCL.Parser.Char.String.Show.Make (Unit)
+open Parser
+
 let key_words =
   [ "match"; "with"; "in"; "let"; "if"; "rec"; "then"; "else"; "\\"; "."; "|" ]
 
@@ -49,14 +58,13 @@ let parens_parser expr =
   !(char ')') <$> fun _ -> expr
 
 let tuple expr wrapper =
-  let rec tuple input =
-    ( expr >>= fun e1 ->
-      !(char ',') >>= (fun _ -> tuple) |> opt <$> function
-      | Some e2 -> wrapper e1 e2
-      | None -> e1 )
-      input
+  let rec tuple () =
+    expr >>= fun e1 ->
+    !(char ',') >>= (fun _ -> tuple ()) |> opt <$> function
+    | Some e2 -> wrapper e1 e2
+    | None -> e1
   in
-  tuple
+  tuple ()
 
 (*|> many*)
 (*List.fold*)
@@ -83,20 +91,37 @@ let record expr =
 let variant_parser wrapper expr =
   seq variant_ident expr <$> fun (name, expr) -> wrapper name expr
 
-let rec pattern input =
-  let basic_forms =
-    choice
-      [
-        parens_parser pattern;
-        (char '_' <$> fun _ -> PWildcard);
-        ident_parser (fun i -> PVar i);
-        number_parser (fun n -> PNumber n);
-        boolean_parser (fun b -> PBoolean b);
-        record pattern;
-        variant_parser (fun name p -> PConstructor (name, p)) pattern;
-      ]
-  in
-  tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2)) input
+let rec pattern =
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let (Parser { unParse }) =
+            let basic_forms =
+              choice
+                [
+                  parens_parser pattern;
+                  (char '_' <$> fun _ -> PWildcard);
+                  ident_parser (fun i -> PVar i);
+                  number_parser (fun n -> PNumber n);
+                  boolean_parser (fun b -> PBoolean b);
+                  record pattern;
+                  variant_parser (fun name p -> PConstructor (name, p)) pattern;
+                ]
+            in
+            tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2))
+          in
+          unParse s ok err);
+    }
+
+let rec makeRecParser p =
+  Parser
+    {
+      unParse =
+        (fun s ok err ->
+          let (Parser { unParse }) = p (makeRecParser p) in
+          unParse s ok err);
+    }
 
 let lambda_parser expr =
   char '\\' >>= fun _ ->
@@ -158,33 +183,35 @@ let match_parser expr =
   <$> fun (c, cs) -> c :: cs )
   <$> fun cases -> Match (expr, cases)
 
-let rec expr_inner input =
+let expr_inner =
   let basic_forms =
-    !(choice
-        [
-          parens_parser (expr_inner <|> !(let_parser expr_inner));
-          boolean_parser (fun b -> Boolean b);
-          number_parser (fun n -> Number n);
-          ident_parser (fun i -> Var i);
-          record expr_inner;
-          lambda_parser expr_inner;
-          if_parser expr_inner;
-          match_parser expr_inner;
-          variant_parser (fun name p -> Constructor (name, p)) expr_inner;
-        ])
+    makeRecParser (fun expr_inner ->
+        !(choice
+            [
+              parens_parser (expr_inner <|> !(expr_inner |> let_parser));
+              boolean_parser (fun b -> Boolean b);
+              number_parser (fun n -> Number n);
+              ident_parser (fun i -> Var i);
+              record expr_inner;
+              lambda_parser expr_inner;
+              if_parser expr_inner;
+              match_parser expr_inner;
+              variant_parser (fun name p -> Constructor (name, p)) expr_inner;
+            ]))
   in
   let basic_forms =
     tuple (record_acces_parser basic_forms) (fun t1 t2 -> Tuple (t1, t2))
   in
-  let rec application_parser input =
-    ( basic_forms >>= fun abs ->
-      application_parser <$> (fun arg -> Application (abs, arg)) <|> return abs
-    )
-      input
+  let application_parser =
+    makeRecParser (fun application_parser ->
+        basic_forms >>= fun abs ->
+        application_parser
+        <$> (fun arg -> Application (abs, arg))
+        <|> return abs)
   in
-  application_parser input
+  application_parser
 
-let rec expr input = (expr_inner <|> !(let_parser expr)) input
+let expr = makeRecParser (fun expr -> expr_inner <|> !(expr |> let_parser))
 
 let let_parser =
   string "let" >>= fun _ ->
@@ -195,7 +222,9 @@ let let_parser =
 let top_level = expr <$> (fun e -> Expr e) <|> !let_parser
 
 let parse =
-  many top_level >>= fun tl ->
-  junk <$> fun _ -> tl
+  many1
+    ( top_level >>= fun tl ->
+      junk <$> fun _ -> tl )
+  >> eof
 
-let run = run
+let run = run_show
