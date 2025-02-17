@@ -47,8 +47,9 @@ let ident =
 let variant_ident =
   let idents = many alphanum in
   let flatten (f, rest) = f :: rest in
-  seq upper idents <$> flatten <$> implode
-  |> check (fun x -> not (List.mem x key_words))
+  keep_right (char '`')
+    (seq letter idents <$> flatten <$> implode
+    |> check (fun x -> not (List.mem x key_words)))
 
 let ident_parser wrapper = ident <$> wrapper
 
@@ -81,7 +82,7 @@ let record expr =
    in
    let record_mid = record >> !(char ';') in
    !(char '{')
-   << (many1 record_mid
+   << (many record_mid
       >> !(char '}')
       <|> (seq (many record_mid) record
           <$> (fun (rs, r) -> rs @ [ r ])

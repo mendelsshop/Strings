@@ -47,8 +47,7 @@ let rec infer_pattern = function
       (env, ty', PTConstructor (name, pattern', ty')) |> return
   | PRecord row ->
       let* row_init =
-        let* meta = new_meta in
-        return ([], meta, [])
+        return ([], TRowEmpty, [])
       in
       let* env, pattern_ty, pattern =
         List.fold_right
@@ -64,14 +63,19 @@ let rec infer_pattern = function
       let ty = Types.TRecord pattern_ty in
       return (env, ty, PTRecord (pattern, ty))
 
+let print_constraints cs =
+  cs
+  |> Stdlib.List.map (fun (ty, ty') ->
+         type_to_string ty ^ "~=" ^ type_to_string ty')
+  |> String.concat "\n" |> print_endline
+
 let infer_expr expr =
   let rec infer_inner expr =
     match expr with
     | Var x ->
-        x |> get
-        |> bind ~f:(fun ty ->
-               let* ty' = instantiate ty in
-               return ([], ty', TVar (x, ty')))
+        let* ty = get x in
+        let* ty' = instantiate ty in
+        return ([], ty', TVar (x, ty'))
     | Boolean b -> return ([], TBool, TBoolean (b, TBool))
     | Number b -> return ([], TInt, TNumber (b, TInt))
     | If (cond, cons, alt) ->
@@ -169,6 +173,7 @@ let infer_expr expr =
               return (cs'', cases @ [ (pat', case') ]))
             ~init:(cs, [])
         in
+        print_constraints cs';
         (cs', ret, TMatch (expr', cases', ret)) |> return
     | RecordExtend (record, row) ->
         let* cs, record_ty, record' = infer_inner record in
