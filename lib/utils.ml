@@ -189,23 +189,29 @@ let instantiate : ty -> ty ResultReader.t = function
 
 let rec unify t1 t2 =
   let open Types in
-  let rec rewrite_row label row2 =
-    match row2 with
-    | TMeta m ->
-        let* b = new_meta in
-        let* y = new_meta in
-        (y, b, Subst.singleton m (TRowExtend (label, y, b))) |> return
-    | TRowEmpty -> "Cannot add label `" ^ label ^ "` to row." |> fail
-    | TRowExtend (label2, field_ty2, rest_row2) when label = label2 ->
-        return (field_ty2, rest_row2, Subst.empty)
-    | TRowExtend (label2, field_ty2, rest_row2) ->
-        let* field_ty, rest_row, subs = rewrite_row label rest_row2 in
-        return (field_ty, TRowExtend (label2, field_ty2, rest_row), subs)
-    | _ ->
-        type_to_string row2
-        ^ " is not a row, so it cannot be extended with label `" ^ label ^ "`."
+  let rec rewrite_row new_label  =
+    function
+    | TRowEmpty -> "Cannot add label `" ^ new_label ^ "` to row." |> fail
+    | TRowExtend (label, field_ty, row_tail) when new_label = label ->
+        return (field_ty, row_tail, Subst.empty)
+    | TRowExtend (label, field_ty, TMeta m) ->
+        let* beta = new_meta in
+        let* gamma = new_meta in
+        ( gamma,
+          TRowExtend (label, field_ty, beta),
+          Subst.singleton m (TRowExtend (new_label, gamma, beta)) )
+        |> return
+    | TRowExtend (label, field_ty, row_tail) ->
+        let* field_ty', row_tail', subs = rewrite_row new_label row_tail in
+      if row_tail = row_tail' then print_endline "same";
+        return (field_ty', TRowExtend (label, field_ty, row_tail'), subs)
+    | ty ->
+        type_to_string ty
+        ^ " is not a row, so it cannot be extended with label `" ^ new_label
+        ^ "`."
         |> fail
   in
+   (type_to_string t1 ) ^ " ~= " ^ (type_to_string t2) |>print_endline;
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
   | TMeta t, ty | ty, TMeta t ->
@@ -229,24 +235,30 @@ let rec unify t1 t2 =
   | TRecord r1, TRecord r2 -> unify r1 r2
   | TVariant r1, TVariant r2 -> unify r1 r2
   (*TODO: can we be a bit more general about what row2 is?*)
-  | TRowExtend (label, ty, rest_row), (TRowExtend _ as row2) ->
-      let* row2_ty, row2_rest_row, subs = rewrite_row label row2 in
-      (*TODO: termination check *)
+  | TRowExtend (label1, field_ty1, row_tail1), (TRowExtend _ as row_tail2) ->
+      let* field_ty2, row_tail2, subs = rewrite_row label1 row_tail2 in
+      row_tail row_tail1 |> Option.value ~default:"bll" |> print_endline;
+      "subs "
+      ^ (subs |> Subst.to_list
+        |> Stdlib.List.map (fun (name, ty) -> name ^ " = " ^ type_to_string ty)
+        |> String.concat ", ")
+      |> print_endline;
       if
-        row_tail rest_row
+        row_tail row_tail1
         |> Option.fold ~none:false ~some:(fun tv -> Subst.mem tv subs)
-      then fail "recursive row"
+      then
+        fail ("recursive row " ^ type_to_string t1 ^ " and " ^ type_to_string t2)
       else
         let* subs' =
           unify
-            (SubstitableType.apply subs ty)
-            (SubstitableType.apply subs row2_ty)
+            (SubstitableType.apply subs field_ty1)
+            (SubstitableType.apply subs field_ty2)
         in
         let subs = compose subs' subs in
         let* subs' =
           unify
-            (SubstitableType.apply subs rest_row)
-            (SubstitableType.apply subs row2_rest_row)
+            (SubstitableType.apply subs row_tail1)
+            (SubstitableType.apply subs row_tail2)
         in
         compose subs subs' |> return
   | _ ->
