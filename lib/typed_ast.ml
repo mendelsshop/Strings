@@ -32,6 +32,7 @@ type typed_ast =
   | Let of { ty : ty; binding : typed_pattern; e1 : typed_ast; e2 : typed_ast }
   | Rec of { ty : ty; name : ident; expr : typed_ast }
   | Poly of { metas : int list; e : typed_ast }
+  | RecordExtend of { ty : ty; value : typed_ast * typed_ast field list }
   | Record of { ty : ty; fields : typed_ast field list }
   | RecordAcces of (typed_ast, string) projection
   | Constructor of { ty : ty; name : string; value : typed_ast }
@@ -77,6 +78,7 @@ let rec type_of expr =
   | RecordAcces a -> a.ty
   | Constructor c -> c.ty
   | Match m -> m.ty
+  | RecordExtend r -> r.ty
 
 let rec pattern_to_string pattern =
   match pattern with
@@ -124,9 +126,15 @@ let rec ast_to_string ast =
       "{ "
       ^ (fields
         |> List.map (function { name; value } ->
-               name ^ ": " ^ ast_to_string value)
+               name ^ " = " ^ ast_to_string value)
         |> String.concat " , ")
       ^ " }"
+  | RecordExtend { value = expr, row; _ } ->
+      "{" ^ ast_to_string expr ^ " with "
+      ^ (row
+        |> List.map (fun { name; value } -> name ^ " = " ^ ast_to_string value)
+        |> String.concat "; ")
+      ^ "}"
   | RecordAcces { value; projector; _ } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value; _ } -> name ^ " " ^ ast_to_string value
   | Match { expr; cases; _ } ->
@@ -144,4 +152,4 @@ let top_level_to_string exp =
   | PrintString s -> s
 
 let print_program program =
-  String.concat "" (List.map top_level_to_string program)
+  String.concat "\n" (List.map top_level_to_string program)

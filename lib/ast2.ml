@@ -12,6 +12,7 @@ type ast2 =
   | Let of { name : pattern; e1 : ast2; e2 : ast2 }
   | LetRec of { name : string; e1 : ast2; e2 : ast2 }
   | Record of ast2 field list
+  | RecordExtend of ast2 * ast2 field list
   | RecordAcces of (ast2, string) projection
   | Constructor of { name : string; value : ast2 }
   | Match of { expr : ast2; cases : (pattern, ast2) case list }
@@ -65,6 +66,12 @@ let rec ast_to_ast2 (ast : ast) =
         (List.map
            (function { name; value } -> { name; value = ast_to_ast2 value })
            record)
+  | RecordExtend (base, record) ->
+      RecordExtend
+        ( ast_to_ast2 base,
+          List.map
+            (function { name; value } -> { name; value = ast_to_ast2 value })
+            record )
   | Constructor { name; value } ->
       Constructor { name; value = ast_to_ast2 value }
   | Ascribe (expr, ty) -> Ascribe (ast_to_ast2 expr, ty)
@@ -115,6 +122,12 @@ let rec ast_to_string ast =
                name ^ ": " ^ ast_to_string value)
         |> String.concat " , ")
       ^ " }"
+  | RecordExtend (expr, row) ->
+      "{" ^ ast_to_string expr ^ " with "
+      ^ (row
+        |> List.map (fun { name; value } -> name ^ " = " ^ ast_to_string value)
+        |> String.concat "; ")
+      ^ "}"
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value
   | Match { expr; cases } ->

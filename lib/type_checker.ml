@@ -147,7 +147,7 @@ end = struct
                  }),
             ty ) )
         ++ generate_constraints_pattern value
-   
+
   let rec generate_constraints expr =
     match expr with
     | Int _ | Float _ | String _ | Unit _ | Ident _ -> return []
@@ -197,6 +197,28 @@ end = struct
                   tys >>= fun tys' ->
                   ty <$> fun ty' -> List.append ty' tys')
                 (return []))
+    | RecordExtend { value = base, fields; ty } ->
+        return
+          ( ty,
+            TRecord
+              (List.fold_left
+                 (fun row (field : typed_ast field) ->
+                   TRowExtension
+                     {
+                       label = field.name;
+                       field = type_of field.value;
+                       row_extension = row;
+                     })
+                 (type_of base) fields) )
+        ++ (fields
+           |> List.map (fun (field : typed_ast field) -> field.value)
+           |> List.map generate_constraints
+           |> List.fold_left
+                (fun tys ty ->
+                  tys >>= fun tys' ->
+                  ty <$> fun ty' -> List.append ty' tys')
+                (return []))
+        @ generate_constraints base
     | RecordAcces { value; ty; projector } ->
         ( new_meta <$> fun rest_row ->
           ( TRecord
@@ -215,7 +237,7 @@ end = struct
                  }),
             ty ) )
         ++ generate_constraints value
-      | Match { cases; ty; expr } ->
+    | Match { cases; ty; expr } ->
         List.fold_left
           (fun cs { pattern; result } ->
             let pattern_ty = type_of_pattern pattern in
@@ -314,6 +336,17 @@ let rec substitute substitutions expr =
         }
   | RecordAcces { projector; value; _ } ->
       RecordAcces { projector; value = substitute value; ty }
+  | RecordExtend { value = base, fields; _ } ->
+      RecordExtend
+        {
+          value =
+            ( substitute base,
+              List.map
+                (fun field ->
+                  { name = field.name; value = substitute field.value })
+                fields );
+          ty;
+        }
   | Record { fields; _ } ->
       Record
         {
@@ -616,6 +649,15 @@ let rec typify expr =
           tuple <$> fun tuple' -> { value = expr'; name = expr.name } :: tuple')
         (return []) record
       <$> fun fields -> Record { fields; ty }
+  | Ast2.RecordExtend (base, record) ->
+      typify base >>= fun base' ->
+      new_meta >>= fun ty ->
+      List.fold_left
+        (fun tuple (expr : Ast2.ast2 Ast.field) ->
+          typify expr.value >>= fun expr' ->
+          tuple <$> fun tuple' -> { value = expr'; name = expr.name } :: tuple')
+        (return []) record
+      <$> fun fields -> RecordExtend { value = (base', fields); ty }
   | Ast2.Constructor { name; value } ->
       new_meta >>= fun ty ->
       typify value <$> fun value -> Constructor { name; value; ty }

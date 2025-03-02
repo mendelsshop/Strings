@@ -145,18 +145,22 @@ let record p identifier_short_hand assign =
     | Some f -> field <|> (identifier <$> fun field -> (field, f field))
     | None -> field
   in
-  between (junk << char '{') (junk << char '}') (sepby field (junk << char ';'))
+  between
+    (junk << char '{')
+    (junk << char '}')
+    (seq (p >> string "with" |> opt) (sepby field (junk << char ';')))
   <?> "record"
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
 let constructor p zero = seq variant_identifier (p <|> zero) <?> "constructor"
 
 let rec typeP =
-  let list_to_row =
-    Fun.flip
-      (List.fold_right (fun (name, ty) row ->
-           TRowExtension { label = name; field = ty; row_extension = row }))
-      TEmptyRow
+  let list_to_row ~k ~base list =
+    (List.fold_right (fun (name, ty) row ->
+         TRowExtension { label = name; field = ty; row_extension = row }))
+      list
+      (Option.value ~default:TEmptyRow base)
+    |> k
   in
 
   Parser
@@ -173,7 +177,8 @@ let rec typeP =
                 junk << string "string" <$> Fun.const TString;
                 junk << string "bool" <$> Fun.const TBool;
                 record typeP None ':'
-                <$> ((fun row -> TRecord row) & list_to_row)
+                <$> (fun (base, row) ->
+                list_to_row ~base ~k:(fun row -> Types.TRecord row) row)
                 <?> "record";
               ]
           in
@@ -181,7 +186,7 @@ let rec typeP =
             many1
               (seq variant_identifier
                  (opt basic_type <$> Option.value ~default:TUnit))
-            <$> ((fun row -> TVariant row) & list_to_row)
+            <$> list_to_row ~k:(fun row -> TVariant row) ~base:None
           in
           let functionP =
             variant <|> basic_type >>= fun first ->
@@ -198,6 +203,20 @@ let rec typeP =
 let ascription p = seq p (junk << char ':' << typeP)
 
 let rec pattern =
+  let record p identifier_short_hand assign =
+    let field = seq identifier (junk << char assign << p) in
+    let field =
+      match identifier_short_hand with
+      | Some f -> field <|> (identifier <$> fun field -> (field, f field))
+      | None -> field
+    in
+    between
+      (junk << char '{')
+      (junk << char '}')
+      (sepby field (junk << char ';'))
+    <?> "record"
+  in
+
   (* TODO: what is ascription's precedence *)
   Parser
     {
@@ -259,8 +278,12 @@ let rec expr is_end =
                   identifier <$> (fun i -> Ast.Ident i) >> last_quote is_end;
                   unit <$> Fun.const Unit >> last_quote is_end;
                   record (expr false) (Some (fun i -> Ident i)) '='
-                  <$> List.map (fun (name, value) -> { name; value })
-                  <$> (fun r -> Record r)
+                  <$> (fun (base, rows) ->
+                  (fun rows ->
+                    Option.fold
+                      ~some:(fun base -> Ast.RecordExtend (base, rows))
+                      ~none:(Ast.Record rows) base)
+                    (List.map (fun (name, value) -> { name; value }) rows))
                   >> last_quote is_end;
                 ]
             in

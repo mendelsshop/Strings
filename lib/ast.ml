@@ -22,6 +22,7 @@ type ast =
   | Int of int
   (* tuples and record can be made into one form *)
   | Record of ast field list
+  | RecordExtend of ast * ast field list
   | RecordAcces of (ast, string) projection
   | Constructor of { name : string; value : ast }
   | String of string
@@ -93,6 +94,12 @@ let rec ast_to_string ast =
                name ^ " = " ^ ast_to_string value)
         |> String.concat "; ")
       ^ " }"
+  | RecordExtend (expr, row) ->
+      "{" ^ ast_to_string expr ^ " with "
+      ^ (row
+        |> List.map (fun { name; value } -> name ^ " = " ^ ast_to_string value)
+        |> String.concat "; ")
+      ^ "}"
   | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
   | Constructor { name; value } -> name ^ " " ^ ast_to_string value
   | Match { expr; cases } ->
