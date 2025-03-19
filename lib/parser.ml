@@ -144,11 +144,13 @@ let record expr =
 
 let let_parser expr =
   string "let" >>= fun _ ->
+  opt !(string "rec") >>= fun _rec ->
   !pattern >>= fun ident ->
   !(char '=') >>= fun _ ->
   expr >>= fun e1 ->
   !(string "in") >>= fun _ ->
-  expr <$> fun e2 -> Let (ident, e1, e2)
+  expr <$> fun e2 ->
+  if Option.is_some _rec then LetRec (ident, e1, e2) else Let (ident, e1, e2)
 
 let record_acces_parser expr =
   expr >>= fun record ->
@@ -202,9 +204,11 @@ let expr =
 
 let let_parser =
   string "let" >>= fun _ ->
+  opt !(string "rec") >>= fun _rec ->
   !pattern >>= fun ident ->
   !(char '=') >>= fun _ ->
-  expr >>= fun e1 -> Bind (ident, e1) |> return
+  expr <$> fun e1 ->
+  if Option.is_some _rec then RecBind (ident, e1) else Bind (ident, e1)
 
 let top_level = expr <$> (fun e -> Expr e) <|> !let_parser
 

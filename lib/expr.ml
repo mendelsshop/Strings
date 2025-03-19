@@ -19,7 +19,8 @@ module Types = struct
     function
     | TInt -> "number"
     | TBool -> "boolean"
-    | TArrow (t1, t2) -> type_to_string t1 ^ " -> " ^ type_to_string t2
+    | TArrow (t1, t2) ->
+        "(" ^ type_to_string t1 ^ " -> " ^ type_to_string t2 ^ ")"
     | TMeta m -> m
     | TTuple (t1, t2) ->
         "( " ^ type_to_string t1 ^ " * " ^ type_to_string t2 ^ " )"
@@ -38,7 +39,6 @@ module Types = struct
     | TMeta m -> Some m
     | TRowEmpty -> None
     | TRowExtend (_, _, r) -> row_tail r
-    | TRecord r -> row_tail r
     | _ -> None
 end
 
@@ -164,6 +164,7 @@ type expr =
   | Number of float
   | If of expr * expr * expr
   | Let of pattern * expr * expr
+  | LetRec of pattern * expr * expr
   | Lambda of pattern * expr
   | Application of expr * expr
   | Tuple of expr * expr
@@ -194,6 +195,10 @@ let rec expr_to_string indent =
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ expr_to_string next_level e2
       ^ " )"
+  | LetRec (var, e1, e2) ->
+      "let rec " ^ pattern_to_string var ^ " = ( " ^ expr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ expr_to_string next_level e2
   | Lambda (var, abs) ->
       "\\" ^ pattern_to_string var ^ ".( " ^ expr_to_string indent abs ^ " )"
   | Application (abs, arg) ->
@@ -233,6 +238,7 @@ type texpr =
   | TIf of texpr * texpr * texpr * ty
     (*TODO: maybe store any metavariables this type captures*)
   | TLet of tpattern * texpr * texpr * ty
+  | TLetRec of tpattern * texpr * texpr * ty
   | TLambda of tpattern * texpr * ty
   | TApplication of texpr * texpr * ty
   | TPoly of MetaVariables.t * texpr
@@ -250,6 +256,7 @@ let rec type_of expr =
   | TNumber (_, ty)
   | TIf (_, _, _, ty)
   | TLet (_, _, _, ty)
+  | TLetRec (_, _, _, ty)
   | TLambda (_, _, ty)
   | TRecordAcces (_, _, ty)
   | TApplication (_, _, ty)
@@ -278,6 +285,11 @@ let rec texpr_to_string indent =
       ^ " )"
   | TLet (var, e1, e2, _) ->
       "let " ^ tpattern_to_string var ^ " = ( " ^ texpr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ texpr_to_string next_level e2
+      ^ " )"
+  | TLetRec (var, e1, e2, _) ->
+      "let rec " ^ tpattern_to_string var ^ " = ( " ^ texpr_to_string indent e1
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ texpr_to_string next_level e2
       ^ " )"
@@ -323,14 +335,18 @@ let rec texpr_to_string indent =
 
 let texpr_to_string = texpr_to_string 0
 
-type ('e, 'p) programF = Bind of 'p * 'e | Expr of 'e
+type ('e, 'p) programF = Bind of 'p * 'e | Expr of 'e | RecBind of 'p * 'e
 
 let program_to_string = function
   | Bind (name, expr) -> pattern_to_string name ^ " = " ^ expr_to_string expr
+  | RecBind (name, expr) ->
+      "rec" ^ pattern_to_string name ^ " = " ^ expr_to_string expr
   | Expr expr -> expr_to_string expr
 
 let tprogram_to_string = function
   | Bind (name, expr) -> tpattern_to_string name ^ " = " ^ texpr_to_string expr
+  | RecBind (name, expr) ->
+      "rec" ^ tpattern_to_string name ^ " = " ^ texpr_to_string expr
   | Expr expr -> texpr_to_string expr
 
 type program = (expr, pattern) programF

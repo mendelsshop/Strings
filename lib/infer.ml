@@ -46,9 +46,7 @@ let rec infer_pattern = function
       let ty' = TVariant (TRowExtend (name, ty, other_variants)) in
       (env, ty', PTConstructor (name, pattern', ty')) |> return
   | PRecord row ->
-      let* row_init =
-        return ([], TRowEmpty, [])
-      in
+      let* row_init = return ([], TRowEmpty, []) in
       let* env, pattern_ty, pattern =
         List.fold_right
           ~f:(fun (label, pattern) result ->
@@ -113,6 +111,35 @@ let infer_expr expr =
               ~none:(TLet (var', e1', e2', e2_ty))
               ~some:(fun metas ->
                 TLet (PTPoly (metas, var'), TPoly (metas, e1'), e2', e2_ty)) )
+    | LetRec (var, e1, e2) ->
+        let* env, var_ty, var' = infer_pattern var in
+        let* cs, e1_ty, e1' = in_env env (infer_inner e1) in
+        let cs' = (var_ty, e1_ty) :: cs in
+        let* subs = cs' |> solver in
+        subs |> Subst.to_list
+        |> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)
+        |> String.concat ", " |> print_endline;
+        let e1' = SubstitableExpr.apply subs e1' in
+        let var' = SubstitablePattern.apply subs var' in
+        let env' =
+          Stdlib.List.map
+            (fun (x, ty) -> (x, SubstitableType.apply subs ty))
+            env
+        in
+        let* env'', metas = generalize env' in
+        (*env''*)
+        (*|> Stdlib.List.map (fun (meta, ty) -> meta ^ ": " ^ type_to_string ty)*)
+        (*      |> String.concat "; " |> print_endline;*)
+        let* cs'', e2_ty, e2' = in_env env'' (infer_inner e2) in
+        (*TODO: maybe: be more specific about where we put our (P)TPolys so the annotations of type schemes are more targeted*)
+        return
+          ( cs' @ cs'',
+            e2_ty,
+            Option.fold metas
+              ~none:(TLetRec (var', e1', e2', e2_ty))
+              ~some:(fun metas ->
+                TLetRec (PTPoly (metas, var'), TPoly (metas, e1'), e2', e2_ty))
+          )
     | Lambda (var, abs) ->
         let* env, var_ty, var' = infer_pattern var in
         let* cs, abs_ty, abs' = in_env env (infer_inner abs) in
@@ -173,7 +200,6 @@ let infer_expr expr =
               return (cs'', cases @ [ (pat', case') ]))
             ~init:(cs, [])
         in
-        print_constraints cs';
         (cs', ret, TMatch (expr', cases', ret)) |> return
     | RecordExtend (record, row) ->
         let* cs, record_ty, record' = infer_inner record in
@@ -196,15 +222,38 @@ let infer_expr expr =
           TRecordExtend (record', row', row_ty) )
         |> return
   in
-  let* cs, _ty, expr' = infer_inner expr in
+  let* cs, ty, expr' = infer_inner expr in
   let* subs = solver cs in
   let expr'' = SubstitableExpr.apply subs expr' in
-  (expr'', type_of expr'') |> return
+  let ty' = SubstitableType.apply subs ty in
+  (expr'', ty') |> return
 
 let rec infer :
     R.env -> ST.env -> program list -> (tprogram list * R.env, string) result =
  fun env letters -> function
   | [] -> Result.ok ([], env)
+  | RecBind (name, expr) :: tls ->
+      let infer_generalize =
+        let* env, var_ty, var' = infer_pattern name in
+        let* (expr' : texpr), (expr_ty : ty) = in_env env (infer_expr expr) in
+        print_endline (texpr_to_string expr');
+        let* subs = solver [ (expr_ty, var_ty) ] in
+        let env' = SubstitableTypeEnv.apply subs env in
+        let name'' = SubstitablePattern.apply subs var' in
+        let expr' = SubstitableExpr.apply subs expr' in
+        let* env'', metas = generalize env' in
+
+        Option.fold metas
+          ~some:(fun metas ->
+            (RecBind (PTPoly (metas, name''), TPoly (metas, expr')), env''))
+          ~none:(RecBind (name'', expr'), env'')
+        |> return
+      in
+      let expr', letters' = run infer_generalize env letters in
+      Result.bind expr' (fun (expr'', env'') ->
+          infer (env'' @ env) letters' tls
+          |> Result.map (fun (program, letters') ->
+                 (expr'' :: program, letters')))
   | Bind (name, expr) :: tls ->
       let infer_generalize =
         let* (expr' : texpr), (expr_ty : ty) = infer_expr expr in
@@ -212,6 +261,7 @@ let rec infer :
         let* subs = solver [ (var_ty, expr_ty) ] in
         let env' = SubstitableTypeEnv.apply subs env in
         let name'' = SubstitablePattern.apply subs var' in
+        let expr' = SubstitableExpr.apply subs expr' in
         let* env'', metas = generalize env' in
 
         Option.fold metas

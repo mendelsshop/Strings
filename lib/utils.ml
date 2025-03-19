@@ -123,6 +123,12 @@ module SubstitableExpr : Substitable with type t = texpr = struct
             apply subs e1,
             apply subs e2,
             SubstitableType.apply subs ty )
+    | TLetRec (var, e1, e2, ty) ->
+        TLetRec
+          ( SubstitablePattern.apply subs var,
+            apply subs e1,
+            apply subs e2,
+            SubstitableType.apply subs ty )
     | TLambda (var, abs, ty) ->
         TLambda
           ( SubstitablePattern.apply subs var,
@@ -189,8 +195,7 @@ let instantiate : ty -> ty ResultReader.t = function
 
 let rec unify t1 t2 =
   let open Types in
-  let rec rewrite_row new_label  =
-    function
+  let rec rewrite_row new_label = function
     | TRowEmpty -> "Cannot add label `" ^ new_label ^ "` to row." |> fail
     | TRowExtend (label, field_ty, row_tail) when new_label = label ->
         return (field_ty, row_tail, Subst.empty)
@@ -203,7 +208,7 @@ let rec unify t1 t2 =
         |> return
     | TRowExtend (label, field_ty, row_tail) ->
         let* field_ty', row_tail', subs = rewrite_row new_label row_tail in
-      if row_tail = row_tail' then print_endline "same";
+        if row_tail = row_tail' then print_endline "same";
         return (field_ty', TRowExtend (label, field_ty, row_tail'), subs)
     | ty ->
         type_to_string ty
@@ -211,7 +216,7 @@ let rec unify t1 t2 =
         ^ "`."
         |> fail
   in
-   (type_to_string t1 ) ^ " ~= " ^ (type_to_string t2) |>print_endline;
+  type_to_string t1 ^ " ~= " ^ type_to_string t2 |> print_endline;
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
   | TMeta t, ty | ty, TMeta t ->
@@ -262,7 +267,8 @@ let rec unify t1 t2 =
         in
         compose subs subs' |> return
   | _ ->
-      "Unification error " ^ type_to_string t1 ^ ", " ^ type_to_string t2 ^ "."
+      "Unification error " ^ type_to_string t1 ^ " and " ^ type_to_string t2
+      ^ "."
       |> fail
 
 let generalize ty =
