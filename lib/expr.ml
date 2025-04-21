@@ -14,6 +14,7 @@ module Types = struct
     | TRecord of ty
     | TVariant of ty
     | TPoly of MetaVariables.t * ty
+            | TMu of string * ty
 
   let rec type_to_string ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") =
     function
@@ -34,6 +35,7 @@ module Types = struct
         ^ type_to_string row_extension ~type_delim ~delim ~unit
     | TRowEmpty -> unit
     | TVariant row -> type_to_string row ~unit:"" ~delim:"| " ~type_delim:" "
+        | TMu (var, ty) -> "μ" ^ var ^ "."  ^ type_to_string ty
 
   let rec row_tail = function
     | TMeta m -> Some m
