@@ -31,6 +31,10 @@ module SubstitableType : Substitable with type t = ty = struct
         (*TODO: foldr*)
         let subst' = MetaVariables.fold Subst.remove metas subst in
         TPoly (metas, apply subst' ty)
+    | TMu (meta, ty) ->
+        (*TODO: foldr*)
+        let subst' = Subst.remove meta subst in
+        TMu (meta, apply subst' ty)
     | TRowEmpty -> TRowEmpty
     | TRecord row -> TRecord (apply subst row)
     | TVariant row -> TVariant (apply subst row)
@@ -46,6 +50,9 @@ module SubstitableType : Substitable with type t = ty = struct
     | TArrow (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
     | TTuple (t1, t2) -> MetaVariables.union (ftv t1) (ftv t2)
     | TPoly (metas, ty) -> MetaVariables.diff (ftv ty) metas
+    | TMu (meta, ty) ->
+        (* TODO: just remove meta from ftv of ty *)
+        MetaVariables.diff (ftv ty) (MetaVariables.singleton meta)
 end
 
 module SubstitableConstraint : Substitable with type t = ty * ty = struct
@@ -175,11 +182,26 @@ let new_meta =
   let* letter, letters' =
     Stdlib.Option.fold
       ~none:(fail "Ran out of fresh type variables.")
-      ~some:(fun (letter, letters') -> (TMeta letter, letters') |> return)
+      ~some:(fun (letter, letters') -> (letter, letters') |> return)
       (Stdlib.Seq.uncons letters)
   in
   let* _ = ST.put letters' |> R.lift |> lift in
   return letter
+
+let muify v ty =
+  let* v' = new_meta in
+  let rec inner = function
+    | TMeta n when v = n -> TMeta v'
+    | TTuple (l, r) -> TTuple (inner l, inner r)
+    | TArrow (l, r) -> TArrow (inner l, inner r)
+    | TRecord ty -> TRecord (inner ty)
+    | TVariant ty -> TVariant (inner ty)
+    | TRowExtend (v, ty, rest) -> TRowExtend (v, inner ty, inner rest)
+    | ty -> ty
+  in
+  return (TMu (v', inner ty))
+
+let new_meta = map new_meta ~f:(fun t -> TMeta t)
 
 let instantiate : ty -> ty ResultReader.t = function
   | TPoly (metas, ty) ->
@@ -220,11 +242,14 @@ let rec unify t1 t2 =
   match (t1, t2) with
   | _, _ when t1 = t2 -> return Subst.empty
   | TMeta t, ty | ty, TMeta t ->
+      (* TODO: make sure its only muing types that are for record/variants *)
       if occurs_check t ty then
-        "Occurs check fails, for type " ^ t ^ " in type " ^ type_to_string ty
-        ^ "."
-        |> fail
-      else Subst.singleton t ty |> return
+        let* mu = muify t ty in
+        Subst.singleton t mu |> return
+      (* "Occurs check fails, for type " ^ t ^ " in type " ^ type_to_string ty *)
+      (* ^ "." *)
+      (* |> fail *)
+        else Subst.singleton t ty |> return
   | TArrow (t1, t2), TArrow (t1', t2') ->
       let* subs = unify t1 t1' in
       let* subs' =
@@ -252,6 +277,7 @@ let rec unify t1 t2 =
         row_tail row_tail1
         |> Option.fold ~none:false ~some:(fun tv -> Subst.mem tv subs)
       then
+        (* TODO: mu type here? *)
         fail ("recursive row " ^ type_to_string t1 ^ " and " ^ type_to_string t2)
       else
         let* subs' =
