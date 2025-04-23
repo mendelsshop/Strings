@@ -14,12 +14,15 @@ type subst = ty Subst.t
 module type Substitable = sig
   type t
 
+  val to_string : t -> string
   val apply : subst -> t -> t
   val ftv : t -> MetaVariables.t
 end
 
 module SubstitableType : Substitable with type t = ty = struct
   type t = ty
+
+  let to_string : ty -> string = type_to_string
 
   let rec apply subst = function
     | (TBool | TInt) as ty -> ty
@@ -58,6 +61,8 @@ end
 module SubstitableConstraint : Substitable with type t = ty * ty = struct
   type t = ty * ty
 
+  let to_string (ty, ty') = type_to_string ty ^ "~=" ^ type_to_string ty'
+
   let apply subs (t1, t2) =
     (SubstitableType.apply subs t1, SubstitableType.apply subs t2)
 
@@ -69,7 +74,8 @@ module SubstitableA (S : Substitable) : Substitable with type t = S.t list =
 struct
   type t = S.t list
 
-  let apply = Stdlib.List.map << S.apply
+  let to_string l = l |> Stdlib.List.map S.to_string |> String.concat ", "
+  let apply subs s = Stdlib.List.map (fun x -> S.apply subs x) s
 
   let ftv this =
     Stdlib.List.fold_right
@@ -81,6 +87,11 @@ module SubstitableTypeEnv : Substitable with type t = (string * ty) list =
 struct
   type t = (string * ty) list
 
+  let to_string l =
+    l
+    |> Stdlib.List.map (fun (b, s) -> b ^ ": " ^ SubstitableType.to_string s)
+    |> String.concat ", "
+
   module SubstitableTypes = SubstitableA (SubstitableType)
 
   let apply s env =
@@ -91,6 +102,8 @@ end
 
 module SubstitablePattern : Substitable with type t = tpattern = struct
   type t = tpattern
+
+  let to_string = tpattern_to_string
 
   let rec apply subs = function
     | PTVar (var, ty) -> PTVar (var, SubstitableType.apply subs ty)
@@ -113,6 +126,8 @@ end
 
 module SubstitableExpr : Substitable with type t = texpr = struct
   type t = texpr
+
+  let to_string = texpr_to_string
 
   (*apply is rescursive so that all types are filled in in all sub expressions*)
   let rec apply subs = function
@@ -267,12 +282,12 @@ let rec unify t1 t2 =
   (*TODO: can we be a bit more general about what row2 is?*)
   | TRowExtend (label1, field_ty1, row_tail1), (TRowExtend _ as row_tail2) ->
       let* field_ty2, row_tail2, subs = rewrite_row label1 row_tail2 in
-      row_tail row_tail1 |> Option.value ~default:"bll" |> print_endline;
-      "subs "
-      ^ (subs |> Subst.to_list
-        |> Stdlib.List.map (fun (name, ty) -> name ^ " = " ^ type_to_string ty)
-        |> String.concat ", ")
-      |> print_endline;
+      (* row_tail row_tail1 |> Option.value ~default:"bll" |> print_endline; *)
+      (* "subs " *)
+      (* ^ (subs |> Subst.to_list *)
+      (*   |> Stdlib.List.map (fun (name, ty) -> name ^ " = " ^ type_to_string ty) *)
+      (*   |> String.concat ", ") *)
+      (* |> print_endline; *)
       if
         row_tail row_tail1
         |> Option.fold ~none:false ~some:(fun tv -> Subst.mem tv subs)
