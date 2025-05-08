@@ -1,6 +1,11 @@
 type term = TVar of string | TLambda of string * term | TApp of term * term
 type ty = TyVar of string | TyUnit | TyArrow of ty * ty
 
+let rec type_to_string = function
+  | TyVar x -> x
+  | TyUnit -> "()"
+  | TyArrow (x, y) -> type_to_string x ^ " -> " ^ type_to_string y
+
 module Variables = Set.Make (String)
 
 (* maybe look at wand algorithim for stlc *)
@@ -20,6 +25,18 @@ type co_u =
   | UAnd of co_u * co_u
   | UExist of Variables.t * co_u
 
+let rec u_constraint_to_string = function
+  | UTrue -> "true"
+  | UFalse -> "false"
+  | UMulti ts -> ts |> List.map type_to_string |> String.concat " = "
+  | UAnd (c1, c2) ->
+      "and (" ^ u_constraint_to_string c1 ^ ") (" ^ u_constraint_to_string c2
+      ^ ")"
+  | UExist (x, c) ->
+      "∃"
+      ^ (x |> Variables.to_list |> String.concat ",")
+      ^ ".(" ^ u_constraint_to_string c
+
 let counter = ref 0
 
 let gensym () =
@@ -31,6 +48,11 @@ let uexist c =
   let a = gensym () in
   UExist (Variables.singleton a, c a)
 
+let uexist2 c =
+  let a = gensym () in
+  let a' = gensym () in
+  UExist (Variables.of_list [ a; a' ], c a a')
+
 let exist c =
   let a = gensym () in
   CExist (Variables.singleton a, c a)
@@ -39,6 +61,19 @@ let exist2 c =
   let a = gensym () in
   let a' = gensym () in
   CExist (Variables.of_list [ a; a' ], c a a')
+
+let rec ugenerate_constraints ty env = function
+  | TVar t -> UMulti [ List.assoc t env; ty ]
+  | TLambda (x, t) ->
+      uexist2 (fun a1 a2 ->
+          UAnd
+            ( ugenerate_constraints (TyVar a2) ((x, TyVar a1) :: env) t,
+              UMulti [ TyArrow (TyVar a1, TyVar a2); ty ] ))
+  | TApp (f, x) ->
+      uexist (fun a1 ->
+          UAnd
+            ( ugenerate_constraints (TyArrow (TyVar a1, ty)) env f,
+              ugenerate_constraints (TyVar a1) env x ))
 
 let rec generate_constraints ty = function
   | TVar t -> CEq (TyVar t, ty)
@@ -92,10 +127,14 @@ let rec unfiy = function
     when let ftv = uconstraint_ftv c2 in
          Variables.equal (Variables.diff ftv x) ftv ->
       UExist (x, UAnd (c1, c2)) |> unfiy
-  (* | UAnd (UMulti e, UMulti e') as c -> fusion (top_level_ty_vars e') e' c e |> unfiy *)
+  | UAnd (c2, UExist (x, c1))
+    when let ftv = uconstraint_ftv c2 in
+         Variables.equal (Variables.diff ftv x) ftv ->
+      UExist (x, UAnd (c1, c2)) |> unfiy
   (* TODO: i am assuming right now for multi equtions that order does matter but it probably doesn't *)
-  | UAnd (UMulti (TyVar x :: e), UMulti (TyVar x' :: e')) when x = x' ->
-      UMulti ((TyVar x :: e) @ e') |> unfiy
+  | UAnd (UMulti e, UMulti e') as c when not (Variables.disjoint (top_level_ty_vars  e' |> Variables.of_list) (top_level_ty_vars  e |> Variables.of_list))  -> fusion (top_level_ty_vars e') e' c e |> unfiy
+  (* | UAnd (UMulti (TyVar x :: e), UMulti (TyVar x' :: e')) when x = x' -> *)
+  (*     UMulti ((TyVar x :: e) @ e') |> unfiy *)
   | UMulti (TyArrow (TyVar a, TyVar b) :: TyArrow (a', b') :: e) ->
       UAnd
         ( UMulti [ TyVar a; a' ],
@@ -105,7 +144,16 @@ let rec unfiy = function
       uexist (fun a' ->
           UAnd (UMulti [ TyVar a'; a ], UMulti (TyArrow (TyVar a', b) :: e)))
       |> unfiy
-  | UAnd (c, UTrue) -> c |> unfiy
+  | UAnd (c, UTrue) | UAnd (UTrue, c) -> c |> unfiy
+  | UExist (x, UExist (x', c)) -> UExist (Variables.union x x', c) |> unfiy
+  (* recurse rules *)
+  | UExist (x, c) ->
+      let c' = unfiy c in
+      UExist (x, c') |> if c = c' then Fun.id else unfiy
+  | UAnd (c1, c2) ->
+      let c1' = unfiy c1 in
+      let c2' = unfiy c2 in
+      UAnd (c1', c2') |> if c1 = c1' && c2 = c2' then Fun.id else unfiy
   | UMulti [ _ ] -> UTrue
   (* TODO: maybe occurs check *)
   | UFalse -> UFalse
