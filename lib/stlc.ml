@@ -1,5 +1,10 @@
-type term = TVar of string | TLambda of string * term | TApp of term * term
+type term = Var of string | Lambda of string * term | App of term * term
 type ty = TyVar of string | TyUnit | TyArrow of ty * ty
+
+type typed_term =
+  | TVar of string * ty
+  | TLambda of string * ty * typed_term * ty
+  | TApp of typed_term * typed_term * ty
 
 let rec type_to_string = function
   | TyVar x -> x
@@ -46,12 +51,14 @@ let gensym () =
 
 let uexist c =
   let a = gensym () in
-  UExist (Variables.singleton a, c a)
+  let c, t = c a in
+  (UExist (Variables.singleton a, c), t)
 
 let uexist2 c =
   let a = gensym () in
   let a' = gensym () in
-  UExist (Variables.of_list [ a; a' ], c a a')
+  let c, t = c a a' in
+  (UExist (Variables.of_list [ a; a' ], c), t)
 
 let exist c =
   let a = gensym () in
@@ -63,26 +70,28 @@ let exist2 c =
   CExist (Variables.of_list [ a; a' ], c a a')
 
 let rec ugenerate_constraints ty env = function
-  | TVar t -> UMulti [ List.assoc t env; ty ]
-  | TLambda (x, t) ->
+  | Var t -> (UMulti [ List.assoc t env; ty ], TVar (t, ty))
+  | Lambda (x, t) ->
       uexist2 (fun a1 a2 ->
-          UAnd
-            ( ugenerate_constraints (TyVar a2) ((x, TyVar a1) :: env) t,
-              UMulti [ TyArrow (TyVar a1, TyVar a2); ty ] ))
-  | TApp (f, x) ->
+          let c, t' =
+            ugenerate_constraints (TyVar a2) ((x, TyVar a1) :: env) t
+          in
+          ( UAnd (c, UMulti [ TyArrow (TyVar a1, TyVar a2); ty ]),
+            TLambda (x, TyVar a1, t', ty) ))
+  | App (f, x) ->
       uexist (fun a1 ->
-          UAnd
-            ( ugenerate_constraints (TyArrow (TyVar a1, ty)) env f,
-              ugenerate_constraints (TyVar a1) env x ))
+          let c, f' = ugenerate_constraints (TyArrow (TyVar a1, ty)) env f in
+          let c', x' = ugenerate_constraints (TyVar a1) env x in
+          (UAnd (c, c'), TApp (f', x', ty)))
 
 let rec generate_constraints ty = function
-  | TVar t -> CEq (TyVar t, ty)
-  | TLambda (x, t) ->
+  | Var t -> CEq (TyVar t, ty)
+  | Lambda (x, t) ->
       exist2 (fun a1 a2 ->
           CAnd
             ( CDef (x, TyVar a1, generate_constraints (TyVar a2) t),
               CEq (TyArrow (TyVar a1, TyVar a2), ty) ))
-  | TApp (f, x) ->
+  | App (f, x) ->
       exist (fun a1 ->
           CAnd
             ( generate_constraints (TyArrow (TyVar a1, ty)) f,
@@ -119,6 +128,11 @@ let top_level_ty_vars =
 
 let not_var = function TyVar _ -> false | _ -> true
 
+let uexist c =
+  let a = gensym () in
+  let c = c a in
+  UExist (Variables.singleton a, c)
+
 (* idea is to rewrite untill it looks like substition (i.e. exist at top with bunch of ands of multi equations with first item being type variable bound by exist) aka normalized constraint *)
 (* maybe just do normal unification *)
 (* or at least only have one constraint type  *)
@@ -132,7 +146,12 @@ let rec unfiy = function
          Variables.equal (Variables.diff ftv x) ftv ->
       UExist (x, UAnd (c1, c2)) |> unfiy
   (* TODO: i am assuming right now for multi equtions that order does matter but it probably doesn't *)
-  | UAnd (UMulti e, UMulti e') as c when not (Variables.disjoint (top_level_ty_vars  e' |> Variables.of_list) (top_level_ty_vars  e |> Variables.of_list))  -> fusion (top_level_ty_vars e') e' c e |> unfiy
+  | UAnd (UMulti e, UMulti e') as c
+    when not
+           (Variables.disjoint
+              (top_level_ty_vars e' |> Variables.of_list)
+              (top_level_ty_vars e |> Variables.of_list)) ->
+      fusion (top_level_ty_vars e') e' c e |> unfiy
   (* | UAnd (UMulti (TyVar x :: e), UMulti (TyVar x' :: e')) when x = x' -> *)
   (*     UMulti ((TyVar x :: e) @ e') |> unfiy *)
   | UMulti (TyArrow (TyVar a, TyVar b) :: TyArrow (a', b') :: e) ->
