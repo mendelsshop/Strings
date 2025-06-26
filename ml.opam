@@ -13,7 +13,7 @@ depends: [
   "ocaml"
   "dune" {>= "3.12"}
   "monads"
-  "ACMPL"
+  "AMPCL"
   "odoc" {with-doc}
 ]
 build: [
