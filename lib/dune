@@ -1,4 +1,3 @@
-(library
- (name ml)
- (modules Parser Expr Infer Monad Utils Stlc Stlc2)
- (libraries monads AMPCL))
+library (name ml)
+  (modules Parser Expr Infer Monad Utils Stlc Stlc2)
+  (libraries monads AMPCL)
