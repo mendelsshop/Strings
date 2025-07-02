@@ -37,10 +37,19 @@ let rec tterm_to_string = function
       "(let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ tterm_to_string e1
       ^ " in " ^ tterm_to_string e2 ^ ": " ^ type_to_string ty ^ ")"
 
-type co = CEq of ty * ty
+(* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
+(* intend the onstraint solver to choose some appropriate value for them" *)
+type co =
+  | CEq of ty * ty
+  | CInstance of string * ty
+  | CLet of string * scheme * co list
+
+and scheme = ForAll of string list * co list * ty
 
 let constraint_to_string = function
   | CEq (t1, t2) -> type_to_string t1 ^ "~= " ^ type_to_string t2
+  | CInstance _ -> failwith ""
+  | CLet _ -> failwith ""
 
 let constraints_to_string ts =
   "[\n" ^ (ts |> List.map constraint_to_string |> String.concat "\n") ^ "\n]"
@@ -61,20 +70,29 @@ let gensym () =
   incr counter;
   string_of_int counter'
 
-let rec generate_constraints ty env = function
-  | Var t -> ([ CEq (List.assoc t env, ty) ], TVar (t, ty))
+let rec generate_constraints ty = function
+  | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
   | Lambda (x, t) ->
       let a1 = gensym () in
       let a2 = gensym () in
-      let c, t' = generate_constraints (TyVar a2) ((x, TyVar a1) :: env) t in
-      ( CEq (TyArrow (TyVar a1, TyVar a2), ty) :: c,
+      let c, t' = generate_constraints (TyVar a2) t in
+      ( [
+          CEq (TyArrow (TyVar a1, TyVar a2), ty);
+          CLet (x, ForAll ([], [], TyVar a1), c);
+        ],
         TLambda (x, TyVar a1, t', ty) )
   | App (f, x) ->
       let a1 = gensym () in
-      let c, f' = generate_constraints (TyArrow (TyVar a1, ty)) env f in
-      let c', x' = generate_constraints (TyVar a1) env x in
+      let c, f' = generate_constraints (TyArrow (TyVar a1, ty)) f in
+      let c', x' = generate_constraints (TyVar a1) x in
       (c @ c', TApp (f', x', ty))
-  | Let _ -> failwith "let constraint"
+  | Let (v, t1, t2) ->
+      let a1 = gensym () in
+      let c, t1' = generate_constraints (TyVar a1) t1 in
+      let c', t2' = generate_constraints ty t2 in
+      ( [ CLet (v, ForAll ([ a1 ], c, TyVar a1), c') ],
+        (* TODO: maybe a1 has to be in a forall *)
+        TLet (v, TyVar a1, t1', t2', ty) )
 
 let rec apply_subst_ty subst = function
   | TyVar v -> Subst.find_opt v subst |> Option.value ~default:(TyVar v)
@@ -128,8 +146,10 @@ let rec solve_constraints = function
       let subst = solve_constraint cs in
       let constraints' =
         List.map
-          (fun (CEq (x, y)) ->
-            CEq (apply_subst_ty subst x, apply_subst_ty subst y))
+          (function
+            | CEq (x, y) -> CEq (apply_subst_ty subst x, apply_subst_ty subst y)
+            | CInstance _ -> failwith ""
+            | CLet _ -> failwith "")
           constraints
       in
       let subst' = solve_constraints constraints' in
