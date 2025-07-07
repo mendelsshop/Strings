@@ -46,10 +46,16 @@ type co =
 
 and scheme = ForAll of string list * co list * ty
 
-let constraint_to_string = function
+let rec constraint_to_string = function
   | CEq (t1, t2) -> type_to_string t1 ^ "~= " ^ type_to_string t2
-  | CInstance _ -> failwith ""
-  | CLet _ -> failwith ""
+  | CInstance (var, ty) -> var ^ " instanceof " ^ type_to_string ty
+  | CLet (var, ForAll (vars, cos, ty), cos') ->
+      "let " ^ var ^ " :(ForAll " ^ String.concat ", " vars ^ " "
+      ^ constraints_to_string cos ^ "." ^ type_to_string ty ^ ") in"
+      ^ constraints_to_string cos'
+
+and constraints_to_string ts =
+  "[" ^ (ts |> List.map constraint_to_string |> String.concat ", ") ^ "]"
 
 let constraints_to_string ts =
   "[\n" ^ (ts |> List.map constraint_to_string |> String.concat "\n") ^ "\n]"
@@ -131,6 +137,20 @@ let apply_subst_subst subst on_subst = Subst.map (apply_subst_ty subst) on_subst
 let combose_subst subst subst' =
   Subst.union (fun _ a _ -> Some a) (apply_subst_subst subst subst') subst
 
+let rec apply_subst_constraint subst =
+ (function
+ | CEq (x, y) -> CEq (apply_subst_ty subst x, apply_subst_ty subst y)
+ | CInstance (var, ty) -> CInstance (var, apply_subst_ty subst ty)
+ | CLet (var, ForAll (vars, cos, ty), cos') ->
+     let subst' = Subst.filter (fun name _ -> List.mem name vars) subst in
+     CLet
+       ( var,
+         ForAll
+           (vars, apply_subst_constraints subst' cos, apply_subst_ty subst' ty),
+         apply_subst_constraints subst cos' ))
+
+and apply_subst_constraints subst = List.map (apply_subst_constraint subst)
+
 (* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
 let rec solve_constraint env = function
   | CInstance (var, ty) ->
@@ -158,13 +178,6 @@ and solve_constraints env = function
   | [] -> Subst.empty
   | cs :: constraints ->
       let subst = solve_constraint env cs in
-      let constraints' =
-        List.map
-          (function
-            | CEq (x, y) -> CEq (apply_subst_ty subst x, apply_subst_ty subst y)
-            | CInstance _ -> failwith ""
-            | CLet _ -> failwith "")
-          constraints
-      in
+      let constraints' = List.map (apply_subst_constraint subst) constraints in
       let subst' = solve_constraints env constraints' in
       combose_subst subst' subst
