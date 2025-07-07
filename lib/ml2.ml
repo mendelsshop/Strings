@@ -126,24 +126,30 @@ let apply_subst_subst subst on_subst = Subst.map (apply_subst_ty subst) on_subst
 let combose_subst subst subst' =
   Subst.union (fun _ a _ -> Some a) (apply_subst_subst subst subst') subst
 
-let rec solve_constraint = function
+(* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
+let rec solve_constraint env = function
+  | CInstance (var, _ty) ->
+      (* TODO: better handling if not in env *)
+      let (ForAll (_vars, _cos, _ty')) = List.assoc var env in
+      failwith ""
+  | CLet (var, scheme, ty) -> solve_constraints ((var, scheme) :: env) ty
   | CEq (t1, t2) when t1 = t2 -> Subst.empty
   | CEq (TyVar u, t1) | CEq (t1, TyVar u) ->
       if StringSet.mem u (type_ftv t1) then failwith "occurs check"
       else Subst.singleton u t1
   | CEq (TyArrow (tp1, tr1), TyArrow (tp2, tr2)) ->
-      let subst = solve_constraint (CEq (tp1, tp2)) in
+      let subst = solve_constraint env (CEq (tp1, tp2)) in
       let subst' =
-        solve_constraint
+        solve_constraint env
           (CEq (apply_subst_ty subst tr1, apply_subst_ty subst tr2))
       in
       combose_subst subst subst'
   | _ -> failwith "error"
 
-let rec solve_constraints = function
+and solve_constraints env = function
   | [] -> Subst.empty
   | cs :: constraints ->
-      let subst = solve_constraint cs in
+      let subst = solve_constraint env cs in
       let constraints' =
         List.map
           (function
@@ -152,5 +158,5 @@ let rec solve_constraints = function
             | CLet _ -> failwith "")
           constraints
       in
-      let subst' = solve_constraints constraints' in
+      let subst' = solve_constraints env constraints' in
       combose_subst subst' subst
