@@ -94,6 +94,11 @@ let rec generate_constraints ty = function
         (* TODO: maybe a1 has to be in a forall *)
         TLet (v, TyVar a1, t1', t2', ty) )
 
+let rec ftv_ty = function
+  | TyVar v -> StringSet.singleton v
+  | TyArrow (p, r) -> StringSet.union (ftv_ty p) (ftv_ty r)
+  | TyUnit -> StringSet.empty
+
 let rec apply_subst_ty subst = function
   | TyVar v -> Subst.find_opt v subst |> Option.value ~default:(TyVar v)
   | TyArrow (p, r) -> TyArrow (apply_subst_ty subst p, apply_subst_ty subst r)
@@ -128,10 +133,13 @@ let combose_subst subst subst' =
 
 (* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
 let rec solve_constraint env = function
-  | CInstance (var, _ty) ->
+  | CInstance (var, ty) ->
       (* TODO: better handling if not in env *)
-      let (ForAll (_vars, _cos, _ty')) = List.assoc var env in
-      failwith ""
+      let (ForAll (vars, cos, ty')) = List.assoc var env in
+      let ftv = ftv_ty ty in
+      if List.exists (fun var -> StringSet.mem var ftv) vars then
+        failwith "in ftv"
+      else solve_constraints env (CEq (ty, ty') :: cos)
   | CLet (var, scheme, ty) -> solve_constraints ((var, scheme) :: env) ty
   | CEq (t1, t2) when t1 = t2 -> Subst.empty
   | CEq (TyVar u, t1) | CEq (t1, TyVar u) ->
