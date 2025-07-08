@@ -142,7 +142,7 @@ let rec apply_subst_constraint subst =
  | CEq (x, y) -> CEq (apply_subst_ty subst x, apply_subst_ty subst y)
  | CInstance (var, ty) -> CInstance (var, apply_subst_ty subst ty)
  | CLet (var, ForAll (vars, cos, ty), cos') ->
-     let subst' = Subst.filter (fun name _ -> List.mem name vars) subst in
+     let subst' = Subst.filter (fun name _ -> not (List.mem name vars)) subst in
      CLet
        ( var,
          ForAll
