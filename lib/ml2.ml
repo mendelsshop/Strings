@@ -141,17 +141,24 @@ let rec apply_subst_constraint subst =
  (function
  | CEq (x, y) -> CEq (apply_subst_ty subst x, apply_subst_ty subst y)
  | CInstance (var, ty) -> CInstance (var, apply_subst_ty subst ty)
- | CLet (var, ForAll (vars, cos, ty), cos') ->
-     let subst' = Subst.filter (fun name _ -> not (List.mem name vars)) subst in
+ | CLet (var, forall, cos') ->
      CLet
-       ( var,
-         ForAll
-           (vars, apply_subst_constraints subst' cos, apply_subst_ty subst' ty),
-         apply_subst_constraints subst cos' ))
+       (var, apply_subst_scheme forall subst, apply_subst_constraints subst cos'))
 
 and apply_subst_constraints subst = List.map (apply_subst_constraint subst)
 
+and apply_subst_scheme (ForAll (vars, cos, ty)) subst =
+  let subst' = Subst.filter (fun name _ -> not (List.mem name vars)) subst in
+  ForAll (vars, apply_subst_constraints subst' cos, apply_subst_ty subst' ty)
+
+let apply_subst_env l subst =
+  List.map (fun (name, scheme) -> (name, apply_subst_scheme scheme subst)) l
 (* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
+
+(* the way it is now we probably need to substitute into env *)
+(*     b/c of clet *)
+
+(* we might be to many env substions more that needed *)
 let rec solve_constraint env = function
   | CInstance (var, ty) ->
       (* TODO: better handling if not in env *)
@@ -159,25 +166,33 @@ let rec solve_constraint env = function
       let ftv = ftv_ty ty in
       if List.exists (fun var -> StringSet.mem var ftv) vars then
         failwith "in ftv"
-      else solve_constraints env (CEq (ty, ty') :: cos)
+      else solve_constraints env (CEq (ty', ty) :: cos)
   | CLet (var, scheme, ty) -> solve_constraints ((var, scheme) :: env) ty
-  | CEq (t1, t2) when t1 = t2 -> Subst.empty
+  | CEq (t1, t2) when t1 = t2 -> (Subst.empty, env)
   | CEq (TyVar u, t1) | CEq (t1, TyVar u) ->
       if StringSet.mem u (type_ftv t1) then failwith "occurs check"
-      else Subst.singleton u t1
+      else (Subst.singleton u t1, env)
   | CEq (TyArrow (tp1, tr1), TyArrow (tp2, tr2)) ->
-      let subst = solve_constraint env (CEq (tp1, tp2)) in
-      let subst' =
-        solve_constraint env
+      let subst, env' = solve_constraint env (CEq (tp1, tp2)) in
+      let env' = apply_subst_env env' subst in
+      let subst', env'' =
+        solve_constraint env'
           (CEq (apply_subst_ty subst tr1, apply_subst_ty subst tr2))
       in
-      combose_subst subst subst'
+      let env'' = apply_subst_env env'' subst' in
+      (combose_subst subst subst', env'')
   | _ -> failwith "error"
 
 and solve_constraints env = function
-  | [] -> Subst.empty
+  | [] -> (Subst.empty, env)
   | cs :: constraints ->
-      let subst = solve_constraint env cs in
+      print_endline (constraints_to_string (cs :: constraints));
+      let subst, env' = solve_constraint env cs in
+      let env' = apply_subst_env env' subst in
       let constraints' = List.map (apply_subst_constraint subst) constraints in
-      let subst' = solve_constraints env constraints' in
-      combose_subst subst' subst
+      print_endline (subst_to_string subst);
+      if List.is_empty constraints' |> not then
+        print_endline (constraints_to_string constraints');
+      let subst', env'' = solve_constraints env' constraints' in
+      let env'' = apply_subst_env env'' subst' in
+      (combose_subst subst' subst, env'')
