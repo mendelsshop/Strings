@@ -16,8 +16,6 @@ let rec find_set (x : 'a elem) : 'a elem * [< `root of 'a root ] =
       link.parent <- res_ref;
       (res_ref, res)
 
-(* let link x y =  *)
-
 let union x y =
   let x_ref, `root x = find_set x in
   let y_ref, `root y = find_set y in
@@ -25,4 +23,10 @@ let union x y =
   else if x.rank > y.rank then (
     y_ref := `node { parent = x_ref };
     x_ref)
-  else failwith ""
+  else if x.rank < y.rank then (
+    x_ref := `node { parent = y_ref };
+    y_ref)
+  else (
+    x_ref := `node { parent = y_ref };
+    y.rank <- y.rank + 1;
+    y_ref)
