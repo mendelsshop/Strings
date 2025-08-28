@@ -3,6 +3,7 @@ type term =
   | Lambda of string * term
   | App of term * term
   | Let of string * term * term
+  | Unit
 
 type ty = TyVar of string | TyUnit | TyArrow of ty * ty
 
@@ -24,6 +25,7 @@ type typed_term =
   | TLambda of string * ty * typed_term * ty
   | TApp of typed_term * typed_term * ty
   | TLet of string * ty * typed_term * typed_term * ty
+  | TUnit of ty
 
 let rec tterm_to_string = function
   | TVar (v, ty) -> "(" ^ v ^ ": " ^ type_to_string ty ^ ")"
@@ -36,6 +38,7 @@ let rec tterm_to_string = function
   | TLet (v, v_ty, e1, e2, ty) ->
       "(let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ tterm_to_string e1
       ^ " in " ^ tterm_to_string e2 ^ ": " ^ type_to_string ty ^ ")"
+  | TUnit _ -> "()"
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
@@ -81,6 +84,7 @@ let gensym () =
   string_of_int counter'
 
 let rec generate_constraints ty = function
+  | Unit -> ([ CEq (TyUnit, ty) ], TUnit TyUnit)
   | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
   | Lambda (x, t) ->
       let a1 = gensym () in
@@ -120,6 +124,7 @@ let rec apply_subst_ty subst = function
 
 let rec apply_subst_tterm subst = function
   | TVar (v, ty) -> TVar (v, apply_subst_ty subst ty)
+  | TUnit ty -> TUnit (apply_subst_ty subst ty)
   | TLambda (v, v_ty, b, ty) ->
       TLambda
         ( v,
@@ -194,11 +199,7 @@ let rec solve_constraint env cs_env = function
           (* by applying this "substion" we put the ∃X *)
           (* really we should do propery exist and not have to substitute *)
           (apply_subst_constraints instaniate_mapping cos
-          @ [
-              CEq
-                ( apply_subst_ty instaniate_mapping ty',
-                  apply_subst_ty instaniate_mapping ty );
-            ])
+          @ [ CEq (apply_subst_ty instaniate_mapping ty', ty) ])
   | CExist (_vars, cos) ->
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
       solve_constraints env cs_env cos
@@ -221,7 +222,7 @@ let rec solve_constraint env cs_env = function
 and solve_constraints env cs_env = function
   | [] -> (Subst.empty, env)
   | cs :: constraints ->
-      print_endline (constraints_to_string (cs :: constraints));
+      (* print_endline (constraints_to_string (cs :: constraints)); *)
       let subst, env' = solve_constraint env cs_env cs in
       let env' = apply_subst_env env' subst in
       let constraints' = List.map (apply_subst_constraint subst) constraints in
