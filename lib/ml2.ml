@@ -178,16 +178,27 @@ let rec solve_constraint env cs_env = function
       (* TODO: better handling if not in env *)
       let (ForAll (vars, cos, ty')) = List.assoc var env in
       let ftv = ftv_ty ty in
+      (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *)
       if List.exists (fun var -> StringSet.mem var ftv) vars then
         failwith "in ftv"
       (* we need to actualy instatinate the variables *)
         else
+        (*then σ < T′ (read: T′ is an instance of σ ) *)
+        (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
         let instaniate_mapping =
           (* all these would need to be added to the cs_env *)
+          (* basically the ∃X *)
           List.map (fun v -> (v, TyVar (gensym ()))) vars |> Subst.of_list
         in
         solve_constraints env cs_env
-          (CEq (apply_subst_ty instaniate_mapping ty', ty) :: cos)
+          (* by applying this "substion" we put the ∃X *)
+          (* really we should do propery exist and not have to substitute *)
+          (apply_subst_constraints instaniate_mapping cos
+          @ [
+              CEq
+                ( apply_subst_ty instaniate_mapping ty',
+                  apply_subst_ty instaniate_mapping ty );
+            ])
   | CExist (_vars, cos) ->
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
       solve_constraints env cs_env cos
@@ -214,9 +225,9 @@ and solve_constraints env cs_env = function
       let subst, env' = solve_constraint env cs_env cs in
       let env' = apply_subst_env env' subst in
       let constraints' = List.map (apply_subst_constraint subst) constraints in
-      print_endline (subst_to_string subst);
-      if List.is_empty constraints' |> not then
-        print_endline (constraints_to_string constraints');
+      (* print_endline (subst_to_string subst); *)
+      (* if List.is_empty constraints' |> not then *)
+      (* print_endline (constraints_to_string constraints'); *)
       let subst', env'' = solve_constraints env' cs_env constraints' in
       let env'' = apply_subst_env env'' subst' in
       (combose_subst subst' subst, env'')
