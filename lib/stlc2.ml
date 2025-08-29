@@ -71,8 +71,8 @@ let rec unify (CEq (s, t)) =
         unify (CEq (s1, t1));
         unify (CEq (s2, t2))
     | TyUnit, TyUnit -> ()
-    | TyVar _, _ | _, TyVar _ ->
-        let _ = Union_find.union s t in
+    | TyVar _, v | v, TyVar _ ->
+        let _ = Union_find.union_with (fun _ _ -> v) s t in
         ()
     | _ -> ()
 

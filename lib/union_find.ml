@@ -30,3 +30,21 @@ let union x y =
     x_ref := `node { parent = y_ref };
     y.rank <- y.rank + 1;
     y_ref)
+
+let union_with data x y =
+  let x_ref, `root x = find_set x in
+  let y_ref, `root y = find_set y in
+  if x_ref == y_ref then x_ref
+  else if x.rank > y.rank then (
+    x.data <- data x.data y.data;
+    y_ref := `node { parent = x_ref };
+    x_ref)
+  else if x.rank < y.rank then (
+    y.data <- data x.data y.data;
+    x_ref := `node { parent = y_ref };
+    y_ref)
+  else (
+    y.data <- data x.data y.data;
+    x_ref := `node { parent = y_ref };
+    y.rank <- y.rank + 1;
+    y_ref)
