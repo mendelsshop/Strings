@@ -1,4 +1,4 @@
 (library
  (name ml)
- (modules Parser Expr Infer Monad Utils Stlc Ml2 Union_find)
+ (modules Parser Expr Infer Monad Utils Stlc Ml2 Union_find Stlc2)
  (libraries monads AMPCL))
