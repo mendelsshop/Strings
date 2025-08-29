@@ -5,13 +5,37 @@ type term =
   | Unit
 
 type 't ty = TyVar of string | TyUnit | TyArrow of 't * 't
-type 't co = CEq of 't ty Union_find.elem * 't ty Union_find.elem
+type 't co = CEq of 't * 't
+
+let type_to_string to_string = function
+  | TyVar x -> x
+  | TyUnit -> "()"
+  | TyArrow (x, y) -> to_string x ^ " -> " ^ to_string y
 
 type 't typed_term =
   | TVar of string * 't
   | TLambda of string * 't * 't typed_term * 't
   | TApp of 't typed_term * 't typed_term * 't
   | TUnit of 't
+
+type node_ty = 'a ty Union_find.elem as 'a
+
+let rec node_type_to_string (ty : node_ty) : string =
+  type_to_string
+    (fun node -> node_type_to_string node)
+    (Union_find.find_set ty |> snd |> fun (`root node) -> node.data)
+
+let tterm_to_string type_to_string =
+  let rec inner = function
+    | TVar (v, ty) -> "(" ^ v ^ ": " ^ type_to_string ty ^ ")"
+    | TLambda (v, v_ty, typed_term, ty) ->
+        "((fun " ^ v ^ ": " ^ type_to_string v_ty ^ " -> " ^ inner typed_term
+        ^ ")" ^ ": " ^ type_to_string ty ^ ")"
+    | TApp (f, a, ty) ->
+        "(" ^ inner f ^ " " ^ inner a ^ ": " ^ type_to_string ty ^ ")"
+    | TUnit _ -> "()"
+  in
+  inner
 
 let counter = ref 0
 
@@ -20,12 +44,11 @@ let gensym () =
   incr counter;
   string_of_int counter'
 
-let rec generate_constraints env ty = function
-  | Var v -> ([ CEq (ty, List.assoc v env) ], TVar (v, ty))
+let rec generate_constraints env (ty : node_ty) = function
+  | Var v -> ([ CEq (List.assoc v env, ty) ], TVar (v, ty))
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
   | App (f, x) ->
       let a1 = Union_find.make (TyVar (gensym ())) in
-
       let c, f' =
         generate_constraints env (Union_find.make (TyArrow (a1, ty))) f
       in
@@ -34,9 +57,7 @@ let rec generate_constraints env ty = function
   | Lambda (x, t) ->
       let a1 = Union_find.make (TyVar (gensym ())) in
       let a2 = Union_find.make (TyVar (gensym ())) in
-
       let c, t' = generate_constraints ((x, a1) :: env) a2 t in
-
       ( CEq (Union_find.make (TyArrow (a1, a2)), ty) :: c,
         TLambda (x, a1, t', ty) )
 
@@ -54,3 +75,5 @@ let rec unify (CEq (s, t)) =
         let _ = Union_find.union s t in
         ()
     | _ -> ()
+
+let unify = List.iter unify

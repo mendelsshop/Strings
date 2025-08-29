@@ -5,7 +5,7 @@ and 'a node = { mutable parent : 'a parent_pointer_tree ref }
 
 type 'a elem = 'a parent_pointer_tree ref
 
-let make data = ref (`root { rank = 0; data })
+let make data : 'a elem = ref (`root { rank = 0; data })
 
 (* we return the root node as a reference and as dereferenced to use fancy polymorphic variants matching as root is always a root *)
 let rec find_set (x : 'a elem) : 'a elem * [< `root of 'a root ] =
