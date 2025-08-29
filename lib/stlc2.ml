@@ -20,10 +20,17 @@ type 't typed_term =
 
 type node_ty = 'a ty Union_find.elem as 'a
 
-let rec node_type_to_string (ty : node_ty) : string =
-  type_to_string
-    (fun node -> node_type_to_string node)
-    (Union_find.find_set ty |> snd |> fun (`root node) -> node.data)
+let node_type_to_string =
+  (* TODO: figure out how to properly print recursive types *)
+  let rec inner used ty =
+    let root = Union_find.find_set ty in
+    if List.memq (fst root) used then ""
+    else
+      type_to_string
+        (fun node -> inner (fst root :: used) node)
+        (root |> snd |> fun (`root node) -> node.data)
+  in
+  inner []
 
 let tterm_to_string type_to_string =
   let rec inner = function
