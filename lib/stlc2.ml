@@ -18,19 +18,44 @@ type 't typed_term =
   | TApp of 't typed_term * 't typed_term * 't
   | TUnit of 't
 
+let type_tag_to_string = function
+  | TyVar _ -> "tyvar"
+  | TyArrow _ -> "tyarrow"
+  | TyUnit -> "tyunit"
+
 type node_ty = 'a ty Union_find.elem as 'a
 
-let node_type_to_string =
+let counter = ref 0
+
+let gensym () =
+  let counter' = !counter in
+  incr counter;
+  string_of_int counter'
+
+let node_type_to_string ty =
   (* TODO: figure out how to properly print recursive types *)
   let rec inner used ty =
-    let root = Union_find.find_set ty in
-    if List.memq (fst root) used then ""
-    else
-      type_to_string
-        (fun node -> inner (fst root :: used) node)
-        (root |> snd |> fun (`root node) -> node.data)
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> (t, [ ty ]))
+         ~none:(fun () ->
+           match node.data with
+           | TyVar v -> (v, [])
+           | TyUnit -> ("()", [])
+           | TyArrow (x, y) ->
+               let sym = gensym () in
+               let x_string, used' = inner ((root, sym) :: used) x in
+               let y_string, used'' = inner ((root, sym) :: used) y in
+               let recursive_prefix =
+                 if List.memq x (used' @ used'') then "recursive " ^ sym ^ ". "
+                 else ""
+               in
+               (recursive_prefix ^ x_string ^ " -> " ^ y_string, used' @ used''))
+    )
+      ()
   in
-  inner []
+  inner [] ty |> fst
 
 let tterm_to_string type_to_string =
   let rec inner = function
@@ -43,13 +68,6 @@ let tterm_to_string type_to_string =
     | TUnit _ -> "()"
   in
   inner
-
-let counter = ref 0
-
-let gensym () =
-  let counter' = !counter in
-  incr counter;
-  string_of_int counter'
 
 let rec generate_constraints env (ty : node_ty) = function
   | Var v -> ([ CEq (List.assoc v env, ty) ], TVar (v, ty))
