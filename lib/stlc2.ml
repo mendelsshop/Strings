@@ -47,29 +47,27 @@ let node_type_to_string ty =
                let sym = gensym () in
                let x_string, used' = inner ((root, sym) :: used) x in
                let y_string, used'' = inner ((root, sym) :: used) y in
+               let used' = used' @ used'' in
                let recursive_prefix =
-                 if List.memq x (used' @ used'') then "recursive " ^ sym ^ ". "
-                 else ""
+                 if List.memq x used' then "recursive " ^ sym ^ ". " else ""
                in
-               (recursive_prefix ^ x_string ^ " -> " ^ y_string, used' @ used''))
-    )
+               (recursive_prefix ^ x_string ^ " -> " ^ y_string, used')))
       ()
   in
   inner [] ty |> fst
 
 let tterm_to_string type_to_string =
   let rec inner = function
-    | TVar (v, ty) -> "(" ^ v ^ ": " ^ type_to_string ty ^ ")"
-    | TLambda (v, v_ty, typed_term, ty) ->
-        "((fun " ^ v ^ ": " ^ type_to_string v_ty ^ " -> " ^ inner typed_term
-        ^ ")" ^ ": " ^ type_to_string ty ^ ")"
-    | TApp (f, a, ty) ->
-        "(" ^ inner f ^ " " ^ inner a ^ ": " ^ type_to_string ty ^ ")"
+    | TVar (v, _) -> v
+    | TLambda (v, v_ty, typed_term, _) ->
+        "(fun (" ^ v ^ ": " ^ type_to_string v_ty ^ ") -> " ^ inner typed_term
+        ^ ")"
+    | TApp (f, a, _) -> "[" ^ inner f ^ " " ^ inner a ^ "]"
     | TUnit _ -> "()"
   in
   inner
 
-let rec generate_constraints env (ty : node_ty) = function
+let rec generate_constraints env ty = function
   | Var v -> ([ CEq (List.assoc v env, ty) ], TVar (v, ty))
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
   | App (f, x) ->
