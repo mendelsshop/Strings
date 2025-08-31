@@ -7,11 +7,6 @@ type term =
 
 type 't ty_f = TyVar of string | TyUnit | TyArrow of 't * 't
 
-let type_to_string to_string = function
-  | TyVar x -> x
-  | TyUnit -> "()"
-  | TyArrow (x, y) -> to_string x ^ " -> " ^ to_string y
-
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
 
@@ -54,7 +49,7 @@ let type_to_string ty =
   in
   inner [] ty |> fst
 
-let tterm_to_string type_to_string =
+let tterm_to_string =
   let rec inner = function
     | TVar (v, _) -> v
     | TLambda (v, v_ty, typed_term, _) ->
@@ -137,23 +132,50 @@ let rec generate_constraints ty = function
         (* TODO: maybe a1 has to be in a forall *)
         TLet (v, a1_ty, t1', t2', ty) )
 
-let rec ftv_ty (ty : ty) =
-  let (`root node) = Union_find.find_set ty |> snd in
-  match node.data with
-  | TyVar v -> StringSet.singleton v
-  | TyArrow (p, r) -> StringSet.union (ftv_ty p) (ftv_ty r)
-  | TyUnit -> StringSet.empty
+let ftv_ty (ty : ty) =
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    if List.memq root used then StringSet.empty
+    else
+      match node.data with
+      | TyVar v -> StringSet.singleton v
+      | TyArrow (p, r) ->
+          StringSet.union (inner p (root :: used)) (inner r (root :: used))
+      | TyUnit -> StringSet.empty
+  in
+  inner ty []
 
-let rec apply_subst_ty (subst : ty Subst.t) (ty : ty) =
+let apply_subst_ty (subst : ty Subst.t) (ty : ty) =
   (* going to need cycle detection *)
-  let (`root node) = Union_find.find_set ty |> snd in
-  match node.data with
-  | TyVar v ->
-      Subst.find_opt v subst
-      |> Option.value ~default:(Union_find.make (TyVar v))
-  | TyArrow (p, r) ->
-      Union_find.make (TyArrow (apply_subst_ty subst p, apply_subst_ty subst r))
-  | TyUnit -> Union_find.make TyUnit
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> (t, false))
+         ~none:(fun () ->
+           let replacement_root = Union_find.make (TyVar (gensym ())) in
+           match node.data with
+           | TyVar v ->
+               Subst.find_opt v subst
+               |> Option.map (fun t -> (t, true))
+               |> Option.value ~default:(ty, false)
+           | TyArrow (p, r) ->
+               let p, p_true = inner p ((root, replacement_root) :: used) in
+               let r, r_true = inner r ((root, replacement_root) :: used) in
+               if p_true || r_true then
+                 let _ =
+                   Union_find.union replacement_root
+                     (Union_find.make (TyArrow (p, r)))
+                 in
+                 (replacement_root, true)
+               else
+                 let _ = Union_find.union replacement_root ty in
+                 (ty, false)
+           | TyUnit -> (ty, false)))
+      ()
+  in
+  let ty, _ = inner ty [] in
+  ty
 
 let rec apply_subst_tterm subst = function
   | TVar (v, ty) -> TVar (v, apply_subst_ty subst ty)
