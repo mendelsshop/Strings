@@ -18,11 +18,6 @@ type 't typed_term =
   | TApp of 't typed_term * 't typed_term * 't
   | TUnit of 't
 
-let type_tag_to_string = function
-  | TyVar _ -> "tyvar"
-  | TyArrow _ -> "tyarrow"
-  | TyUnit -> "tyunit"
-
 type node_ty = 'a ty Union_find.elem as 'a
 
 let counter = ref 0
@@ -33,7 +28,6 @@ let gensym () =
   string_of_int counter'
 
 let node_type_to_string ty =
-  (* TODO: figure out how to properly print recursive types *)
   let rec inner used ty =
     let root, `root node = Union_find.find_set ty in
     (List.assq_opt root used

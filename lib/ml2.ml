@@ -5,50 +5,78 @@ type term =
   | Let of string * term * term
   | Unit
 
-type ty = TyVar of string | TyUnit | TyArrow of ty * ty
+type 't ty_f = TyVar of string | TyUnit | TyArrow of 't * 't
 
-let rec type_to_string = function
+let type_to_string to_string = function
   | TyVar x -> x
   | TyUnit -> "()"
-  | TyArrow (x, y) -> type_to_string x ^ " -> " ^ type_to_string y
+  | TyArrow (x, y) -> to_string x ^ " -> " ^ to_string y
 
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
 
-let rec type_ftv = function
-  | TyVar x -> StringSet.singleton x
-  | TyUnit -> StringSet.empty
-  | TyArrow (x, y) -> StringSet.union (type_ftv x) (type_ftv y)
+type 't typed_term =
+  | TVar of string * 't
+  | TLambda of string * 't * 't typed_term * 't
+  | TApp of 't typed_term * 't typed_term * 't
+  | TUnit of 't
+  | TLet of string * 't * 't typed_term * 't typed_term * 't
 
-type typed_term =
-  | TVar of string * ty
-  | TLambda of string * ty * typed_term * ty
-  | TApp of typed_term * typed_term * ty
-  | TLet of string * ty * typed_term * typed_term * ty
-  | TUnit of ty
+type ty = 'a ty_f Union_find.elem as 'a
 
-let rec tterm_to_string = function
-  | TVar (v, ty) -> "(" ^ v ^ ": " ^ type_to_string ty ^ ")"
-  | TLambda (v, v_ty, typed_term, ty) ->
-      "((fun " ^ v ^ ": " ^ type_to_string v_ty ^ " -> "
-      ^ tterm_to_string typed_term ^ ")" ^ ": " ^ type_to_string ty ^ ")"
-  | TApp (f, a, ty) ->
-      "(" ^ tterm_to_string f ^ " " ^ tterm_to_string a ^ ": "
-      ^ type_to_string ty ^ ")"
-  | TLet (v, v_ty, e1, e2, ty) ->
-      "(let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ tterm_to_string e1
-      ^ " in " ^ tterm_to_string e2 ^ ": " ^ type_to_string ty ^ ")"
-  | TUnit _ -> "()"
+let counter = ref 0
+
+let gensym () =
+  let counter' = !counter in
+  incr counter;
+  string_of_int counter'
+
+let type_to_string ty =
+  let rec inner used ty =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> (t, [ ty ]))
+         ~none:(fun () ->
+           match node.data with
+           | TyVar v -> (v, [])
+           | TyUnit -> ("()", [])
+           | TyArrow (x, y) ->
+               let sym = gensym () in
+               let x_string, used' = inner ((root, sym) :: used) x in
+               let y_string, used'' = inner ((root, sym) :: used) y in
+               let used' = used' @ used'' in
+               let recursive_prefix =
+                 if List.memq x used' then "recursive " ^ sym ^ ". " else ""
+               in
+               (recursive_prefix ^ x_string ^ " -> " ^ y_string, used')))
+      ()
+  in
+  inner [] ty |> fst
+
+let tterm_to_string type_to_string =
+  let rec inner = function
+    | TVar (v, _) -> v
+    | TLambda (v, v_ty, typed_term, _) ->
+        "(fun (" ^ v ^ ": " ^ type_to_string v_ty ^ ") -> " ^ inner typed_term
+        ^ ")"
+    | TApp (f, a, _) -> "[" ^ inner f ^ " " ^ inner a ^ "]"
+    | TUnit _ -> "()"
+    | TLet (v, v_ty, e1, e2, _) ->
+        "let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ inner e1 ^ " in "
+        ^ inner e2
+  in
+  inner
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
-type co =
-  | CExist of string list * co list
-  | CEq of ty * ty
-  | CInstance of string * ty
-  | CLet of string * scheme * co list
+type 't co =
+  | CExist of string list * 't co list
+  | CEq of 't * 't
+  | CInstance of string * 't
+  | CLet of string * 't scheme * 't co list
 
-and scheme = ForAll of string list * co list * ty
+and 't scheme = ForAll of string list * 't co list * 't
 
 let rec constraint_to_string = function
   | CEq (t1, t2) -> type_to_string t1 ^ "~= " ^ type_to_string t2
@@ -84,43 +112,48 @@ let gensym () =
   string_of_int counter'
 
 let rec generate_constraints ty = function
-  | Unit -> ([ CEq (TyUnit, ty) ], TUnit TyUnit)
+  | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
   | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
-  | Lambda (x, t) ->
-      let a1 = gensym () in
-      let a2 = gensym () in
-      let c, t' = generate_constraints (TyVar a2) t in
-      ( [
-          CExist
-            ( [ a1; a2 ],
-              [
-                CEq (TyArrow (TyVar a1, TyVar a2), ty);
-                CLet (x, ForAll ([], [], TyVar a1), c);
-              ] );
-        ],
-        TLambda (x, TyVar a1, t', ty) )
   | App (f, x) ->
-      let a1 = gensym () in
-      let c, f' = generate_constraints (TyArrow (TyVar a1, ty)) f in
-      let c', x' = generate_constraints (TyVar a1) x in
-      ([ CExist ([ a1 ], c @ c') ], TApp (f', x', ty))
+      let a1 = Union_find.make (TyVar (gensym ())) in
+      let c, f' = generate_constraints (Union_find.make (TyArrow (a1, ty))) f in
+      let c', x' = generate_constraints a1 x in
+      (c @ c', TApp (f', x', ty))
+  | Lambda (x, t) ->
+      let a1 = Union_find.make (TyVar (gensym ())) in
+      let a2 = Union_find.make (TyVar (gensym ())) in
+      let c, t' = generate_constraints a2 t in
+      ( [
+          CEq (Union_find.make (TyArrow (a1, a2)), ty);
+          CLet (x, ForAll ([], [], a1), c);
+        ],
+        TLambda (x, a1, t', ty) )
   | Let (v, t1, t2) ->
       let a1 = gensym () in
-      let c, t1' = generate_constraints (TyVar a1) t1 in
+      let a1_ty = Union_find.make (TyVar a1) in
+      let c, t1' = generate_constraints a1_ty t1 in
       let c', t2' = generate_constraints ty t2 in
-      ( [ CLet (v, ForAll ([ a1 ], c, TyVar a1), c') ],
+      ( [ CLet (v, ForAll ([ a1 ], c, a1_ty), c') ],
         (* TODO: maybe a1 has to be in a forall *)
-        TLet (v, TyVar a1, t1', t2', ty) )
+        TLet (v, a1_ty, t1', t2', ty) )
 
-let rec ftv_ty = function
+let rec ftv_ty (ty : ty) =
+  let (`root node) = Union_find.find_set ty |> snd in
+  match node.data with
   | TyVar v -> StringSet.singleton v
   | TyArrow (p, r) -> StringSet.union (ftv_ty p) (ftv_ty r)
   | TyUnit -> StringSet.empty
 
-let rec apply_subst_ty subst = function
-  | TyVar v -> Subst.find_opt v subst |> Option.value ~default:(TyVar v)
-  | TyArrow (p, r) -> TyArrow (apply_subst_ty subst p, apply_subst_ty subst r)
-  | TyUnit -> TyUnit
+let rec apply_subst_ty (subst : ty Subst.t) (ty : ty) =
+  (* going to need cycle detection *)
+  let (`root node) = Union_find.find_set ty |> snd in
+  match node.data with
+  | TyVar v ->
+      Subst.find_opt v subst
+      |> Option.value ~default:(Union_find.make (TyVar v))
+  | TyArrow (p, r) ->
+      Union_find.make (TyArrow (apply_subst_ty subst p, apply_subst_ty subst r))
+  | TyUnit -> Union_find.make TyUnit
 
 let rec apply_subst_tterm subst = function
   | TVar (v, ty) -> TVar (v, apply_subst_ty subst ty)
@@ -176,14 +209,30 @@ let apply_subst_env l subst =
 (* the way it is now we probably need to substitute into env *)
 (*     b/c of clet *)
 
+let rec unify (s : ty) (t : ty) =
+  let s, `root s_data = Union_find.find_set s in
+  let t, `root t_data = Union_find.find_set t in
+  if s == t then ()
+  else
+    match (s_data.data, t_data.data) with
+    | TyArrow (s1, s2), TyArrow (t1, t2) ->
+        unify s1 t1;
+        unify s2 t2
+    | TyUnit, TyUnit -> ()
+    | TyVar _, v | v, TyVar _ ->
+        let _ = Union_find.union_with (fun _ _ -> v) s t in
+        ()
+    | _ -> ()
+
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
-let rec solve_constraint env cs_env = function
+let rec solve_constraint env cs_env : ty co -> _ = function
+  | CEq (s, t) -> unify s t
   | CInstance (var, ty) ->
-      (* TODO: better handling if not in env *)
+      (* (* TODO: better handling if not in env *) *)
       let (ForAll (vars, cos, ty')) = List.assoc var env in
       let ftv = ftv_ty ty in
-      (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *)
+      (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
       if List.exists (fun var -> StringSet.mem var ftv) vars then
         failwith "in ftv"
       (* we need to actualy instatinate the variables *)
@@ -193,7 +242,8 @@ let rec solve_constraint env cs_env = function
         let instaniate_mapping =
           (* all these would need to be added to the cs_env *)
           (* basically the ∃X *)
-          List.map (fun v -> (v, TyVar (gensym ()))) vars |> Subst.of_list
+          List.map (fun v -> (v, Union_find.make (TyVar (gensym ())))) vars
+          |> Subst.of_list
         in
         solve_constraints env cs_env
           (* by applying this "substion" we put the ∃X *)
@@ -204,31 +254,17 @@ let rec solve_constraint env cs_env = function
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
       solve_constraints env cs_env cos
   | CLet (var, scheme, ty) -> solve_constraints ((var, scheme) :: env) cs_env ty
-  | CEq (t1, t2) when t1 = t2 -> (Subst.empty, env)
-  | CEq (TyVar u, t1) | CEq (t1, TyVar u) ->
-      if StringSet.mem u (type_ftv t1) then failwith "occurs check"
-      else (Subst.singleton u t1, env)
-  | CEq (TyArrow (tp1, tr1), TyArrow (tp2, tr2)) ->
-      let subst, env' = solve_constraint env cs_env (CEq (tp1, tp2)) in
-      let env' = apply_subst_env env' subst in
-      let subst', env'' =
-        solve_constraint env' cs_env
-          (CEq (apply_subst_ty subst tr1, apply_subst_ty subst tr2))
-      in
-      let env'' = apply_subst_env env'' subst' in
-      (combose_subst subst subst', env'')
-  | _ -> failwith "error"
 
 and solve_constraints env cs_env = function
-  | [] -> (Subst.empty, env)
+  | [] -> ()
   | cs :: constraints ->
       (* print_endline (constraints_to_string (cs :: constraints)); *)
-      let subst, env' = solve_constraint env cs_env cs in
-      let env' = apply_subst_env env' subst in
-      let constraints' = List.map (apply_subst_constraint subst) constraints in
+      (* let subst, env' = solve_constraint env cs_env cs in *)
+      solve_constraint env cs_env cs;
+      (* let env' = apply_subst_env env' subst in *)
+      (* let constraints' = List.map (apply_subst_constraint subst) constraints in *)
       (* print_endline (subst_to_string subst); *)
       (* if List.is_empty constraints' |> not then *)
       (* print_endline (constraints_to_string constraints'); *)
-      let subst', env'' = solve_constraints env' cs_env constraints' in
-      let env'' = apply_subst_env env'' subst' in
-      (combose_subst subst' subst, env'')
+      (* let subst', env'' = solve_constraints env cs_env constraints in *)
+      solve_constraints env cs_env constraints
