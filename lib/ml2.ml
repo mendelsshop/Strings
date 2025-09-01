@@ -99,30 +99,34 @@ let subst_to_string s =
     |> String.concat "\n")
   ^ "\n]"
 
-let counter = ref 0
-
-let gensym () =
-  let counter' = !counter in
-  incr counter;
-  string_of_int counter'
-
 let rec generate_constraints ty = function
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
   | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
   | App (f, x) ->
-      let a1 = Union_find.make (TyVar (gensym ())) in
-      let c, f' = generate_constraints (Union_find.make (TyArrow (a1, ty))) f in
-      let c', x' = generate_constraints a1 x in
-      (c @ c', TApp (f', x', ty))
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (TyVar a1) in
+      let c, f' =
+        generate_constraints (Union_find.make (TyArrow (a1_ty, ty))) f
+      in
+      let c', x' = generate_constraints a1_ty x in
+      ([ CExist ([ a1 ], c @ c') ], TApp (f', x', ty))
   | Lambda (x, t) ->
-      let a1 = Union_find.make (TyVar (gensym ())) in
-      let a2 = Union_find.make (TyVar (gensym ())) in
-      let c, t' = generate_constraints a2 t in
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (TyVar a1) in
+      let a2 = gensym () in
+      let a2_ty = Union_find.make (TyVar a2) in
+      let c, t' = generate_constraints a2_ty t in
       ( [
-          CEq (Union_find.make (TyArrow (a1, a2)), ty);
-          CLet (x, ForAll ([], [], a1), c);
+          CExist
+            ( [ a1; a2 ],
+              [
+                CLet
+                  ( x,
+                    ForAll ([], [], a1_ty),
+                    CEq (Union_find.make (TyArrow (a1_ty, a2_ty)), ty) :: c );
+              ] );
         ],
-        TLambda (x, a1, t', ty) )
+        TLambda (x, a1_ty, t', ty) )
   | Let (v, t1, t2) ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (TyVar a1) in
@@ -272,9 +276,17 @@ let rec solve_constraint env cs_env : ty co -> _ = function
           (* really we should do propery exist and not have to substitute *)
           (apply_subst_constraints instaniate_mapping cos
           @ [ CEq (apply_subst_ty instaniate_mapping ty', ty) ])
-  | CExist (_vars, cos) ->
+  | CExist (vars, cos) ->
+      let instaniate_mapping =
+        (* all these would need to be added to the cs_env *)
+        (* basically the ∃X *)
+        List.map (fun v -> (v, Union_find.make (TyVar (gensym ())))) vars
+        |> Subst.of_list
+      in
+
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
-      solve_constraints env cs_env cos
+      solve_constraints env cs_env
+        (apply_subst_constraints instaniate_mapping cos)
   | CLet (var, scheme, ty) -> solve_constraints ((var, scheme) :: env) cs_env ty
 
 and solve_constraints env cs_env = function
