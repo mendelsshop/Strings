@@ -233,25 +233,39 @@ let apply_subst_env l subst =
 (* the way it is now we probably need to substitute into env *)
 (*     b/c of clet *)
 
-let rec unify (s : ty) (t : ty) =
-  let s, `root s_data = Union_find.find_set s in
-  let t, `root t_data = Union_find.find_set t in
-  if s == t then ()
-  else
-    match (s_data.data, t_data.data) with
-    | TyArrow (s1, s2), TyArrow (t1, t2) ->
-        unify s1 t1;
-        unify s2 t2
-    | TyUnit, TyUnit -> ()
-    | TyVar _, v | v, TyVar _ ->
-        let _ = Union_find.union_with (fun _ _ -> v) s t in
-        ()
-    | _ -> ()
+let unify (s : ty) (t : ty) cs_env =
+  let rec inner (s : ty) (t : ty) cs_env used =
+    let s, `root s_data = Union_find.find_set s in
+    let t, `root t_data = Union_find.find_set t in
+    if
+      List.exists
+        (fun (s', t') -> (s == s' && t == t') || (t == s' && s == t'))
+        used
+    then ()
+    else if s == t then ()
+    else
+      match (s_data.data, t_data.data) with
+      | TyArrow (s1, s2), TyArrow (t1, t2) ->
+          inner s1 t1 cs_env ((s, t) :: used);
+          inner s2 t2 cs_env ((s, t) :: used)
+      | TyUnit, TyUnit -> ()
+      | TyVar _, v | v, TyVar _ ->
+          (* let v = apply_subst_ty cs_env t in *)
+          (* let _, `root v = Union_find.find_set v in *)
+          (* let _ = Union_find.union_with (fun _ _ -> v) s t in *)
+          (* () *)
+          (* let v = apply_subst_ty cs_env s in *)
+          (* let _, `root v = Union_find.find_set v in *)
+          let _ = Union_find.union_with (fun _ _ -> v) s t in
+          ()
+      | _ -> ()
+  in
+  inner s t cs_env []
 
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
 let rec solve_constraint env cs_env : ty co -> _ = function
-  | CEq (s, t) -> unify s t
+  | CEq (s, t) -> unify s t cs_env
   | CInstance (var, ty) ->
       (* (* TODO: better handling if not in env *) *)
       let (ForAll (vars, cos, ty')) = List.assoc var env in
