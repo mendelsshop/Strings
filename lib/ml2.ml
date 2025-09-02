@@ -120,10 +120,8 @@ let rec generate_constraints ty = function
           CExist
             ( [ a1; a2 ],
               [
-                CLet
-                  ( x,
-                    ForAll ([], [], a1_ty),
-                    CEq (Union_find.make (TyArrow (a1_ty, a2_ty)), ty) :: c );
+                CLet (x, ForAll ([], [], a1_ty), c);
+                CEq (Union_find.make (TyArrow (a1_ty, a2_ty)), ty);
               ] );
         ],
         TLambda (x, a1_ty, t', ty) )
@@ -269,24 +267,30 @@ let rec solve_constraint env cs_env : ty co -> _ = function
           (* all these would need to be added to the cs_env *)
           (* basically the ∃X *)
           List.map (fun v -> (v, Union_find.make (TyVar (gensym ())))) vars
-          |> Subst.of_list
         in
-        solve_constraints env cs_env
+        let instaniate_mapping_subst = Subst.of_list instaniate_mapping in
+        solve_constraints env
+          (instaniate_mapping @ cs_env)
           (* by applying this "substion" we put the ∃X *)
           (* really we should do propery exist and not have to substitute *)
-          (apply_subst_constraints instaniate_mapping cos
-          @ [ CEq (apply_subst_ty instaniate_mapping ty', ty) ])
+          (apply_subst_constraints instaniate_mapping_subst cos
+          @ [
+              CEq
+                ( apply_subst_ty instaniate_mapping_subst ty',
+                  apply_subst_ty instaniate_mapping_subst ty );
+            ])
   | CExist (vars, cos) ->
       let instaniate_mapping =
         (* all these would need to be added to the cs_env *)
         (* basically the ∃X *)
         List.map (fun v -> (v, Union_find.make (TyVar (gensym ())))) vars
-        |> Subst.of_list
       in
+      let instaniate_mapping_subst = Subst.of_list instaniate_mapping in
 
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
-      solve_constraints env cs_env
-        (apply_subst_constraints instaniate_mapping cos)
+      solve_constraints env
+        (instaniate_mapping @ cs_env)
+        (apply_subst_constraints instaniate_mapping_subst cos)
   | CLet (var, scheme, ty) -> solve_constraints ((var, scheme) :: env) cs_env ty
 
 and solve_constraints env cs_env = function
