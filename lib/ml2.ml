@@ -5,7 +5,11 @@ type term =
   | Let of string * term * term
   | Unit
 
-type 't ty_f = TyVar of string * int | TyUnit | TyArrow of 't * 't
+type 't ty_f =
+  | TyVar of string * int
+  | TyUnit
+  | TyArrow of 't * 't
+  | TyGenVar of string
 
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
@@ -35,6 +39,7 @@ let type_to_string ty =
          ~none:(fun () ->
            match node.data with
            | TyVar (v, _) -> (v, [])
+           | TyGenVar v -> (v, [])
            | TyUnit -> ("()", [])
            | TyArrow (x, y) ->
                let sym = gensym () in
@@ -69,9 +74,12 @@ type 't co =
   | CExist of string list * 't co list
   | CEq of 't * 't
   | CInstance of string * 't
-  | CLet of string * 't scheme * 't co list
+  | CLet of string * 't scheme_co * 't co list
 
-and 't scheme = ForAll of string list * 't co list * 't
+and 't scheme_co = ForAll of string list * 't co list * 't
+
+(* either this of qvar i don't think we need both *)
+type 't scheme = ForAll of string list * 't
 
 let rec constraint_to_string = function
   | CEq (t1, t2) -> type_to_string t1 ^ "~= " ^ type_to_string t2
@@ -149,7 +157,8 @@ let ftv_ty (ty : ty) =
     if List.memq root used then StringSet.empty
     else
       match node.data with
-      | TyVar (v, _) -> StringSet.singleton v
+      | TyVar (v, _) -> StringSet.singleton v (* maybe not free? *)
+      | TyGenVar v -> StringSet.singleton v
       | TyArrow (p, r) ->
           StringSet.union (inner p (root :: used)) (inner r (root :: used))
       | TyUnit -> StringSet.empty
@@ -183,7 +192,7 @@ let apply_subst_ty (subst : ty Subst.t) (ty : ty) =
                      (Union_find.make (TyArrow (p, r)))
                  in
                  r
-             | TyUnit -> ty))
+             | TyGenVar _ | TyUnit -> ty))
         ()
     in
     let ty = inner ty [] in
@@ -267,13 +276,15 @@ let unify (s : ty) (t : ty) cs_env =
   in
   inner s t cs_env []
 
+let generalize (ForAll (_, _, ty) : 'a scheme_co) = ForAll ([], ty)
+
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
-let rec solve_constraint env cs_env : ty co -> _ = function
+let rec solve_constraint env cs_env : 'a co -> _ = function
   | CEq (s, t) -> unify s t cs_env
   | CInstance (var, ty) ->
       (* (* TODO: better handling if not in env *) *)
-      let (ForAll (vars, _, ty')) = List.assoc var env in
+      let (ForAll (vars, ty')) = List.assoc var env in
       let ftv = ftv_ty ty in
       (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
       if List.exists (fun var -> StringSet.mem var ftv) vars then
@@ -300,7 +311,7 @@ let rec solve_constraint env cs_env : ty co -> _ = function
       solve_constraints env cs_env co;
       leave_level ();
       (* TODO: make new scheme type that makes it easier to generalize based on ty *)
-      solve_constraints ((var, scheme) :: env) cs_env co'
+      solve_constraints ((var, generalize scheme) :: env) cs_env co'
 
 and solve_constraints env cs_env = function
   | [] -> ()
