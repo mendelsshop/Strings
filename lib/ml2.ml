@@ -243,22 +243,12 @@ let apply_subst_env l subst =
 (* the way it is now we probably need to substitute into env *)
 (*     b/c of clet *)
 
+let unit_ify _ = ()
+
 let unify (s : ty) (t : ty) cs_env =
   let rec inner (s : ty) (t : ty) cs_env used =
-    (* let apply_subst_ty_var (ty : 'a ty_f) default subst = *)
-    (*   match ty with *)
-    (*   | TyVar v -> *)
-    (*       Subst.find_opt v subst *)
-    (*       |> Option.map (fun t -> (t, true)) *)
-    (*       |> Option.value ~default:(default, false) *)
-    (*   | _ -> (default, false) *)
-    (* in *)
     let s, `root s_data = Union_find.find_set s in
     let t, `root t_data = Union_find.find_set t in
-    (* let s, s_true = apply_subst_ty_var s_data.data s cs_env in *)
-    (* let t, t_true = apply_subst_ty_var t_data.data t cs_env in *)
-    (* if t_true || s_true then unify s t cs_env *)
-    (* else *)
     if
       List.exists
         (fun (s', t') -> (s == s' && t == t') || (t == s' && s == t'))
@@ -272,14 +262,7 @@ let unify (s : ty) (t : ty) cs_env =
           inner s2 t2 cs_env ((s, t) :: used)
       | TyUnit, TyUnit -> ()
       | TyVar _, v | v, TyVar _ ->
-          (* let v = apply_subst_ty cs_env t in *)
-          (* let _, `root v = Union_find.find_set v in *)
-          (* let _ = Union_find.union_with (fun _ _ -> v) s t in *)
-          (* () *)
-          (* let v = apply_subst_ty cs_env s in *)
-          (* let _, `root v = Union_find.find_set v in *)
-          let _ = Union_find.union_with (fun _ _ -> v) s t in
-          ()
+          Union_find.union_with (fun _ _ -> v) s t |> unit_ify (* () *)
       | _ -> ()
   in
   inner s t cs_env []
@@ -290,7 +273,7 @@ let rec solve_constraint env cs_env : ty co -> _ = function
   | CEq (s, t) -> unify s t cs_env
   | CInstance (var, ty) ->
       (* (* TODO: better handling if not in env *) *)
-      let (ForAll (vars, cos, ty')) = List.assoc var env in
+      let (ForAll (vars, _, ty')) = List.assoc var env in
       let ftv = ftv_ty ty in
       (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
       if List.exists (fun var -> StringSet.mem var ftv) vars then
@@ -299,60 +282,28 @@ let rec solve_constraint env cs_env : ty co -> _ = function
         else
         (*then σ < T′ (read: T′ is an instance of σ ) *)
         (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
-        let instaniate_mapping =
+        let _instaniate_mapping =
           (* all these would need to be added to the cs_env *)
           (* basically the ∃X *)
           List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
           |> Subst.of_list
         in
-        solve_constraints
-          (* (apply_subst_env env instaniate_mapping) *)
-          env
-          (Subst.union (fun _ x _ -> Some x) instaniate_mapping cs_env)
-          (* cs_env *)
+        solve_constraints env cs_env
           (* by applying this "substion" we put the ∃X *)
           (* really we should do propery exist and not have to substitute *)
-          (apply_subst_constraints instaniate_mapping cos
-          (* (cos *)
-          @ [
-              CEq
-                (* ( apply_subst_ty instaniate_mapping ty', *)
-                ( ty',
-                  (* apply_subst_ty instaniate_mapping ty ); *)
-                  ty );
-            ])
-  | CExist (vars, cos) ->
-      let instaniate_mapping =
-        (* all these would need to be added to the cs_env *)
-        (* basically the ∃X *)
-        List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
-        |> Subst.of_list
-      in
-
+          [ CEq (ty', ty) ]
+  | CExist (_vars, cos) ->
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
-      solve_constraints
-        (* (apply_subst_env env instaniate_mapping) *)
-        env
-        (Subst.union (fun _ x _ -> Some x) instaniate_mapping cs_env)
-        (* (apply_subst_constraints instaniate_mapping cos) *)
-        cos
-  | CLet (var, scheme, ty) ->
+      solve_constraints env cs_env cos
+  | CLet (var, (ForAll (_, co, _ty) as scheme), co') ->
       enter_level ();
-      (* TODO: solve scheme's constraint in new level *)
-      solve_constraints ((var, scheme) :: env) cs_env ty;
-      leave_level ()
+      solve_constraints env cs_env co;
+      leave_level ();
+      (* TODO: make new scheme type that makes it easier to generalize based on ty *)
+      solve_constraints ((var, scheme) :: env) cs_env co'
 
 and solve_constraints env cs_env = function
   | [] -> ()
   | cs :: constraints ->
-      (* print_endline ("cs: " ^ constraint_to_string cs); *)
-      (* print_endline (constraints_to_string (cs :: constraints)); *)
-      (* let subst, env' = solve_constraint env cs_env cs in *)
       solve_constraint env cs_env cs;
-      (* let env' = apply_subst_env env' subst in *)
-      (* let constraints' = List.map (apply_subst_constraint subst) constraints in *)
-      (* print_endline (subst_to_string subst); *)
-      (* if List.is_empty constraints' |> not then *)
-      (* print_endline (constraints_to_string constraints'); *)
-      (* let subst', env'' = solve_constraints env cs_env constraints in *)
       solve_constraints env cs_env constraints
