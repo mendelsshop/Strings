@@ -1,3 +1,5 @@
+type 'a row = (string * 'a) list
+
 type term =
   | Var of string
   | Lambda of string * term
@@ -5,6 +7,9 @@ type term =
   | Let of string * term * term
   | Unit
   | Number of float
+  | RecordAccess of term * string
+  | RecordExtend of term * term row
+  | Record of term row
 
 type 't ty_f =
   | TyVar of string * int
@@ -27,6 +32,9 @@ type 't typed_term =
   | TApp of 't typed_term * 't typed_term * 't
   | TUnit of 't
   | TLet of string * 't * 't typed_term * 't typed_term * 't
+  | TRecordAccess of 't typed_term * string * 't
+  | TRecordExtend of 't typed_term * 't typed_term row * 't
+  | TRecord of 't typed_term row * 't
 
 type ty = 'a ty_f Union_find.elem as 'a
 
@@ -88,6 +96,19 @@ let tterm_to_string =
         ^ ")"
     | TApp (f, a, _) -> "[" ^ inner f ^ " " ^ inner a ^ "]"
     | TUnit _ -> "()"
+    | TRecord (row, _) ->
+        "{ "
+        ^ (row
+          |> List.map (fun (label, value) -> label ^ " = " ^ inner value)
+          |> String.concat "; ")
+        ^ " }"
+    | TRecordAccess (record, label, _ty) -> inner record ^ "." ^ label
+    | TRecordExtend (expr, row, _) ->
+        "{" ^ inner expr ^ " with "
+        ^ (row
+          |> List.map (fun (label, value) -> label ^ " = " ^ inner value)
+          |> String.concat "; ")
+        ^ "}"
     | TLet (v, v_ty, e1, e2, _) ->
         "let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ inner e1 ^ " in "
         ^ inner e2
@@ -141,6 +162,61 @@ let leave_level () = decr current_level
 let ty_var var = TyVar (var, !current_level)
 
 let rec generate_constraints ty = function
+  | Record r ->
+      let field_tys_and_constraints =
+        List.map
+          (fun (field, value) ->
+            let ty = Union_find.make (ty_var (gensym ())) in
+            (field, ty, generate_constraints ty value))
+          r
+      in
+      let record_ty, constraints =
+        List.fold_left
+          (fun (row, cos) (field, ty, (co, _)) ->
+            (Union_find.make (TyRowExtend (field, ty, row)), cos @ co))
+          (Union_find.make TyRowEmpty, [])
+          field_tys_and_constraints
+      in
+      ( CEq (ty, Union_find.make (TyRecord record_ty)) :: constraints,
+        TRecord
+          ( List.map
+              (fun (field, _, (_, value)) -> (field, value))
+              field_tys_and_constraints,
+            ty ) )
+  | RecordAccess (r, a) ->
+      let rest_row = Union_find.make (ty_var (gensym ())) in
+      let r_ty = Union_find.make (ty_var (gensym ())) in
+      let cos, r = generate_constraints r_ty r in
+      ( CEq
+          ( ty,
+            Union_find.make
+              (TyRecord (Union_find.make (TyRowExtend (a, r_ty, rest_row)))) )
+        :: cos,
+        TRecordAccess (r, a, ty) )
+  | RecordExtend (r, e) ->
+      let r_ty = Union_find.make (ty_var (gensym ())) in
+      let cos, r = generate_constraints r_ty r in
+      let new_field_tys_and_constraints =
+        List.map
+          (fun (field, value) ->
+            let ty = Union_find.make (ty_var (gensym ())) in
+            (field, ty, generate_constraints ty value))
+          e
+      in
+      let new_record_ty, constraints =
+        List.fold_left
+          (fun (row, cos) (field, ty, (co, _)) ->
+            (Union_find.make (TyRowExtend (field, ty, row)), cos @ co))
+          (r_ty (* TODO: might have to unrecord this type*), cos)
+          new_field_tys_and_constraints
+      in
+      ( CEq (ty, Union_find.make (TyRecord new_record_ty)) :: constraints,
+        TRecordExtend
+          ( r,
+            List.map
+              (fun (field, _, (_, value)) -> (field, value))
+              new_field_tys_and_constraints,
+            ty ) )
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
   | Number n -> ([ CEq (ty, Union_find.make TyNumber) ], TNumber (n, ty))
   | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
@@ -232,12 +308,6 @@ let unify (s : ty) (t : ty) cs_env =
       | _ -> () (* TODO: maybe fail here *)
   and inner_row cs_env used l t r = function
     (* TODO: might need cyclic checking here *)
-    (* | TyRowExtend (l', t', TyVar _) -> *)
-    (*     let beta = Union_find.make (ty_var (gensym ())) in *)
-    (*     let gamma = Union_find.make (ty_var (gensym ())) in *)
-    (*     inner gamma t cs_env used; *)
-    (*     let r' = Union_find.make (TyRowExtend (l, t, beta)) in *)
-    (*     Union_find.union_with (fun _ _ -> v) s r |> unit_ify (* () *) *)
     | TyRowExtend (l', t', r') when l = l' ->
         inner t t' cs_env used;
         inner r r' cs_env used
