@@ -157,8 +157,8 @@ let ftv_ty (ty : ty) =
     if List.memq root used then StringSet.empty
     else
       match node.data with
-      | TyVar (v, _) -> StringSet.singleton v (* maybe not free? *)
-      | TyGenVar v -> StringSet.singleton v
+      | TyVar (v, _) -> StringSet.singleton v
+      | TyGenVar _ -> StringSet.empty (* maybe free? *)
       | TyArrow (p, r) ->
           StringSet.union (inner p (root :: used)) (inner r (root :: used))
       | TyUnit -> StringSet.empty
@@ -276,7 +276,34 @@ let unify (s : ty) (t : ty) cs_env =
   in
   inner s t cs_env []
 
-let generalize (ForAll (_, _, ty) : 'a scheme_co) = ForAll ([], ty)
+let generalize (ForAll (_, _, ty) : 'a scheme_co) =
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> (t, StringSet.empty))
+         ~none:(fun () ->
+           let replacement_root = Union_find.make (ty_var (gensym ())) in
+           match node.data with
+           | TyVar (v, l) when l > !current_level ->
+               (Union_find.make (TyGenVar v), StringSet.singleton v)
+           | TyArrow (p, r) ->
+               let p, generalized =
+                 inner p ((root, replacement_root) :: used)
+               in
+               let r, generalized' =
+                 inner r ((root, replacement_root) :: used)
+               in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyArrow (p, r)))
+               in
+               (r, StringSet.union generalized generalized')
+           | TyGenVar _ | TyUnit | TyVar (_, _) -> (ty, StringSet.empty)))
+      ()
+  in
+  let ty, generalized_var = inner ty [] in
+  ForAll (StringSet.to_list generalized_var, ty)
 
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
@@ -293,12 +320,6 @@ let rec solve_constraint env cs_env : 'a co -> _ = function
         else
         (*then σ < T′ (read: T′ is an instance of σ ) *)
         (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
-        let _instaniate_mapping =
-          (* all these would need to be added to the cs_env *)
-          (* basically the ∃X *)
-          List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
-          |> Subst.of_list
-        in
         solve_constraints env cs_env
           (* by applying this "substion" we put the ∃X *)
           (* really we should do propery exist and not have to substitute *)
