@@ -4,10 +4,12 @@ type term =
   | App of term * term
   | Let of string * term * term
   | Unit
+  | Number of float
 
 type 't ty_f =
   | TyVar of string * int
   | TyUnit
+  | TyNumber
   | TyArrow of 't * 't
   | TyGenVar of string
 
@@ -16,6 +18,7 @@ module StringSet = Set.Make (String)
 
 type 't typed_term =
   | TVar of string * 't
+  | TNumber of float * 't
   | TLambda of string * 't * 't typed_term * 't
   | TApp of 't typed_term * 't typed_term * 't
   | TUnit of 't
@@ -41,6 +44,7 @@ let type_to_string ty =
            | TyVar (v, _) -> (v, [])
            | TyGenVar v -> (v, [])
            | TyUnit -> ("()", [])
+           | TyNumber -> ("number", [])
            | TyArrow (x, y) ->
                let sym = gensym () in
                let x_string, used' = inner ((root, sym) :: used) x in
@@ -57,6 +61,7 @@ let type_to_string ty =
 let tterm_to_string =
   let rec inner = function
     | TVar (v, t) -> v ^ ": " ^ type_to_string t
+    | TNumber (n, _) -> string_of_float n
     | TLambda (v, v_ty, typed_term, _) ->
         "(fun (" ^ v ^ ": " ^ type_to_string v_ty ^ ") -> " ^ inner typed_term
         ^ ")"
@@ -116,6 +121,7 @@ let ty_var var = TyVar (var, !current_level)
 
 let rec generate_constraints ty = function
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
+  | Number n -> ([ CEq (ty, Union_find.make TyNumber) ], TNumber (n, ty))
   | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
   | App (f, x) ->
       let a1 = gensym () in
@@ -161,7 +167,7 @@ let ftv_ty (ty : ty) =
       | TyGenVar _ -> StringSet.empty (* maybe free? *)
       | TyArrow (p, r) ->
           StringSet.union (inner p (root :: used)) (inner r (root :: used))
-      | TyUnit -> StringSet.empty
+      | TyUnit | TyNumber -> StringSet.empty
   in
   inner ty []
 
@@ -220,7 +226,8 @@ let generalize (ForAll (_, _, ty) : 'a scheme_co) =
                    (Union_find.make (TyArrow (p, r)))
                in
                (r, StringSet.union generalized generalized')
-           | TyGenVar _ | TyUnit | TyVar (_, _) -> (ty, StringSet.empty)))
+           | TyNumber | TyGenVar _ | TyUnit | TyVar (_, _) ->
+               (ty, StringSet.empty)))
       ()
   in
   let ty, generalized_var = inner ty [] in
@@ -252,7 +259,7 @@ let instantiate (ForAll (vars, ty)) =
                    (Union_find.make (TyArrow (p, r)))
                in
                r
-           | TyVar _ | TyUnit -> ty))
+           | TyNumber | TyVar _ | TyUnit -> ty))
       ()
   in
   let _ =
