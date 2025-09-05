@@ -11,6 +11,10 @@ type 't ty_f =
   | TyUnit
   | TyNumber
   | TyArrow of 't * 't
+  | TyRowEmpty
+  | TyRowExtend of string * 't * 't
+  | TyRecord of 't
+  | TyVariant of 't
   | TyGenVar of string
 
 module Subst = Map.Make (String)
@@ -34,19 +38,36 @@ let gensym () =
   string_of_int counter'
 
 let type_to_string ty =
-  let rec inner used ty =
+  let rec inner used ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") ty =
     let root, `root node = Union_find.find_set ty in
     (List.assq_opt root used
     |> Option.fold
          ~some:(fun t () -> (t, [ ty ]))
          ~none:(fun () ->
+           let sym = gensym () in
            match node.data with
            | TyVar (v, _) -> (v, [])
            | TyGenVar v -> (v, [])
            | TyUnit -> ("()", [])
            | TyNumber -> ("number", [])
+           | TyRowEmpty -> (unit, [])
+           | TyRecord t ->
+               let t, used' = inner ((root, sym) :: used) ~unit:"" t in
+               ("{ " ^ t ^ " }", used')
+           | TyRowExtend (label, field, row_extension) ->
+               let field, used' = inner ((root, sym) :: used) field in
+               let row_extension, used'' =
+                 inner ((root, sym) :: used) row_extension
+               in
+               ( label ^ type_delim ^ field ^ delim ^ row_extension,
+                 used' @ used'' )
+           | TyVariant row ->
+               let t, used' =
+                 inner ((root, sym) :: used) ~unit:"" ~delim:"| "
+                   ~type_delim:" " row
+               in
+               ("(" ^ t ^ ")", used')
            | TyArrow (x, y) ->
-               let sym = gensym () in
                let x_string, used' = inner ((root, sym) :: used) x in
                let y_string, used'' = inner ((root, sym) :: used) y in
                let used' = used' @ used'' in
@@ -167,7 +188,11 @@ let ftv_ty (ty : ty) =
       | TyGenVar _ -> StringSet.empty (* maybe free? *)
       | TyArrow (p, r) ->
           StringSet.union (inner p (root :: used)) (inner r (root :: used))
-      | TyUnit | TyNumber -> StringSet.empty
+      | TyRecord r -> inner r (root :: used)
+      | TyVariant v -> inner v (root :: used)
+      | TyRowExtend (_, p, r) ->
+          StringSet.union (inner p (root :: used)) (inner r (root :: used))
+      | TyRowEmpty | TyUnit | TyNumber -> StringSet.empty
   in
   inner ty []
 
@@ -196,9 +221,39 @@ let unify (s : ty) (t : ty) cs_env =
           inner s1 t1 cs_env ((s, t) :: used);
           inner s2 t2 cs_env ((s, t) :: used)
       | TyUnit, TyUnit -> ()
+      | TyNumber, TyNumber -> ()
+      | TyRowEmpty, TyRowEmpty -> ()
+      | TyRecord r, TyRecord r' -> inner cs_env r r' ((s, t) :: used)
+      | TyVariant v, TyVariant v' -> inner cs_env v v' ((s, t) :: used)
+      | TyRowExtend (l, t, r), ty | ty, TyRowExtend (l, t, r) ->
+          inner_row cs_env ((s, t) :: used) l t r ty
       | TyVar _, v | v, TyVar _ ->
           Union_find.union_with (fun _ _ -> v) s t |> unit_ify (* () *)
-      | _ -> ()
+      | _ -> () (* TODO: maybe fail here *)
+  and inner_row cs_env used l t r = function
+    (* TODO: might need cyclic checking here *)
+    (* | TyRowExtend (l', t', TyVar _) -> *)
+    (*     let beta = Union_find.make (ty_var (gensym ())) in *)
+    (*     let gamma = Union_find.make (ty_var (gensym ())) in *)
+    (*     inner gamma t cs_env used; *)
+    (*     let r' = Union_find.make (TyRowExtend (l, t, beta)) in *)
+    (*     Union_find.union_with (fun _ _ -> v) s r |> unit_ify (* () *) *)
+    | TyRowExtend (l', t', r') when l = l' ->
+        inner t t' cs_env used;
+        inner r r' cs_env used
+    | TyRowExtend (l', t', r') -> (
+        let _, `root root = Union_find.find_set r' in
+        match root.data with
+        | TyVar _ ->
+            let beta = Union_find.make (ty_var (gensym ())) in
+            let gamma = Union_find.make (ty_var (gensym ())) in
+            inner gamma t cs_env used;
+            inner (Union_find.make (TyRowExtend (l', t', beta))) r cs_env used;
+            root.data <- TyRowExtend (l, gamma, beta)
+        | _ -> inner_row cs_env used l t r root.data)
+    | TyArrow _ | TyRecord _ | TyVariant _ | TyRowEmpty | TyNumber | TyGenVar _
+    | TyVar _ | TyUnit ->
+        failwith ""
   in
   inner s t cs_env []
 
@@ -226,7 +281,40 @@ let generalize (ForAll (_, _, ty) : 'a scheme_co) =
                    (Union_find.make (TyArrow (p, r)))
                in
                (r, StringSet.union generalized generalized')
-           | TyNumber | TyGenVar _ | TyUnit | TyVar (_, _) ->
+           | TyRecord r ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let r, generalized' =
+                 inner r ((root, replacement_root) :: used)
+               in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRecord r))
+               in
+               (r, generalized')
+           | TyVariant v ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let v, generalized =
+                 inner v ((root, replacement_root) :: used)
+               in
+               let v =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyVariant v))
+               in
+               (v, generalized)
+           | TyRowExtend (l, t, r) ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let t, generalized =
+                 inner t ((root, replacement_root) :: used)
+               in
+               let r, generalized' =
+                 inner r ((root, replacement_root) :: used)
+               in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRowExtend (l, t, r)))
+               in
+               (r, StringSet.union generalized generalized')
+           | TyRowEmpty | TyNumber | TyGenVar _ | TyUnit | TyVar (_, _) ->
                (ty, StringSet.empty)))
       ()
   in
@@ -259,7 +347,32 @@ let instantiate (ForAll (vars, ty)) =
                    (Union_find.make (TyArrow (p, r)))
                in
                r
-           | TyNumber | TyVar _ | TyUnit -> ty))
+           | TyRecord r ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let r = inner r ((root, replacement_root) :: used) in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRecord r))
+               in
+               r
+           | TyVariant v ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let v = inner v ((root, replacement_root) :: used) in
+               let v =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyVariant v))
+               in
+               v
+           | TyRowExtend (l, t, r) ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let t = inner t ((root, replacement_root) :: used) in
+               let r = inner r ((root, replacement_root) :: used) in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRowExtend (l, t, r)))
+               in
+               r
+           | TyRowEmpty | TyNumber | TyVar _ | TyUnit -> ty))
       ()
   in
   let _ =
