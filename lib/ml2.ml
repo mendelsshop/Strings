@@ -165,88 +165,8 @@ let ftv_ty (ty : ty) =
   in
   inner ty []
 
-let apply_subst_ty (subst : ty Subst.t) (ty : ty) =
-  (* going to need cycle detection *)
-  if
-    StringSet.disjoint (ftv_ty ty)
-      (subst |> Subst.to_list |> List.map fst |> StringSet.of_list)
-  then ty
-  else
-    let rec inner ty used =
-      let root, `root node = Union_find.find_set ty in
-      (List.assq_opt root used
-      |> Option.fold
-           ~some:(fun t () -> t)
-           ~none:(fun () ->
-             let replacement_root = Union_find.make (ty_var (gensym ())) in
-             match node.data with
-             | TyVar (v, _) ->
-                 Subst.find_opt v subst
-                 |> Option.map (fun t -> t)
-                 |> Option.value ~default:ty
-             | TyArrow (p, r) ->
-                 let p = inner p ((root, replacement_root) :: used) in
-                 let r = inner r ((root, replacement_root) :: used) in
-                 let r =
-                   Union_find.union replacement_root
-                     (Union_find.make (TyArrow (p, r)))
-                 in
-                 r
-             | TyGenVar _ | TyUnit -> ty))
-        ()
-    in
-    let ty = inner ty [] in
-    ty
-
-let rec apply_subst_tterm subst = function
-  | TVar (v, ty) -> TVar (v, apply_subst_ty subst ty)
-  | TUnit ty -> TUnit (apply_subst_ty subst ty)
-  | TLambda (v, v_ty, b, ty) ->
-      TLambda
-        ( v,
-          apply_subst_ty subst v_ty,
-          apply_subst_tterm subst b,
-          apply_subst_ty subst ty )
-  | TApp (f, a, ty) ->
-      TApp
-        ( apply_subst_tterm subst f,
-          apply_subst_tterm subst a,
-          apply_subst_ty subst ty )
-  | TLet (v, v_ty, e1, e2, ty) ->
-      TLet
-        ( v,
-          apply_subst_ty subst v_ty,
-          apply_subst_tterm subst e1,
-          apply_subst_tterm subst e2,
-          apply_subst_ty subst ty )
-
-let apply_subst_subst subst on_subst = Subst.map (apply_subst_ty subst) on_subst
-
 (* TODO: make sure correct order *)
-let combose_subst subst subst' =
-  Subst.union (fun _ a _ -> Some a) (apply_subst_subst subst subst') subst
 
-let rec apply_subst_constraint subst =
- (function
- | CEq (x, y) -> CEq (apply_subst_ty subst x, apply_subst_ty subst y)
- | CInstance (var, ty) -> CInstance (var, apply_subst_ty subst ty)
- | CLet (var, forall, cos') ->
-     CLet
-       (var, apply_subst_scheme forall subst, apply_subst_constraints subst cos')
- | CExist (vars, cos) -> apply_subst_exist subst vars cos)
-
-and apply_subst_constraints subst = List.map (apply_subst_constraint subst)
-
-and apply_subst_scheme (ForAll (vars, cos, ty)) subst =
-  let subst' = Subst.filter (fun name _ -> not (List.mem name vars)) subst in
-  ForAll (vars, apply_subst_constraints subst' cos, apply_subst_ty subst' ty)
-
-and apply_subst_exist subst vars cos =
-  let subst' = Subst.filter (fun name _ -> not (List.mem name vars)) subst in
-  CExist (vars, apply_subst_constraints subst' cos)
-
-let apply_subst_env l subst =
-  List.map (fun (name, scheme) -> (name, apply_subst_scheme scheme subst)) l
 (* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
 
 (* the way it is now we probably need to substitute into env *)
@@ -288,6 +208,7 @@ let generalize (ForAll (_, _, ty) : 'a scheme_co) =
            | TyVar (v, l) when l > !current_level ->
                (Union_find.make (TyGenVar v), StringSet.singleton v)
            | TyArrow (p, r) ->
+               (* dont recostruct if anything under doesn't get generalized *)
                let p, generalized =
                  inner p ((root, replacement_root) :: used)
                in
@@ -305,13 +226,49 @@ let generalize (ForAll (_, _, ty) : 'a scheme_co) =
   let ty, generalized_var = inner ty [] in
   ForAll (StringSet.to_list generalized_var, ty)
 
+let instantiate (ForAll (vars, ty)) =
+  let subst =
+    List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
+    |> Subst.of_list
+  in
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> t)
+         ~none:(fun () ->
+           let replacement_root = Union_find.make (ty_var (gensym ())) in
+           match node.data with
+           | TyGenVar v ->
+               Subst.find_opt v subst
+               |> Option.map (fun t -> t)
+               |> Option.value ~default:ty
+           | TyArrow (p, r) ->
+               (* dont recostruct if anything under doesn't get instantiated *)
+               let p = inner p ((root, replacement_root) :: used) in
+               let r = inner r ((root, replacement_root) :: used) in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyArrow (p, r)))
+               in
+               r
+           | TyVar _ | TyUnit -> ty))
+      ()
+  in
+  let _ =
+    let y = fun x -> x in
+    y y ()
+  in
+  let ty = inner ty [] in
+  ty
+
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
 let rec solve_constraint env cs_env : 'a co -> _ = function
   | CEq (s, t) -> unify s t cs_env
   | CInstance (var, ty) ->
       (* (* TODO: better handling if not in env *) *)
-      let (ForAll (vars, ty')) = List.assoc var env in
+      let (ForAll (vars, _) as scheme) = List.assoc var env in
       let ftv = ftv_ty ty in
       (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
       if List.exists (fun var -> StringSet.mem var ftv) vars then
@@ -323,7 +280,7 @@ let rec solve_constraint env cs_env : 'a co -> _ = function
         solve_constraints env cs_env
           (* by applying this "substion" we put the ∃X *)
           (* really we should do propery exist and not have to substitute *)
-          [ CEq (ty', ty) ]
+          [ CEq (instantiate scheme, ty) ]
   | CExist (_vars, cos) ->
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
       solve_constraints env cs_env cos
