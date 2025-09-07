@@ -281,8 +281,8 @@ let ftv_ty (ty : ty) =
 
 let unit_ify _ = ()
 
-let unify (s : ty) (t : ty) cs_env =
-  let rec inner (s : ty) (t : ty) cs_env used =
+let unify (s : ty) (t : ty) =
+  let rec inner (s : ty) (t : ty) used =
     let s, `root s_data = Union_find.find_set s in
     let t, `root t_data = Union_find.find_set t in
     if
@@ -292,40 +292,48 @@ let unify (s : ty) (t : ty) cs_env =
     then ()
     else if s == t then ()
     else
-      match (s_data.data, t_data.data) with
-      | TyArrow (s1, s2), TyArrow (t1, t2) ->
-          inner s1 t1 cs_env ((s, t) :: used);
-          inner s2 t2 cs_env ((s, t) :: used)
-      | TyUnit, TyUnit -> ()
-      | TyNumber, TyNumber -> ()
-      | TyRowEmpty, TyRowEmpty -> ()
-      | TyRecord r, TyRecord r' -> inner cs_env r r' ((s, t) :: used)
-      | TyVariant v, TyVariant v' -> inner cs_env v v' ((s, t) :: used)
-      | TyRowExtend (l, t, r), ty | ty, TyRowExtend (l, t, r) ->
-          inner_row cs_env ((s, t) :: used) l t r ty
-      | TyVar _, v | v, TyVar _ ->
+      match ((s_data.data, s), (t_data.data, t)) with
+      | (TyArrow (s1, s2), _), (TyArrow (t1, t2), _) ->
+          inner s1 t1 ((s, t) :: used);
+          inner s2 t2 ((s, t) :: used)
+      | (TyUnit, _), (TyUnit, _) -> ()
+      | (TyNumber, _), (TyNumber, _) -> ()
+      | (TyRowEmpty, _), (TyRowEmpty, _) -> ()
+      | (TyRecord r, _), (TyRecord r', _) -> inner r r' ((s, t) :: used)
+      | (TyVariant v, _), (TyVariant v', _) -> inner v v' ((s, t) :: used)
+      | (TyRowExtend (l, t, r), _), (ty_data, ty)
+      | (ty_data, ty), (TyRowExtend (l, t, r), _) ->
+          inner_row ((s, t) :: used) l t r ty ty_data
+      | (TyVar _, _), (v, _) | (v, _), (TyVar _, _) ->
           Union_find.union_with (fun _ _ -> v) s t |> unit_ify (* () *)
-      | _ -> () (* TODO: maybe fail here *)
-  and inner_row cs_env used l t r = function
+      | _ ->
+          failwith
+            ("Unification Error (Symbol Clash): " ^ type_to_string s
+           ^ type_to_string t)
+  and inner_row used l t r ty = function
+    (* ty and the arguement to function are the same *)
     (* TODO: might need cyclic checking here *)
     | TyRowExtend (l', t', r') when l = l' ->
-        inner t t' cs_env used;
-        inner r r' cs_env used
+        inner t t' used;
+        inner r r' used
     | TyRowExtend (l', t', r') -> (
-        let _, `root root = Union_find.find_set r' in
+        let ty, `root root = Union_find.find_set r' in
         match root.data with
         | TyVar _ ->
             let beta = Union_find.make (ty_var (gensym ())) in
             let gamma = Union_find.make (ty_var (gensym ())) in
-            inner gamma t cs_env used;
-            inner (Union_find.make (TyRowExtend (l', t', beta))) r cs_env used;
+            inner gamma t used;
+            inner (Union_find.make (TyRowExtend (l', t', beta))) r used;
             root.data <- TyRowExtend (l, gamma, beta)
-        | _ -> inner_row cs_env used l t r root.data)
-    | TyArrow _ | TyRecord _ | TyVariant _ | TyRowEmpty | TyNumber | TyGenVar _
-    | TyVar _ | TyUnit ->
-        failwith ""
+        | _ -> inner_row used l t r ty root.data)
+    | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
+    | TyArrow _ | TyRecord _ | TyVariant _ | TyNumber | TyGenVar _ | TyVar _
+    | TyUnit ->
+        failwith
+          (type_to_string ty
+         ^ " is not a row, so it cannot be extended with label `" ^ l ^ "`.")
   in
-  inner s t cs_env []
+  inner s t []
 
 let generalize (ForAll (_, _, ty) : 'a scheme_co) =
   let rec inner ty used =
@@ -445,17 +453,12 @@ let instantiate (ForAll (vars, ty)) =
            | TyRowEmpty | TyNumber | TyVar _ | TyUnit -> ty))
       ()
   in
-  let _ =
-    let y = fun x -> x in
-    y y ()
-  in
-  let ty = inner ty [] in
-  ty
+  inner ty []
 
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
-let rec solve_constraint env cs_env : 'a co -> _ = function
-  | CEq (s, t) -> unify s t cs_env
+let rec solve_constraint env : 'a co -> _ = function
+  | CEq (s, t) -> unify s t
   | CInstance (var, ty) ->
       (* (* TODO: better handling if not in env *) *)
       let (ForAll (vars, _) as scheme) = List.assoc var env in
@@ -467,22 +470,22 @@ let rec solve_constraint env cs_env : 'a co -> _ = function
         else
         (*then σ < T′ (read: T′ is an instance of σ ) *)
         (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
-        solve_constraints env cs_env
+        solve_constraints env
           (* by applying this "substion" we put the ∃X *)
           (* really we should do propery exist and not have to substitute *)
           [ CEq (instantiate scheme, ty) ]
   | CExist (_vars, cos) ->
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
-      solve_constraints env cs_env cos
+      solve_constraints env cos
   | CLet (var, (ForAll (_, co, _ty) as scheme), co') ->
       enter_level ();
-      solve_constraints env cs_env co;
+      solve_constraints env co;
       leave_level ();
       (* TODO: make new scheme type that makes it easier to generalize based on ty *)
-      solve_constraints ((var, generalize scheme) :: env) cs_env co'
+      solve_constraints ((var, generalize scheme) :: env) co'
 
-and solve_constraints env cs_env = function
+and solve_constraints env = function
   | [] -> ()
   | cs :: constraints ->
-      solve_constraint env cs_env cs;
-      solve_constraints env cs_env constraints
+      solve_constraint env cs;
+      solve_constraints env constraints
