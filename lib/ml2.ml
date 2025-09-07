@@ -19,9 +19,9 @@ type 't tpattern =
 
 type term =
   | Var of string
-  | Lambda of string * term
+  | Lambda of pattern * term
   | App of term * term
-  | Let of string * term * term
+  | Let of pattern * term * term
   | Unit
   | Number of float
   | RecordAccess of term * string
@@ -44,18 +44,18 @@ type 't ty_f =
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
 
-type 't typed_term =
+type 't tterm =
   | TVar of string * 't
   | TNumber of float * 't
-  | TLambda of string * 't * 't typed_term * 't
-  | TApp of 't typed_term * 't typed_term * 't
+  | TLambda of 't tpattern * 't * 't tterm * 't
+  | TApp of 't tterm * 't tterm * 't
   | TUnit of 't
-  | TLet of string * 't * 't typed_term * 't typed_term * 't
-  | TRecordAccess of 't typed_term * string * 't
-  | TRecordExtend of 't typed_term * 't typed_term row * 't
-  | TRecord of 't typed_term row * 't
-  | TMatch of 't typed_term * ('t tpattern * 't typed_term) list * 't
-  | TConstructor of string * 't typed_term * 't
+  | TLet of 't tpattern * 't * 't tterm * 't tterm * 't
+  | TRecordAccess of 't tterm * string * 't
+  | TRecordExtend of 't tterm * 't tterm row * 't
+  | TRecord of 't tterm row * 't
+  | TMatch of 't tterm * ('t tpattern * 't tterm) list * 't
+  | TConstructor of string * 't tterm * 't
 
 type ty = 'a ty_f Union_find.elem as 'a
 
@@ -127,8 +127,8 @@ let tterm_to_string =
     | TVar (v, t) -> v ^ ": " ^ type_to_string t
     | TNumber (n, _) -> string_of_float n
     | TLambda (v, v_ty, typed_term, _) ->
-        "(fun (" ^ v ^ ": " ^ type_to_string v_ty ^ ") -> " ^ inner typed_term
-        ^ ")"
+        "(fun (" ^ tpattern_to_string v ^ ": " ^ type_to_string v_ty ^ ") -> "
+        ^ inner typed_term ^ ")"
     | TApp (f, a, _) -> "[" ^ inner f ^ " " ^ inner a ^ "]"
     | TUnit _ -> "()"
     | TRecord (row, _) ->
@@ -145,8 +145,8 @@ let tterm_to_string =
           |> String.concat "; ")
         ^ "}"
     | TLet (v, v_ty, e1, e2, _) ->
-        "let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ inner e1 ^ " in "
-        ^ inner e2
+        "let " ^ tpattern_to_string v ^ ": " ^ type_to_string v_ty ^ " = "
+        ^ inner e1 ^ " in " ^ inner e2
     | TConstructor (name, expr, _) -> name ^ " (" ^ inner expr ^ ")"
     | TMatch (expr, cases, _) ->
         "match ( " ^ inner expr
@@ -210,55 +210,78 @@ let rec generate_constraints ty = function
       let field_tys_and_constraints =
         List.map
           (fun (field, value) ->
-            let ty = Union_find.make (ty_var (gensym ())) in
-            (field, ty, generate_constraints ty value))
+            let var_name = gensym () in
+            let ty = Union_find.make (ty_var var_name) in
+            (field, ty, generate_constraints ty value, var_name))
           r
       in
-      let record_ty, constraints =
+      let record_ty, constraints, variables =
         List.fold_left
-          (fun (row, cos) (field, ty, (co, _)) ->
-            (Union_find.make (TyRowExtend (field, ty, row)), cos @ co))
-          (Union_find.make TyRowEmpty, [])
+          (fun (row, cos, vars) (field, ty, (co, _), name) ->
+            ( Union_find.make (TyRowExtend (field, ty, row)),
+              cos @ co,
+              name :: vars ))
+          (Union_find.make TyRowEmpty, [], [])
           field_tys_and_constraints
       in
-      ( CEq (ty, Union_find.make (TyRecord record_ty)) :: constraints,
+      ( [
+          CExist
+            ( variables,
+              CEq (ty, Union_find.make (TyRecord record_ty)) :: constraints );
+        ],
         TRecord
           ( List.map
-              (fun (field, _, (_, value)) -> (field, value))
+              (fun (field, _, (_, value), _) -> (field, value))
               field_tys_and_constraints,
             ty ) )
   | RecordAccess (r, a) ->
-      let rest_row = Union_find.make (ty_var (gensym ())) in
-      let r_ty = Union_find.make (ty_var (gensym ())) in
+      let rest_row_var = gensym () in
+      let rest_row = Union_find.make (ty_var rest_row_var) in
+      let r_var = gensym () in
+      let r_ty = Union_find.make (ty_var r_var) in
       let cos, r = generate_constraints r_ty r in
-      ( CEq
-          ( ty,
-            Union_find.make
-              (TyRecord (Union_find.make (TyRowExtend (a, r_ty, rest_row)))) )
-        :: cos,
+      ( [
+          CExist
+            ( [ rest_row_var; r_var ],
+              CEq
+                ( ty,
+                  Union_find.make
+                    (TyRecord
+                       (Union_find.make (TyRowExtend (a, r_ty, rest_row)))) )
+              :: cos );
+        ],
         TRecordAccess (r, a, ty) )
   | RecordExtend (r, e) ->
-      let r_ty = Union_find.make (ty_var (gensym ())) in
+      let r_var = gensym () in
+      let r_ty = Union_find.make (ty_var r_var) in
       let cos, r = generate_constraints r_ty r in
       let new_field_tys_and_constraints =
         List.map
           (fun (field, value) ->
-            let ty = Union_find.make (ty_var (gensym ())) in
-            (field, ty, generate_constraints ty value))
+            let var_name = gensym () in
+            let ty = Union_find.make (ty_var var_name) in
+            (field, ty, generate_constraints ty value, var_name))
           e
       in
-      let new_record_ty, constraints =
+      let new_record_ty, constraints, variables =
         List.fold_left
-          (fun (row, cos) (field, ty, (co, _)) ->
-            (Union_find.make (TyRowExtend (field, ty, row)), cos @ co))
-          (r_ty (* TODO: might have to unrecord this type*), cos)
+          (fun (row, cos, vars) (field, ty, (co, _), name) ->
+            ( Union_find.make (TyRowExtend (field, ty, row)),
+              cos @ co,
+              name :: vars ))
+          (r_ty (* TODO: might have to unrecord this type*), cos, [ r_var ])
           new_field_tys_and_constraints
       in
-      ( CEq (ty, Union_find.make (TyRecord new_record_ty)) :: constraints,
+      ( [
+          CExist
+            ( variables,
+              CEq (ty, Union_find.make (TyRecord new_record_ty)) :: constraints
+            );
+        ],
         TRecordExtend
           ( r,
             List.map
-              (fun (field, _, (_, value)) -> (field, value))
+              (fun (field, _, (_, value), _) -> (field, value))
               new_field_tys_and_constraints,
             ty ) )
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
@@ -272,7 +295,7 @@ let rec generate_constraints ty = function
       in
       let c', x' = generate_constraints a1_ty x in
       ([ CExist ([ a1 ], c @ c') ], TApp (f', x', ty))
-  | Lambda (x, t) ->
+  | Lambda (PVar x, t) ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
       let a2 = gensym () in
@@ -286,8 +309,8 @@ let rec generate_constraints ty = function
                 CEq (Union_find.make (TyArrow (a1_ty, a2_ty)), ty);
               ] );
         ],
-        TLambda (x, a1_ty, t', ty) )
-  | Let (v, t1, t2) ->
+        TLambda (PTVar (x, a1_ty), a1_ty, t', ty) )
+  | Let (PVar v, t1, t2) ->
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
@@ -296,9 +319,27 @@ let rec generate_constraints ty = function
       let c', t2' = generate_constraints ty t2 in
       ( [ CLet (v, ForAll ([ a1 ], c, a1_ty), c') ],
         (* TODO: maybe a1 has to be in a forall *)
-        TLet (v, a1_ty, t1', t2', ty) )
+        TLet (PTVar (v, a1_ty), a1_ty, t1', t2', ty) )
   | Match _ -> failwith "todo"
-  | Constructor _ -> failwith "todo"
+  | Constructor (name, value) ->
+      let r = gensym () in
+      let r_ty = Union_find.make (ty_var r) in
+      let cs, value' = generate_constraints r_ty value in
+      let rest_row = gensym () in
+      let rest_row_ty = Union_find.make (ty_var rest_row) in
+      ( [
+          CExist
+            ( [ r; rest_row ],
+              CEq
+                ( ty,
+                  Union_find.make
+                    (TyVariant
+                       (Union_find.make (TyRowExtend (name, r_ty, rest_row_ty))))
+                )
+              :: cs );
+        ],
+        TConstructor (name, value', ty) )
+  | _ -> failwith "todo binder with pattern"
 
 let ftv_ty (ty : ty) =
   let rec inner ty used =
