@@ -108,8 +108,6 @@ module SubstitablePattern : Substitable with type t = tpattern = struct
   let rec apply subs = function
     | PTVar (var, ty) -> PTVar (var, SubstitableType.apply subs ty)
     | (PTBoolean _ | PTNumber _) as e -> e
-    | PTTuple (e1, e2, ty) ->
-        PTTuple (apply subs e1, apply subs e2, SubstitableType.apply subs ty)
     | PTWildcard ty -> PTWildcard (SubstitableType.apply subs ty)
     | PTPoly (metas, pat) ->
         let subst' = MetaVariables.fold Subst.remove metas subs in
@@ -159,8 +157,6 @@ module SubstitableExpr : Substitable with type t = texpr = struct
     | TApplication (abs, arg, ty) ->
         TApplication
           (apply subs abs, apply subs arg, SubstitableType.apply subs ty)
-    | TTuple (e1, e2, ty) ->
-        TTuple (apply subs e1, apply subs e2, SubstitableType.apply subs ty)
     | TPoly (metas, expr) ->
         let subst' = MetaVariables.fold Subst.remove metas subs in
         TPoly (metas, apply subst' expr)

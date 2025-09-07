@@ -1,5 +1,22 @@
 type 'a row = (string * 'a) list
 
+type pattern =
+  | PVar of string
+  | PWildcard
+  | PNumber of float
+  | PBoolean of bool
+  | PRecord of pattern row
+  (*   TODO: does record extension makes sense for patterns   *)
+  | PConstructor of string * pattern
+
+type 't tpattern =
+  | PTVar of string * 't
+  | PTWildcard of 't
+  | PTNumber of float * 't
+  | PTBoolean of bool * 't
+  | PTRecord of 't tpattern row * 't
+  | PTConstructor of string * 't tpattern * 't
+
 type term =
   | Var of string
   | Lambda of string * term
@@ -10,6 +27,8 @@ type term =
   | RecordAccess of term * string
   | RecordExtend of term * term row
   | Record of term row
+  | Constructor of string * term
+  | Match of term * (pattern * term) list
 
 type 't ty_f =
   | TyVar of string * int
@@ -35,6 +54,8 @@ type 't typed_term =
   | TRecordAccess of 't typed_term * string * 't
   | TRecordExtend of 't typed_term * 't typed_term row * 't
   | TRecord of 't typed_term row * 't
+  | TMatch of 't typed_term * ('t tpattern * 't typed_term) list * 't
+  | TConstructor of string * 't typed_term * 't
 
 type ty = 'a ty_f Union_find.elem as 'a
 
@@ -87,6 +108,20 @@ let type_to_string ty =
   in
   inner [] ty |> fst
 
+let rec tpattern_to_string = function
+  | PTVar (s, _) -> s
+  | PTBoolean (b, _) -> string_of_bool b
+  | PTNumber (n, _) -> string_of_float n
+  | PTWildcard _ -> "_"
+  | PTRecord (row, _) ->
+      "{ "
+      ^ (row
+        |> List.map (fun (label, pat) -> label ^ " = " ^ tpattern_to_string pat)
+        |> String.concat "; ")
+      ^ " }"
+  | PTConstructor (name, pattern, _) ->
+      name ^ " (" ^ tpattern_to_string pattern ^ ")"
+
 let tterm_to_string =
   let rec inner = function
     | TVar (v, t) -> v ^ ": " ^ type_to_string t
@@ -112,6 +147,15 @@ let tterm_to_string =
     | TLet (v, v_ty, e1, e2, _) ->
         "let " ^ v ^ ": " ^ type_to_string v_ty ^ " = " ^ inner e1 ^ " in "
         ^ inner e2
+    | TConstructor (name, expr, _) -> name ^ " (" ^ inner expr ^ ")"
+    | TMatch (expr, cases, _) ->
+        "match ( " ^ inner expr
+        ^ " ) with \n"
+          (* we have an indent before the first case as it does not get indented by concat *)
+        ^ (cases
+          |> List.map (fun (pat, case) ->
+                 tpattern_to_string pat ^ " -> " ^ inner case)
+          |> String.concat "\n|")
   in
   inner
 
@@ -253,6 +297,8 @@ let rec generate_constraints ty = function
       ( [ CLet (v, ForAll ([ a1 ], c, a1_ty), c') ],
         (* TODO: maybe a1 has to be in a forall *)
         TLet (v, a1_ty, t1', t2', ty) )
+  | Match _ -> failwith "todo"
+  | Constructor _ -> failwith "todo"
 
 let ftv_ty (ty : ty) =
   let rec inner ty used =

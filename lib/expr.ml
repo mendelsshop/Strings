@@ -34,7 +34,8 @@ module Types = struct
         label ^ type_delim ^ type_to_string field ^ delim
         ^ type_to_string row_extension ~type_delim ~delim ~unit
     | TRowEmpty -> unit
-    | TVariant row -> type_to_string row ~unit:"" ~delim:"| " ~type_delim:" "
+    | TVariant row ->
+        "(" ^ type_to_string row ~unit:"" ~delim:"| " ~type_delim:" " ^ ")"
     | TMu (var, ty) -> "μ" ^ var ^ "." ^ type_to_string ty
 
   let rec row_tail = function
@@ -53,7 +54,6 @@ type pattern =
   | PWildcard
   | PNumber of float
   | PBoolean of bool
-  | PTuple of pattern * pattern
   | PRecord of pattern row
   (*   TODO: does record extension makes sense for patterns   *)
   | PConstructor of string * pattern
@@ -63,8 +63,6 @@ let rec pattern_to_string = function
   | PBoolean b -> string_of_bool b
   | PNumber n -> string_of_float n
   | PWildcard -> "_"
-  | PTuple (e1, e2) ->
-      "( " ^ pattern_to_string e1 ^ " , " ^ pattern_to_string e2 ^ " )"
   | PRecord row ->
       "{ "
       ^ (row
@@ -79,7 +77,6 @@ type tpattern =
   | PTWildcard of ty
   | PTNumber of float * ty
   | PTBoolean of bool * ty
-  | PTTuple of tpattern * tpattern * ty
   | PTPoly of MetaVariables.t * tpattern
   | PTRecord of tpattern row * ty
   | PTConstructor of string * tpattern * ty
@@ -89,8 +86,6 @@ let rec tpattern_to_string = function
   | PTBoolean (b, _) -> string_of_bool b
   | PTNumber (n, _) -> string_of_float n
   | PTWildcard _ -> "_"
-  | PTTuple (e1, e2, _) ->
-      "( " ^ tpattern_to_string e1 ^ " , " ^ tpattern_to_string e2 ^ " )"
   | PTPoly (metas, pat) ->
       (if MetaVariables.is_empty metas then ""
        else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
@@ -109,7 +104,6 @@ let rec type_of_pattern pattern =
   | PTVar (_, ty)
   | PTBoolean (_, ty)
   | PTNumber (_, ty)
-  | PTTuple (_, _, ty)
   | PTRecord (_, ty)
   | PTConstructor (_, _, ty)
   | PTWildcard ty ->
@@ -169,7 +163,6 @@ type expr =
   | LetRec of pattern * expr * expr
   | Lambda of pattern * expr
   | Application of expr * expr
-  | Tuple of expr * expr
   | Record of expr row
   | RecordAcces of expr * string
   | Constructor of string * expr
@@ -184,8 +177,6 @@ let rec expr_to_string indent =
   | Var s -> s
   | Boolean b -> string_of_bool b
   | Number n -> string_of_float n
-  | Tuple (e1, e2) ->
-      "( " ^ expr_to_string indent e1 ^ " , " ^ expr_to_string indent e2 ^ " )"
   | If (cond, cons, alt) ->
       "if ( " ^ expr_to_string indent cond ^ " )\n" ^ indent_string ^ "then ( "
       ^ expr_to_string next_level cons
@@ -244,7 +235,6 @@ type texpr =
   | TLambda of tpattern * texpr * ty
   | TApplication of texpr * texpr * ty
   | TPoly of MetaVariables.t * texpr
-  | TTuple of texpr * texpr * ty
   | TRecord of texpr row * ty
   | TRecordAcces of texpr * string * ty
   | TConstructor of string * texpr * ty
@@ -265,8 +255,7 @@ let rec type_of expr =
   | TRecordExtend (_, _, ty)
   | TRecord (_, ty)
   | TMatch (_, _, ty)
-  | TConstructor (_, _, ty)
-  | TTuple (_, _, ty) ->
+  | TConstructor (_, _, ty) ->
       ty
   | TPoly (metas, expr) -> TPoly (metas, type_of expr)
 
@@ -301,9 +290,6 @@ let rec texpr_to_string indent =
       "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg
       ^ " )"
   | TPoly (_, e) -> texpr_to_string indent e
-  | TTuple (e1, e2, _) ->
-      "( " ^ texpr_to_string indent e1 ^ " , " ^ texpr_to_string indent e2
-      ^ " )"
   | TRecord (row, _ty) ->
       "{\n"
       ^ (row

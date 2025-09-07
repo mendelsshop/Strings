@@ -58,14 +58,6 @@ let parens_parser expr =
   expr >>= fun expr ->
   !(char ')') <$> fun _ -> expr
 
-let tuple expr wrapper =
-  let rec tuple () =
-    expr >>= fun e1 ->
-    !(char ',') >>= (fun _ -> tuple ()) |> opt <$> function
-    | Some e2 -> wrapper e1 e2
-    | None -> e1
-  in
-  tuple ()
 
 (*|> many*)
 (*List.fold*)
@@ -94,19 +86,16 @@ let variant_parser wrapper expr =
 
 let pattern =
   makeRecParser (fun pattern ->
-      let basic_forms =
-        choice
-          [
-            parens_parser pattern;
-            (char '_' <$> fun _ -> PWildcard);
-            ident_parser (fun i -> PVar i);
-            number_parser (fun n -> PNumber n);
-            boolean_parser (fun b -> PBoolean b);
-            record pattern;
-            variant_parser (fun name p -> PConstructor (name, p)) pattern;
-          ]
-      in
-      tuple !basic_forms (fun t1 t2 -> PTuple (t1, t2)))
+      choice
+        [
+          parens_parser pattern;
+          (char '_' <$> fun _ -> PWildcard);
+          ident_parser (fun i -> PVar i);
+          number_parser (fun n -> PNumber n);
+          boolean_parser (fun b -> PBoolean b);
+          record pattern;
+          variant_parser (fun name p -> PConstructor (name, p)) pattern;
+        ])
 
 let lambda_parser expr =
   char '\\' >>= fun _ ->
@@ -186,12 +175,9 @@ let expr =
                     basic_forms;
                 ]))
       in
-      let tuple =
-        tuple (record_acces_parser basic_forms) (fun t1 t2 -> Tuple (t1, t2))
-      in
       let application_parser =
         makeRecParser (fun application_parser ->
-            tuple >>= fun abs ->
+            record_acces_parser basic_forms >>= fun abs ->
             application_parser
             <$> (fun arg -> Application (abs, arg))
             <|> return abs)

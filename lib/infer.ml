@@ -42,11 +42,6 @@ let rec infer_pattern = function
       return ([], ty, PTWildcard ty)
   | PBoolean b -> return ([], TBool, PTBoolean (b, TBool))
   | PNumber b -> return ([], TInt, PTNumber (b, TInt))
-  | PTuple (t1, t2) ->
-      let* env1, e1_ty, t1' = infer_pattern t1 in
-      let* env2, e2_ty, t2' = infer_pattern t2 in
-      let ty = Types.TTuple (e1_ty, e2_ty) in
-      return (env1 @ env2, ty, PTTuple (t1', t2', ty))
   | PConstructor (name, pattern) ->
       let* other_variants = new_meta in
       let* env, ty, pattern' = infer_pattern pattern in
@@ -151,11 +146,6 @@ let infer_expr expr =
           ( ((abs_ty, TArrow (arg_ty, ret_ty)) :: cs) @ cs',
             ret_ty,
             TApplication (abs', arg', ret_ty) )
-    | Tuple (e1, e2) ->
-        let* cs, e1_ty, e1' = infer_inner e1 in
-        let* cs', e2_ty, e2' = infer_inner e2 in
-        let ty = Types.TTuple (e1_ty, e2_ty) in
-        return (cs @ cs', ty, TTuple (e1', e2', ty))
     | Record row ->
         let* row_init = return ([], TRowEmpty, []) in
 
