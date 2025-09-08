@@ -184,17 +184,36 @@ let rec generate_constraints ty = function
         ],
         TConstructor (name, value', ty) )
   | LetRec _ -> failwith "todo letrec"
-  | If _ -> failwith "todo if"
+  | If (cond, consequent, alternative) ->
+      let cond_var = gensym () in
+      let cond_ty = Union_find.make (ty_var cond_var) in
+      let cs, cond = generate_constraints cond_ty cond in
+      let cs', consequent = generate_constraints ty consequent in
+      let cs'', alternative = generate_constraints ty alternative in
+      ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
+        TIf (cond, consequent, alternative, ty) )
   | _ -> failwith "todo binder with pattern"
 
-let generate_constraints_top env = function
-  | Bind (_, _) -> failwith "todo tl let"
-  | Expr e ->
+let rec generate_constraints_top = function
+  | [] -> ([], [])
+  | Bind (PVar v, e) :: cs ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let c, t1' = generate_constraints a1_ty e in
+      leave_level ();
+      let cs, program = generate_constraints_top cs in
+      ( [ CLet (v, ForAll ([ a1 ], c, a1_ty), cs) ],
+        (* TODO: maybe a1 has to be in a forall *)
+        Bind (PTVar (v, a1_ty), t1') :: program )
+  | Expr e :: program' ->
       let cs, e =
         generate_constraints (Union_find.make (ty_var (gensym ()))) e
       in
-      (cs, Expr e, env)
-  | RecBind (_, _) -> failwith "todo tl letrec"
+      let cs', program'' = generate_constraints_top program' in
+      (cs @ cs', Expr e :: program'')
+  | Bind _ :: _ -> failwith "todo tl let"
+  | RecBind (_, _) :: _ -> failwith "todo tl letrec"
 (* TODO: make sure correct order *)
 
 (* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
@@ -225,8 +244,8 @@ let unify (s : ty) (t : ty) =
       | (TyRowEmpty, _), (TyRowEmpty, _) -> ()
       | (TyRecord r, _), (TyRecord r', _) -> inner r r' ((s, t) :: used)
       | (TyVariant v, _), (TyVariant v', _) -> inner v v' ((s, t) :: used)
-      | (TyRowExtend (l, t, r), _), (ty_data, ty)
-      | (ty_data, ty), (TyRowExtend (l, t, r), _) ->
+      | (TyRowExtend (l, t, r), _), ((TyRowExtend _ as ty_data), ty) ->
+          (* | ((TyRowExtend _ as  ty_data, ty), (TyRowExtend (l, t, r), _)) -> *)
           inner_row ((s, t) :: used) l t r ty ty_data
       | (TyVar _, _), (v, _) | (v, _), (TyVar _, _) ->
           Union_find.union_with (fun _ _ -> v) s t |> unit_ify (* () *)
@@ -246,9 +265,9 @@ let unify (s : ty) (t : ty) =
         | TyVar _ ->
             let beta = Union_find.make (ty_var (gensym ())) in
             let gamma = Union_find.make (ty_var (gensym ())) in
+            root.data <- TyRowExtend (l, gamma, beta);
             inner gamma t used;
-            inner (Union_find.make (TyRowExtend (l', t', beta))) r used;
-            root.data <- TyRowExtend (l, gamma, beta)
+            inner (Union_find.make (TyRowExtend (l', t', beta))) r used
         | _ -> inner_row used l t r ty root.data)
     | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
     | TyArrow _ | TyRecord _ | TyVariant _ | TyNumber | TyGenVar _ | TyVar _
@@ -418,12 +437,6 @@ and solve_constraints env = function
 
 let infer program =
   (* TODO: env *)
-  let cos, program' =
-    List.map
-      (fun e -> generate_constraints_top [] e |> fun (cs, v, _) -> (cs, v))
-      program
-    |> List.split
-  in
-  solve_constraints [] (List.concat cos);
+  let cos, program' = generate_constraints_top program in
+  solve_constraints [] cos;
   program'
-

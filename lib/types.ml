@@ -1,6 +1,5 @@
 open Utils
 
-
 type 't ty_f =
   | TyVar of string * int
   | TyUnit
