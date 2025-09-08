@@ -1,4 +1,4 @@
 (library
  (name ml)
- (modules Parser Expr Infer Monad Utils Stlc Union_find Types Gensym)
+ (modules Parser Expr Infer Monad Utils Union_find Types Gensym)
  (libraries monads AMPCL))

@@ -216,7 +216,29 @@ let rec generate_constraints ty = function
         ],
         (* TODO: maybe a1 has to be in a forall *)
         TLet (v, a1_ty, t1', t2', ty) )
-  | Match _ -> failwith "todo match"
+  | Match (expr, cases) ->
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let cs, expr' = generate_constraints a1_ty expr in
+      let cs', cases' =
+        List.map
+          (fun (pattern, case) ->
+            let env, cs, pattern' =
+              generate_constraints_pattern a1_ty pattern
+            in
+            let cs', case' = generate_constraints ty case in
+
+            ( CLet
+                ( List.map (fun (name, ty) -> (name, ForAll ([], ty))) env,
+                  [],
+                  cs' )
+              :: cs,
+              (pattern', case') ))
+          cases
+        |> List.split
+      in
+      let cs' = List.concat cs' in
+      ([ CExist ([ a1 ], cs' @ cs) ], TMatch (expr', cases', ty))
   | Constructor (name, value) ->
       let r = gensym () in
       let r_ty = Union_find.make (ty_var r) in
