@@ -1,50 +1,4 @@
 module MetaVariables = Set.Make (String)
-
-(*TODO: unit type for empty adts*)
-module Types = struct
-  type ty =
-    | TInt
-    | TBool
-    | TArrow of ty * ty
-    | TMeta of string
-    | TTuple of ty * ty
-    (*TODO: seperate row types, also would help with printing*)
-    | TRowEmpty
-    | TRowExtend of string * ty * ty
-    | TRecord of ty
-    | TVariant of ty
-    | TPoly of MetaVariables.t * ty
-    | TMu of string * ty
-
-  let rec type_to_string ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") =
-    function
-    | TInt -> "number"
-    | TBool -> "boolean"
-    | TArrow (t1, t2) ->
-        "(" ^ type_to_string t1 ^ " -> " ^ type_to_string t2 ^ ")"
-    | TMeta m -> m
-    | TTuple (t1, t2) ->
-        "( " ^ type_to_string t1 ^ " * " ^ type_to_string t2 ^ " )"
-    | TPoly (metas, ty) ->
-        (if MetaVariables.is_empty metas then ""
-         else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
-        ^ type_to_string ty
-    | TRecord t -> "{ " ^ type_to_string ~unit:"" t ^ " }"
-    | TRowExtend (label, field, row_extension) ->
-        label ^ type_delim ^ type_to_string field ^ delim
-        ^ type_to_string row_extension ~type_delim ~delim ~unit
-    | TRowEmpty -> unit
-    | TVariant row ->
-        "(" ^ type_to_string row ~unit:"" ~delim:"| " ~type_delim:" " ^ ")"
-    | TMu (var, ty) -> "μ" ^ var ^ "." ^ type_to_string ty
-
-  let rec row_tail = function
-    | TMeta m -> Some m
-    | TRowEmpty -> None
-    | TRowExtend (_, _, r) -> row_tail r
-    | _ -> None
-end
-
 open Types
 
 type 'a row = (string * 'a) list
@@ -72,24 +26,19 @@ let rec pattern_to_string = function
   | PConstructor (name, pattern) ->
       name ^ " (" ^ pattern_to_string pattern ^ ")"
 
-type tpattern =
-  | PTVar of string * ty
-  | PTWildcard of ty
-  | PTNumber of float * ty
-  | PTBoolean of bool * ty
-  | PTPoly of MetaVariables.t * tpattern
-  | PTRecord of tpattern row * ty
-  | PTConstructor of string * tpattern * ty
+type 't tpattern =
+  | PTVar of string * 't
+  | PTWildcard of 't
+  | PTNumber of float * 't
+  | PTBoolean of bool * 't
+  | PTRecord of 't tpattern row * 't
+  | PTConstructor of string * 't tpattern * 't
 
 let rec tpattern_to_string = function
   | PTVar (s, ty) -> s ^ " : " ^ type_to_string ty
   | PTBoolean (b, _) -> string_of_bool b
   | PTNumber (n, _) -> string_of_float n
   | PTWildcard _ -> "_"
-  | PTPoly (metas, pat) ->
-      (if MetaVariables.is_empty metas then ""
-       else "∀" ^ (MetaVariables.to_list metas |> String.concat ", ") ^ ".")
-      ^ tpattern_to_string pat
   | PTRecord (row, _ty) ->
       "{ "
       ^ (row
@@ -99,7 +48,7 @@ let rec tpattern_to_string = function
   | PTConstructor (name, pattern, _ty) ->
       name ^ " (" ^ tpattern_to_string pattern ^ ")"
 
-let rec type_of_pattern pattern =
+let type_of_pattern pattern =
   match pattern with
   | PTVar (_, ty)
   | PTBoolean (_, ty)
@@ -108,72 +57,44 @@ let rec type_of_pattern pattern =
   | PTConstructor (_, _, ty)
   | PTWildcard ty ->
       ty
-  | PTPoly (metas, expr) -> TPoly (metas, type_of_pattern expr)
-
-(*type 'a exprF =*)
-(*  | Var of string*)
-(*  | Boolean of bool*)
-(*  | Number of float*)
-(*  | TIf of 'a * 'a * 'a*)
-(*  | Let of string * 'a * 'a*)
-(*  | Lambda of string * 'a*)
-(*  | Application of 'a * 'a*)
-(**)
-(*type expr = Exp of expr exprF*)
-(*type texpr = TExp of (texpr * ty) exprF*)
-(**)
-(*let _ : expr = Exp (Let ("x", Exp (Number 5.0), Exp (Var "x")))*)
-(**)
-(*type 'a exprF' =*)
-(*  | Var of 'a * string*)
-(*  | Boolean of 'a * bool*)
-(*  | Number of 'a * float*)
-(*  | If of 'a exprF' * 'a exprF' * 'a exprF'*)
-(*  | Let of 'a * string * 'a exprF' * 'a exprF'*)
-(*  | Lambda of 'a * string * 'a exprF'*)
-(*  | Application of 'a * 'a exprF' * 'a exprF'*)
-(**)
-(*type expr' = unit exprF'*)
-(*type texpr' = ty exprF'*)
-(**)
-(*let _ : expr' = Let ((), "x", Number ((), 5.0), Var ((), "x"))*)
-(**)
-(*type 'a exprF'' = 'a exprF''' * 'a*)
-(**)
-(*and 'a exprF''' =*)
-(*  | Num of float*)
-(*  | Bool of bool*)
-(*  | Var of string*)
-(*  | If of 'a exprF'' * 'a exprF'' * 'a exprF''*)
-(*  | Lambda of string * 'a exprF''*)
-(*  | Let of string * 'a exprF'' * 'a exprF''*)
-(*  | App of 'a exprF'' * 'a exprF''*)
-(**)
-(*type expr'' = unit exprF''*)
-(*type texpr'' = ty exprF''*)
-(**)
-(*let _ : expr'' = (Let ("x", (Num 5.0, ()), (Var "x", ())), ())*)
 
 type expr =
   | Var of string
-  | Boolean of bool
-  | Number of float
-  | If of expr * expr * expr
-  | Let of pattern * expr * expr
-  | LetRec of pattern * expr * expr
   | Lambda of pattern * expr
   | Application of expr * expr
+  | Let of pattern * expr * expr
+  | LetRec of pattern * expr * expr
+  | Unit
+  | Boolean of bool
+  | Number of float
+  | RecordAccess of expr * string
+  | RecordExtend of expr * expr row
   | Record of expr row
-  | RecordAcces of expr * string
   | Constructor of string * expr
   | Match of expr * (pattern * expr) list
-  | RecordExtend of expr * expr row
+  | If of expr * expr * expr
 
-(*bad expression format*)
+type 't texpr =
+  | TVar of string * 't
+  | TNumber of float * 't
+  | TBoolean of bool * 't
+  | TLambda of 't tpattern * 't * 't texpr * 't
+  | TApplication of 't texpr * 't texpr * 't
+  | TUnit of 't
+  | TLet of 't tpattern * 't * 't texpr * 't texpr * 't
+  | TLetRec of 't tpattern * 't * 't texpr * 't texpr * 't
+  | TIf of 't texpr * 't texpr * 't texpr * ty
+  | TRecordAccess of 't texpr * string * 't
+  | TRecordExtend of 't texpr * 't texpr row * 't
+  | TRecord of 't texpr row * 't
+  | TMatch of 't texpr * ('t tpattern * 't texpr) list * 't
+  | TConstructor of string * 't texpr * 't
+
 let rec expr_to_string indent =
   let next_level = indent + 1 in
   let indent_string = String.make (next_level * 2) ' ' in
   function
+  | Unit -> "()"
   | Var s -> s
   | Boolean b -> string_of_bool b
   | Number n -> string_of_float n
@@ -211,7 +132,7 @@ let rec expr_to_string indent =
                indent_string ^ label ^ " = " ^ expr_to_string indent pat)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
-  | RecordAcces (record, label) -> expr_to_string indent record ^ "." ^ label
+  | RecordAccess (record, label) -> expr_to_string indent record ^ "." ^ label
   | Constructor (name, expr) -> name ^ " (" ^ expr_to_string indent expr ^ ")"
   | Match (expr, cases) ->
       "match ( " ^ expr_to_string indent expr ^ " ) with \n"
@@ -224,45 +145,29 @@ let rec expr_to_string indent =
 
 let expr_to_string = expr_to_string 0
 
-type texpr =
-  | TVar of string * ty
-  | TBoolean of bool * ty
-  | TNumber of float * ty
-  | TIf of texpr * texpr * texpr * ty
-    (*TODO: maybe store any metavariables this type captures*)
-  | TLet of tpattern * texpr * texpr * ty
-  | TLetRec of tpattern * texpr * texpr * ty
-  | TLambda of tpattern * texpr * ty
-  | TApplication of texpr * texpr * ty
-  | TPoly of MetaVariables.t * texpr
-  | TRecord of texpr row * ty
-  | TRecordAcces of texpr * string * ty
-  | TConstructor of string * texpr * ty
-  | TMatch of texpr * (tpattern * texpr) list * ty
-  | TRecordExtend of texpr * texpr row * ty
-
-let rec type_of expr =
+let type_of expr =
   match expr with
+  | TUnit ty
   | TVar (_, ty)
   | TBoolean (_, ty)
   | TNumber (_, ty)
   | TIf (_, _, _, ty)
-  | TLet (_, _, _, ty)
-  | TLetRec (_, _, _, ty)
-  | TLambda (_, _, ty)
-  | TRecordAcces (_, _, ty)
+  | TLet (_, _, _, _, ty)
+  | TLetRec (_, _, _, _, ty)
+  | TLambda (_, _, _, ty)
+  | TRecordAccess (_, _, ty)
   | TApplication (_, _, ty)
   | TRecordExtend (_, _, ty)
   | TRecord (_, ty)
   | TMatch (_, _, ty)
   | TConstructor (_, _, ty) ->
       ty
-  | TPoly (metas, expr) -> TPoly (metas, type_of expr)
 
 let rec texpr_to_string indent =
   let next_level = indent + 1 in
   let indent_string = String.make (next_level * 2) ' ' in
   function
+  | TUnit _ -> "()"
   | TVar (s, _) -> s
   | TBoolean (b, _) -> string_of_bool b
   | TNumber (n, _) -> string_of_float n
@@ -274,22 +179,21 @@ let rec texpr_to_string indent =
       ^ " )\n" ^ indent_string ^ "else ( "
       ^ texpr_to_string next_level alt
       ^ " )"
-  | TLet (var, e1, e2, _) ->
+  | TLet (var, _, e1, e2, _) ->
       "let " ^ tpattern_to_string var ^ " = ( " ^ texpr_to_string indent e1
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ texpr_to_string next_level e2
       ^ " )"
-  | TLetRec (var, e1, e2, _) ->
+  | TLetRec (var, _, e1, e2, _) ->
       "let rec " ^ tpattern_to_string var ^ " = ( " ^ texpr_to_string indent e1
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ texpr_to_string next_level e2
       ^ " )"
-  | TLambda (var, abs, _) ->
+  | TLambda (var, _, abs, _) ->
       "\\" ^ tpattern_to_string var ^ ".( " ^ texpr_to_string indent abs ^ " )"
   | TApplication (abs, arg, _) ->
       "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg
       ^ " )"
-  | TPoly (_, e) -> texpr_to_string indent e
   | TRecord (row, _ty) ->
       "{\n"
       ^ (row
@@ -297,7 +201,7 @@ let rec texpr_to_string indent =
                indent_string ^ label ^ " = " ^ texpr_to_string next_level pat)
         |> String.concat ";\n")
       ^ "\n}"
-  | TRecordAcces (record, label, _ty) ->
+  | TRecordAccess (record, label, _ty) ->
       texpr_to_string indent record ^ "." ^ label
   | TConstructor (name, expr, _ty) ->
       name ^ " (" ^ texpr_to_string indent expr ^ ")"
@@ -321,6 +225,43 @@ let rec texpr_to_string indent =
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
 
+(* let tterm_to_string = *)
+(*   let rec inner = function *)
+(*     | TVar (v, t) -> v ^ ": " ^ type_to_string t *)
+(*     | TNumber (n, _) -> string_of_float n *)
+(*     | TBoolean (b, _) -> string_of_bool b *)
+(*     | TLambda (v, v_ty, typed_term, _) -> *)
+(*         "(fun (" ^ tpattern_to_string v ^ ": " ^ type_to_string v_ty ^ ") -> " *)
+(*         ^ inner typed_term ^ ")" *)
+(*     | TApplication (f, a, _) -> "[" ^ inner f ^ " " ^ inner a ^ "]" *)
+(*     | TUnit _ -> "()" *)
+(*     | TRecord (row, _) -> *)
+(*         "{ " *)
+(*         ^ (row *)
+(*           |> List.map (fun (label, value) -> label ^ " = " ^ inner value) *)
+(*           |> String.concat "; ") *)
+(*         ^ " }" *)
+(*     | TRecordAccess (record, label, _ty) -> inner record ^ "." ^ label *)
+(*     | TRecordExtend (expr, row, _) -> *)
+(*         "{" ^ inner expr ^ " with " *)
+(*         ^ (row *)
+(*           |> List.map (fun (label, value) -> label ^ " = " ^ inner value) *)
+(*           |> String.concat "; ") *)
+(*         ^ "}" *)
+(*     | TLet (v, v_ty, e1, e2, _) -> *)
+(*         "let " ^ tpattern_to_string v ^ ": " ^ type_to_string v_ty ^ " = " *)
+(*         ^ inner e1 ^ " in " ^ inner e2 *)
+(*     | TConstructor (name, expr, _) -> name ^ " (" ^ inner expr ^ ")" *)
+(*     | TMatch (expr, cases, _) -> *)
+(*         "match ( " ^ inner expr *)
+(*         ^ " ) with \n" *)
+(*           (* we have an indent before the first case as it does not get indented by concat *) *)
+(*         ^ (cases *)
+(*           |> List.map (fun (pat, case) -> *)
+(*                  tpattern_to_string pat ^ " -> " ^ inner case) *)
+(*           |> String.concat "\n|") *)
+(*   in *)
+(*   inner *)
 let texpr_to_string = texpr_to_string 0
 
 type ('e, 'p) programF = Bind of 'p * 'e | Expr of 'e | RecBind of 'p * 'e
@@ -338,4 +279,4 @@ let tprogram_to_string = function
   | Expr expr -> texpr_to_string expr
 
 type program = (expr, pattern) programF
-type tprogram = (texpr, tpattern) programF
+type 't tprogram = ('t texpr, 't tpattern) programF

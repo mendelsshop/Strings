@@ -144,7 +144,7 @@ let record_acces_parser expr =
   expr >>= fun record ->
   many (char '.' >>= fun _ -> ident) <$> fun acceses ->
   List.fold_left
-    (fun record field -> RecordAcces (record, field))
+    (fun record field -> RecordAccess (record, field))
     record acceses
 
 let match_parser expr =
