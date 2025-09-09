@@ -4,14 +4,14 @@ open Expr
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
+
 type 't co =
   | CExist of string list * 't co list
   | CEq of 't * 't
   | CInstance of string * 't
-  | CLet of (string * 't scheme) list * 't co list * 't co list
-
-(* either this of qvar i don't think we need both *)
-and 't scheme = ForAll of string list * 't
+  | CLet of
+      (string * [ `for_all of string list * 't ]) list * 't co list * 't co list
+  | CDef of (string * [ `ty of 't ]) list * 't co list
 
 let rec constraint_to_string = function
   | CEq (t1, t2) -> type_to_string t1 ^ "~= " ^ type_to_string t2
@@ -19,7 +19,7 @@ let rec constraint_to_string = function
   | CLet (schemes, cos, cos') ->
       "let "
       ^ (List.map
-           (fun (var, ForAll (vars, ty)) ->
+           (fun (var, `for_all (vars, ty)) ->
              var ^ " :(ForAll " ^ String.concat ", " vars ^ " "
              ^ type_to_string ty ^ ") ")
            schemes
@@ -29,6 +29,13 @@ let rec constraint_to_string = function
   | CExist (vars, cos) ->
       "Exists " ^ String.concat ", " vars ^ " " ^ "."
       ^ constraints_to_string cos
+  | CDef (types, cos) ->
+      "def "
+      ^ (List.map
+           (fun (var, `ty ty) -> var ^ " : " ^ type_to_string ty ^ " ")
+           types
+        |> String.concat ", ")
+      ^ " in " ^ constraints_to_string cos
 
 and constraints_to_string ts =
   "[" ^ (ts |> List.map constraint_to_string |> String.concat ", ") ^ "]"
@@ -93,7 +100,7 @@ let rec generate_constraints_pattern ty = function
       let ty' = Union_find.make (TyRecord pattern_ty) in
       (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord (pattern, ty))
 
-let rec generate_constraints ty = function
+let rec generate_constraints ty : _ -> ty co list * _ = function
   | Record r ->
       let field_tys_and_constraints =
         List.map
@@ -194,8 +201,7 @@ let rec generate_constraints ty = function
       ( [
           CExist
             ( [ a1; a2 ],
-              CLet
-                (List.map (fun (name, ty) -> (name, ForAll ([], ty))) env, [], c)
+              CDef (env |> List.map (fun (v, t) -> (v, `ty t)), c)
               :: CEq (Union_find.make (TyArrow (a1_ty, a2_ty)), ty)
               :: cs );
         ],
@@ -210,7 +216,7 @@ let rec generate_constraints ty = function
       let c', t2' = generate_constraints ty t2 in
       ( [
           CLet
-            ( List.map (fun (name, ty) -> (name, ForAll ([ a1 ], ty))) env,
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
               c @ cs,
               c' );
         ],
@@ -228,11 +234,7 @@ let rec generate_constraints ty = function
             in
             let cs', case' = generate_constraints ty case in
 
-            ( CLet
-                ( List.map (fun (name, ty) -> (name, ForAll ([], ty))) env,
-                  [],
-                  cs' )
-              :: cs,
+            ( CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
               (pattern', case') ))
           cases
         |> List.split
@@ -257,7 +259,22 @@ let rec generate_constraints ty = function
               :: cs );
         ],
         TConstructor (name, value', ty) )
-  | LetRec _ -> failwith "todo letrec"
+  | LetRec (v, t1, t2) ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, v = generate_constraints_pattern a1_ty v in
+      let cs', t1' = generate_constraints a1_ty t1 in
+      leave_level ();
+      let cs'', t2' = generate_constraints ty t2 in
+      ( [
+          CLet
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
+              CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
+              cs'' );
+        ],
+        (* TODO: maybe a1 has to be in a forall *)
+        TLet (v, a1_ty, t1', t2', ty) )
   | If (cond, consequent, alternative) ->
       let cond_var = gensym () in
       let cond_ty = Union_find.make (ty_var cond_var) in
@@ -279,7 +296,7 @@ let rec generate_constraints_top = function
       let cs', program = generate_constraints_top program in
       ( [
           CLet
-            ( List.map (fun (name, ty) -> (name, ForAll ([ a1 ], ty))) env,
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
               c @ cs,
               cs' );
         ],
@@ -356,7 +373,7 @@ let unify (s : ty) (t : ty) =
   in
   inner s t []
 
-let generalize (ForAll (_, ty) : 'a scheme) =
+let generalize (`for_all (_, ty)) =
   let rec inner ty used =
     let root, `root node = Union_find.find_set ty in
     (List.assq_opt root used
@@ -420,9 +437,9 @@ let generalize (ForAll (_, ty) : 'a scheme) =
       ()
   in
   let ty, generalized_var = inner ty [] in
-  ForAll (StringSet.to_list generalized_var, ty)
+  `for_all (StringSet.to_list generalized_var, ty)
 
-let instantiate (ForAll (vars, ty)) =
+let instantiate (`for_all (vars, ty)) =
   let subst =
     List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
     |> Subst.of_list
@@ -480,23 +497,28 @@ let instantiate (ForAll (vars, ty)) =
 
 (* if we using cexist + union find for unification are we eventualy not going to need substition? *)
 (* we might be to many env substions more that needed *)
-let rec solve_constraint env : 'a co -> _ = function
+let rec solve_constraint =
+ fun env -> function
   | CEq (s, t) -> unify s t
   | CInstance (var, ty) ->
       (* (* TODO: better handling if not in env *) *)
-      let (ForAll (vars, _) as scheme) = List.assoc var env in
-      let ftv = ftv_ty ty in
-      (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
-      if List.exists (fun var -> StringSet.mem var ftv) vars then
-        failwith "in ftv"
-      (* we need to actualy instatinate the variables *)
-        else
-        (*then σ < T′ (read: T′ is an instance of σ ) *)
-        (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
-        solve_constraints env
-          (* by applying this "substion" we put the ∃X *)
-          (* really we should do propery exist and not have to substitute *)
-          [ CEq (instantiate scheme, ty) ]
+      let ty' =
+        match List.assoc var env with
+        | `for_all (vars, _) as scheme ->
+            let ftv = ftv_ty ty in
+            (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
+            if List.exists (fun var -> StringSet.mem var ftv) vars then
+              failwith "in ftv"
+            (* we need to actualy instatinate the variables *)
+              else
+              (*then σ < T′ (read: T′ is an instance of σ ) *)
+              (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
+              (* by applying this "substion" we put the ∃X *)
+              (* really we should do propery exist and not have to substitute *)
+              instantiate scheme
+        | `ty ty -> ty
+      in
+      solve_constraints env [ CEq (ty', ty) ]
   | CExist (_vars, cos) ->
       (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
       solve_constraints env cos
@@ -508,6 +530,13 @@ let rec solve_constraint env : 'a co -> _ = function
       solve_constraints
         (List.map (fun (var, scheme) -> (var, generalize scheme)) schemes @ env)
         co'
+  | CDef (types, co) ->
+      (* wish i did not have to do this coerrsion *)
+      (* maybe just have one clet that either in monomorphic or polymorphic *)
+      (* or just make constraint not schemes/type list not markedwith `ty or `for_all and only do that when put in env so it only happens once *)
+      let types = types |> List.map (fun (v, `ty t) -> (v, `ty t)) in
+      (* TODO: make new scheme type that makes it easier to generalize based on ty *)
+      solve_constraints (types @ env) co
 
 and solve_constraints env = function
   | [] -> ()
