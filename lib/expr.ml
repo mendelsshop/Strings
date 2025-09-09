@@ -1,4 +1,3 @@
-module MetaVariables = Set.Make (String)
 open Types
 
 type 'a row = (string * 'a) list

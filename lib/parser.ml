@@ -85,16 +85,16 @@ let variant_parser wrapper expr =
 
 let pattern =
   makeRecParser (fun pattern ->
-      choice
-        [
-          parens_parser pattern;
-          (char '_' <$> fun _ -> PWildcard);
-          ident_parser (fun i -> PVar i);
-          number_parser (fun n -> PNumber n);
-          boolean_parser (fun b -> PBoolean b);
-          record pattern;
-          variant_parser (fun name p -> PConstructor (name, p)) pattern;
-        ])
+      !(choice
+          [
+            parens_parser pattern;
+            (char '_' <$> fun _ -> PWildcard);
+            ident_parser (fun i -> PVar i);
+            number_parser (fun n -> PNumber n);
+            boolean_parser (fun b -> PBoolean b);
+            record pattern;
+            variant_parser (fun name p -> PConstructor (name, p)) pattern;
+          ]))
 
 let lambda_parser expr =
   char '\\' >>= fun _ ->

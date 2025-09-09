@@ -40,37 +40,40 @@ let type_to_string ty =
          ~some:(fun t () -> (t, [ ty ]))
          ~none:(fun () ->
            let sym = gensym () in
-           match node.data with
-           | TyVar (v, _) -> (v, [])
-           | TyGenVar v -> (v, [])
-           | TyUnit -> ("()", [])
-           | TyNumber -> ("number", [])
-           | TyBoolean -> ("boolean", [])
-           | TyRowEmpty -> (unit, [])
-           | TyRecord t ->
-               let t, used' = inner ((root, sym) :: used) ~unit:"" t in
-               ("{ " ^ t ^ " }", used')
-           | TyRowExtend (label, field, row_extension) ->
-               let field, used' = inner ((root, sym) :: used) field in
-               let row_extension, used'' =
-                 inner ((root, sym) :: used) row_extension
-               in
-               ( label ^ type_delim ^ field ^ delim ^ row_extension,
-                 used' @ used'' )
-           | TyVariant row ->
-               let t, used' =
-                 inner ((root, sym) :: used) ~unit:"" ~delim:"| "
-                   ~type_delim:" " row
-               in
-               ("(" ^ t ^ ")", used')
-           | TyArrow (x, y) ->
-               let x_string, used' = inner ((root, sym) :: used) x in
-               let y_string, used'' = inner ((root, sym) :: used) y in
-               let used' = used' @ used'' in
-               let recursive_prefix =
-                 if List.memq x used' then "recursive " ^ sym ^ ". " else ""
-               in
-               (recursive_prefix ^ x_string ^ " -> " ^ y_string, used')))
+           let string, used =
+             match node.data with
+             | TyVar (v, _) -> (v, [])
+             | TyGenVar v -> (v, [])
+             | TyUnit -> ("()", [])
+             | TyNumber -> ("number", [])
+             | TyBoolean -> ("boolean", [])
+             | TyRowEmpty -> (unit, [])
+             | TyRecord t ->
+                 let t, used' = inner ((root, sym) :: used) ~unit:"" t in
+                 ("{ " ^ t ^ " }", used')
+             | TyRowExtend (label, field, row_extension) ->
+                 let field, used' = inner ((root, sym) :: used) field in
+                 let row_extension, used'' =
+                   inner ((root, sym) :: used) row_extension
+                 in
+                 ( label ^ type_delim ^ field ^ delim ^ row_extension,
+                   used' @ used'' )
+             | TyVariant row ->
+                 let t, used' =
+                   inner ((root, sym) :: used) ~unit:"" ~delim:"| "
+                     ~type_delim:" " row
+                 in
+                 ("(" ^ t ^ ")", used')
+             | TyArrow (x, y) ->
+                 let x_string, used' = inner ((root, sym) :: used) x in
+                 let y_string, used'' = inner ((root, sym) :: used) y in
+                 let used' = used' @ used'' in
+                 (x_string ^ " -> " ^ y_string, used')
+           in
+           let recursive_prefix =
+             if List.memq root used then "recursive " ^ sym ^ ". " else ""
+           in
+           (recursive_prefix ^ string, used)))
       ()
   in
 

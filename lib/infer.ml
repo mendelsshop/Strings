@@ -43,15 +43,6 @@ and constraints_to_string ts =
 let constraints_to_string ts =
   "[\n" ^ (ts |> List.map constraint_to_string |> String.concat "\n") ^ "\n]"
 
-type subst = ty Subst.t
-
-let subst_to_string s =
-  "[\n"
-  ^ (s |> Subst.to_list
-    |> List.map (fun (k, v) -> k ^ ": " ^ type_to_string v)
-    |> String.concat "\n")
-  ^ "\n]"
-
 type level = int
 
 let current_level = ref 1
@@ -526,7 +517,6 @@ let rec solve_constraint =
               (*then σ < T′ (read: T′ is an instance of σ ) *)
               (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
               (* by applying this "substion" we put the ∃X *)
-              (* really we should do propery exist and not have to substitute *)
               instantiate scheme
         | `ty ty -> ty
       in
