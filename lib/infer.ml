@@ -308,10 +308,22 @@ let rec generate_constraints_top = function
       in
       let cs', program'' = generate_constraints_top program' in
       (cs @ cs', Expr e :: program'')
-  | RecBind (_, _) :: _ -> failwith "todo tl letrec"
-(* TODO: make sure correct order *)
-
-(* TODO: maybe better to substitions on the fly as opposed to with envoirnement *)
+  | RecBind (v, e) :: program ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, v = generate_constraints_pattern a1_ty v in
+      let cs', t1' = generate_constraints a1_ty e in
+      leave_level ();
+      let cs'', program = generate_constraints_top program in
+      ( [
+          CLet
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
+              CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
+              cs'' );
+        ],
+        (* TODO: maybe a1 has to be in a forall *)
+        Bind (v, t1') :: program )
 
 (* the way it is now we probably need to substitute into env *)
 (*     b/c of clet *)
@@ -501,7 +513,7 @@ let rec solve_constraint =
  fun env -> function
   | CEq (s, t) -> unify s t
   | CInstance (var, ty) ->
-      (* (* TODO: better handling if not in env *) *)
+      (* TODO: better handling if not in env *)
       let ty' =
         match List.assoc var env with
         | `for_all (vars, _) as scheme ->
@@ -519,14 +531,11 @@ let rec solve_constraint =
         | `ty ty -> ty
       in
       solve_constraints env [ CEq (ty', ty) ]
-  | CExist (_vars, cos) ->
-      (* TODO: extend the cs_env with mapping for the unification variables to union find variables*)
-      solve_constraints env cos
+  | CExist (_vars, cos) -> solve_constraints env cos
   | CLet (schemes, co, co') ->
       enter_level ();
       solve_constraints env co;
       leave_level ();
-      (* TODO: make new scheme type that makes it easier to generalize based on ty *)
       solve_constraints
         (List.map (fun (var, scheme) -> (var, generalize scheme)) schemes @ env)
         co'
@@ -535,7 +544,6 @@ let rec solve_constraint =
       (* maybe just have one clet that either in monomorphic or polymorphic *)
       (* or just make constraint not schemes/type list not markedwith `ty or `for_all and only do that when put in env so it only happens once *)
       let types = types |> List.map (fun (v, `ty t) -> (v, `ty t)) in
-      (* TODO: make new scheme type that makes it easier to generalize based on ty *)
       solve_constraints (types @ env) co
 
 and solve_constraints env = function
@@ -545,7 +553,6 @@ and solve_constraints env = function
       solve_constraints env constraints
 
 let infer program =
-  (* TODO: env *)
   let cos, program' = generate_constraints_top program in
   print_endline (constraints_to_string cos);
   solve_constraints [] cos;
