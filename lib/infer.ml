@@ -1,0 +1,556 @@
+open Types
+open Utils
+open Expr
+
+(* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
+(* intend the onstraint solver to choose some appropriate value for them" *)
+
+type 't co =
+  | CExist of string list * 't co list
+  | CEq of 't * 't
+  | CInstance of string * 't
+  | CLet of
+      (string * [ `for_all of string list * 't ]) list * 't co list * 't co list
+  | CDef of (string * [ `ty of 't ]) list * 't co list
+
+let rec constraint_to_string = function
+  | CEq (t1, t2) -> type_to_string t1 ^ "~= " ^ type_to_string t2
+  | CInstance (var, ty) -> var ^ " instanceof " ^ type_to_string ty
+  | CLet (schemes, cos, cos') ->
+      "let "
+      ^ (List.map
+           (fun (var, `for_all (vars, ty)) ->
+             var ^ " :(ForAll " ^ String.concat ", " vars ^ " "
+             ^ type_to_string ty ^ ") ")
+           schemes
+        |> String.concat ", ")
+      ^ " where " ^ constraints_to_string cos ^ " in"
+      ^ constraints_to_string cos'
+  | CExist (vars, cos) ->
+      "Exists " ^ String.concat ", " vars ^ " " ^ "."
+      ^ constraints_to_string cos
+  | CDef (types, cos) ->
+      "def "
+      ^ (List.map
+           (fun (var, `ty ty) -> var ^ " : " ^ type_to_string ty ^ " ")
+           types
+        |> String.concat ", ")
+      ^ " in " ^ constraints_to_string cos
+
+and constraints_to_string ts =
+  "[" ^ (ts |> List.map constraint_to_string |> String.concat ", ") ^ "]"
+
+let constraints_to_string ts =
+  "[\n" ^ (ts |> List.map constraint_to_string |> String.concat "\n") ^ "\n]"
+
+type level = int
+
+let current_level = ref 1
+let enter_level () = incr current_level
+let leave_level () = decr current_level
+let ty_var var = TyVar (var, !current_level)
+
+let rec generate_constraints_pattern ty = function
+  | PVar x -> ([ (x, ty) ], [], PTVar (x, ty))
+  | PWildcard -> ([], [], PTWildcard ty)
+  | PBoolean b ->
+      ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean (b, ty))
+  | PFloat b -> ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat (b, ty))
+  | PInteger b ->
+      ([], [ CEq (ty, Union_find.make TyInteger) ], PTInteger (b, ty))
+  | PConstructor (name, pattern) ->
+      let other_variants_var = gensym () in
+      let other_variants = Union_find.make (ty_var other_variants_var) in
+      let value_var = gensym () in
+      let value_ty = Union_find.make (ty_var value_var) in
+      let env, cs, pattern' = generate_constraints_pattern value_ty pattern in
+      let ty' =
+        Union_find.make
+          (TyVariant
+             (Union_find.make (TyRowExtend (name, value_ty, other_variants))))
+      in
+      ( env,
+        [ CExist ([ other_variants_var; value_var ], CEq (ty', ty) :: cs) ],
+        PTConstructor (name, pattern', ty) )
+  | PRecord row ->
+      (* should this open to allow for matching on partial records? *)
+      let row_init = ([], [], Union_find.make TyRowEmpty, [], []) in
+      let env, cs, pattern_ty, pattern, vars =
+        List.fold_right
+          (fun (label, pattern) result ->
+            let env, cs, row_ty, row, vars = result in
+            let ty_name = gensym () in
+            let ty = Union_find.make (ty_var ty_name) in
+            let env', cs', pat' = generate_constraints_pattern ty pattern in
+
+            ( env @ env',
+              cs @ cs',
+              Union_find.make (TyRowExtend (label, ty, row_ty)),
+              (label, pat') :: row,
+              ty_name :: vars ))
+          row row_init
+      in
+      let ty' = Union_find.make (TyRecord pattern_ty) in
+      (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord (pattern, ty))
+  | PAscribe _ -> failwith ""
+
+let rec generate_constraints ty : _ -> ty co list * _ = function
+  | Record r ->
+      let field_tys_and_constraints =
+        List.map
+          (fun (field, value) ->
+            let var_name = gensym () in
+            let ty = Union_find.make (ty_var var_name) in
+            (field, ty, generate_constraints ty value, var_name))
+          r
+      in
+      let record_ty, constraints, variables =
+        List.fold_left
+          (fun (row, cos, vars) (field, ty, (co, _), name) ->
+            ( Union_find.make (TyRowExtend (field, ty, row)),
+              cos @ co,
+              name :: vars ))
+          (Union_find.make TyRowEmpty, [], [])
+          field_tys_and_constraints
+      in
+      ( [
+          CExist
+            ( variables,
+              CEq (ty, Union_find.make (TyRecord record_ty)) :: constraints );
+        ],
+        TRecord
+          ( List.map
+              (fun (field, _, (_, value), _) -> (field, value))
+              field_tys_and_constraints,
+            ty ) )
+  | RecordAccess (r, a) ->
+      let rest_row_var = gensym () in
+      let rest_row = Union_find.make (ty_var rest_row_var) in
+      let r_var = gensym () in
+      let r_ty = Union_find.make (ty_var r_var) in
+      let cos, r = generate_constraints r_ty r in
+      ( [
+          CExist
+            ( [ rest_row_var; r_var ],
+              CEq
+                ( ty,
+                  Union_find.make
+                    (TyRecord
+                       (Union_find.make (TyRowExtend (a, r_ty, rest_row)))) )
+              :: cos );
+        ],
+        TRecordAccess (r, a, ty) )
+  | RecordExtend (r, e) ->
+      let r_var = gensym () in
+      let r_ty = Union_find.make (ty_var r_var) in
+      let cos, r = generate_constraints r_ty r in
+      let new_field_tys_and_constraints =
+        List.map
+          (fun (field, value) ->
+            let var_name = gensym () in
+            let ty = Union_find.make (ty_var var_name) in
+            (field, ty, generate_constraints ty value, var_name))
+          e
+      in
+      let new_record_ty, constraints, variables =
+        List.fold_left
+          (fun (row, cos, vars) (field, ty, (co, _), name) ->
+            ( Union_find.make (TyRowExtend (field, ty, row)),
+              cos @ co,
+              name :: vars ))
+          (r_ty (* TODO: might have to unrecord this type*), cos, [ r_var ])
+          new_field_tys_and_constraints
+      in
+      ( [
+          CExist
+            ( variables,
+              CEq (ty, Union_find.make (TyRecord new_record_ty)) :: constraints
+            );
+        ],
+        TRecordExtend
+          ( r,
+            List.map
+              (fun (field, _, (_, value), _) -> (field, value))
+              new_field_tys_and_constraints,
+            ty ) )
+  | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
+  | Integer n -> ([ CEq (ty, Union_find.make TyInteger) ], TInteger (n, ty))
+  | Float n -> ([ CEq (ty, Union_find.make TyFloat) ], TFloat (n, ty))
+  | Boolean n -> ([ CEq (ty, Union_find.make TyBoolean) ], TBoolean (n, ty))
+  | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
+  | Application (f, x) ->
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let c, f' =
+        generate_constraints (Union_find.make (TyArrow (a1_ty, ty))) f
+      in
+      let c', x' = generate_constraints a1_ty x in
+      ([ CExist ([ a1 ], c @ c') ], TApplication (f', x', ty))
+  | Lambda (x, t) ->
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, x = generate_constraints_pattern a1_ty x in
+      let a2 = gensym () in
+      let a2_ty = Union_find.make (ty_var a2) in
+      let c, t' = generate_constraints a2_ty t in
+      ( [
+          CExist
+            ( [ a1; a2 ],
+              CDef (env |> List.map (fun (v, t) -> (v, `ty t)), c)
+              :: CEq (Union_find.make (TyArrow (a1_ty, a2_ty)), ty)
+              :: cs );
+        ],
+        TLambda (x, a1_ty, t', ty) )
+  | Let (v, t1, t2) ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, v = generate_constraints_pattern a1_ty v in
+      let c, t1' = generate_constraints a1_ty t1 in
+      leave_level ();
+      let c', t2' = generate_constraints ty t2 in
+      ( [
+          CLet
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
+              c @ cs,
+              c' );
+        ],
+        (* TODO: maybe a1 has to be in a forall *)
+        TLet (v, a1_ty, t1', t2', ty) )
+  | Match (expr, cases) ->
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let cs, expr' = generate_constraints a1_ty expr in
+      let cs', cases' =
+        List.map
+          (fun (pattern, case) ->
+            let env, cs, pattern' =
+              generate_constraints_pattern a1_ty pattern
+            in
+            let cs', case' = generate_constraints ty case in
+
+            ( CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
+              (pattern', case') ))
+          cases
+        |> List.split
+      in
+      let cs' = List.concat cs' in
+      ([ CExist ([ a1 ], cs' @ cs) ], TMatch (expr', cases', ty))
+  | Constructor (name, value) ->
+      let r = gensym () in
+      let r_ty = Union_find.make (ty_var r) in
+      let cs, value' = generate_constraints r_ty value in
+      let rest_row = gensym () in
+      let rest_row_ty = Union_find.make (ty_var rest_row) in
+      ( [
+          CExist
+            ( [ r; rest_row ],
+              CEq
+                ( ty,
+                  Union_find.make
+                    (TyVariant
+                       (Union_find.make (TyRowExtend (name, r_ty, rest_row_ty))))
+                )
+              :: cs );
+        ],
+        TConstructor (name, value', ty) )
+  | LetRec (v, t1, t2) ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, v = generate_constraints_pattern a1_ty v in
+      let cs', t1' = generate_constraints a1_ty t1 in
+      leave_level ();
+      let cs'', t2' = generate_constraints ty t2 in
+      ( [
+          CLet
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
+              CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
+              cs'' );
+        ],
+        (* TODO: maybe a1 has to be in a forall *)
+        TLet (v, a1_ty, t1', t2', ty) )
+  | If (cond, consequent, alternative) ->
+      let cond_var = gensym () in
+      let cond_ty = Union_find.make (ty_var cond_var) in
+      let cs, cond = generate_constraints cond_ty cond in
+      let cs', consequent = generate_constraints ty consequent in
+      let cs'', alternative = generate_constraints ty alternative in
+      ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
+        TIf (cond, consequent, alternative, ty) )
+
+let rec generate_constraints_top = function
+  | [] -> ([], [])
+  | Bind (v, e) :: program ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, v = generate_constraints_pattern a1_ty v in
+      let c, t1' = generate_constraints a1_ty e in
+      leave_level ();
+      let cs', program = generate_constraints_top program in
+      ( [
+          CLet
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
+              c @ cs,
+              cs' );
+        ],
+        (* TODO: maybe a1 has to be in a forall *)
+        Bind (v, t1') :: program )
+  | Expr e :: program' ->
+      let cs, e =
+        generate_constraints (Union_find.make (ty_var (gensym ()))) e
+      in
+      let cs', program'' = generate_constraints_top program' in
+      (cs @ cs', Expr e :: program'')
+  | RecBind (v, e) :: program ->
+      enter_level ();
+      let a1 = gensym () in
+      let a1_ty = Union_find.make (ty_var a1) in
+      let env, cs, v = generate_constraints_pattern a1_ty v in
+      let cs', t1' = generate_constraints a1_ty e in
+      leave_level ();
+      let cs'', program = generate_constraints_top program in
+      ( [
+          CLet
+            ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
+              CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
+              cs'' );
+        ],
+        (* TODO: maybe a1 has to be in a forall *)
+        Bind (v, t1') :: program )
+
+(* the way it is now we probably need to substitute into env *)
+(*     b/c of clet *)
+
+let unit_ify _ = ()
+
+let unify (s : ty) (t : ty) =
+  let rec inner (s : ty) (t : ty) used =
+    let s, `root s_data = Union_find.find_set s in
+    let t, `root t_data = Union_find.find_set t in
+    if
+      List.exists
+        (fun (s', t') -> (s == s' && t == t') || (t == s' && s == t'))
+        used
+    then ()
+    else if s == t then ()
+    else
+      match ((s_data.data, s), (t_data.data, t)) with
+      | (TyArrow (s1, s2), _), (TyArrow (t1, t2), _) ->
+          inner s1 t1 ((s, t) :: used);
+          inner s2 t2 ((s, t) :: used)
+      | (TyUnit, _), (TyUnit, _) -> ()
+      | (TyFloat, _), (TyFloat, _) -> ()
+      | (TyInteger, _), (TyInteger, _) -> ()
+      | (TyBoolean, _), (TyBoolean, _) -> ()
+      | (TyRowEmpty, _), (TyRowEmpty, _) -> ()
+      | (TyRecord r, _), (TyRecord r', _) -> inner r r' ((s, t) :: used)
+      | (TyVariant v, _), (TyVariant v', _) -> inner v v' ((s, t) :: used)
+      | (TyRowExtend (l, t, r), _), ((TyRowExtend _ as ty_data), ty) ->
+          (* | ((TyRowExtend _ as  ty_data, ty), (TyRowExtend (l, t, r), _)) -> *)
+          inner_row ((s, t) :: used) l t r ty ty_data
+      | (TyVar _, _), (v, _) | (v, _), (TyVar _, _) ->
+          Union_find.union_with (fun _ _ -> v) s t |> unit_ify (* () *)
+      | _ ->
+          failwith
+            ("Unification Error (Symbol Clash): " ^ type_to_string s
+           ^ type_to_string t)
+  and inner_row used l t r ty = function
+    (* ty and the arguement to function are the same *)
+    (* TODO: might need cyclic checking here *)
+    | TyRowExtend (l', t', r') when l = l' ->
+        inner t t' used;
+        inner r r' used
+    | TyRowExtend (l', t', r') -> (
+        let ty, `root root = Union_find.find_set r' in
+        match root.data with
+        | TyVar _ ->
+            let beta = Union_find.make (ty_var (gensym ())) in
+            let gamma = Union_find.make (ty_var (gensym ())) in
+            root.data <- TyRowExtend (l, gamma, beta);
+            inner gamma t used;
+            inner (Union_find.make (TyRowExtend (l', t', beta))) r used
+        | _ -> inner_row used l t r ty root.data)
+    | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
+    | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger | TyGenVar _
+    | TyVar _ | TyBoolean | TyUnit ->
+        failwith
+          (type_to_string ty
+         ^ " is not a row, so it cannot be extended with label `" ^ l ^ "`.")
+  in
+  inner s t []
+
+let generalize (`for_all (_, ty)) =
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> (t, StringSet.empty))
+         ~none:(fun () ->
+           let replacement_root = Union_find.make (ty_var (gensym ())) in
+           match node.data with
+           | TyVar (v, l) when l > !current_level ->
+               (Union_find.make (TyGenVar v), StringSet.singleton v)
+           | TyArrow (p, r) ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let p, generalized =
+                 inner p ((root, replacement_root) :: used)
+               in
+               let r, generalized' =
+                 inner r ((root, replacement_root) :: used)
+               in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyArrow (p, r)))
+               in
+               (r, StringSet.union generalized generalized')
+           | TyRecord r ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let r, generalized' =
+                 inner r ((root, replacement_root) :: used)
+               in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRecord r))
+               in
+               (r, generalized')
+           | TyVariant v ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let v, generalized =
+                 inner v ((root, replacement_root) :: used)
+               in
+               let v =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyVariant v))
+               in
+               (v, generalized)
+           | TyRowExtend (l, t, r) ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let t, generalized =
+                 inner t ((root, replacement_root) :: used)
+               in
+               let r, generalized' =
+                 inner r ((root, replacement_root) :: used)
+               in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRowExtend (l, t, r)))
+               in
+               (r, StringSet.union generalized generalized')
+           | TyRowEmpty | TyFloat | TyInteger | TyGenVar _ | TyUnit
+           | TyVar (_, _)
+           | TyBoolean ->
+               (ty, StringSet.empty)))
+      ()
+  in
+  let ty, generalized_var = inner ty [] in
+  `for_all (StringSet.to_list generalized_var, ty)
+
+let instantiate (`for_all (vars, ty)) =
+  let subst =
+    List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
+    |> Subst.of_list
+  in
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> t)
+         ~none:(fun () ->
+           let replacement_root = Union_find.make (ty_var (gensym ())) in
+           match node.data with
+           | TyGenVar v ->
+               Subst.find_opt v subst
+               |> Option.map (fun t -> t)
+               |> Option.value ~default:ty
+           | TyArrow (p, r) ->
+               (* dont recostruct if anything under doesn't get instantiated *)
+               let p = inner p ((root, replacement_root) :: used) in
+               let r = inner r ((root, replacement_root) :: used) in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyArrow (p, r)))
+               in
+               r
+           | TyRecord r ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let r = inner r ((root, replacement_root) :: used) in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRecord r))
+               in
+               r
+           | TyVariant v ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let v = inner v ((root, replacement_root) :: used) in
+               let v =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyVariant v))
+               in
+               v
+           | TyRowExtend (l, t, r) ->
+               (* dont recostruct if anything under doesn't get generalized *)
+               let t = inner t ((root, replacement_root) :: used) in
+               let r = inner r ((root, replacement_root) :: used) in
+               let r =
+                 Union_find.union replacement_root
+                   (Union_find.make (TyRowExtend (l, t, r)))
+               in
+               r
+           | TyBoolean | TyRowEmpty | TyFloat | TyInteger | TyVar _ | TyUnit ->
+               ty))
+      ()
+  in
+  inner ty []
+
+(* if we using cexist + union find for unification are we eventualy not going to need substition? *)
+(* we might be to many env substions more that needed *)
+let rec solve_constraint =
+ fun env -> function
+  | CEq (s, t) -> unify s t
+  | CInstance (var, ty) ->
+      (* TODO: better handling if not in env *)
+      let ty' =
+        match List.assoc var env with
+        | `for_all (vars, _) as scheme ->
+            let ftv = ftv_ty ty in
+            (* (* Let σ be ∀¯X[D].T. If ¯X # ftv(T′) holds, *) *)
+            if List.exists (fun var -> StringSet.mem var ftv) vars then
+              failwith "in ftv"
+            (* we need to actualy instatinate the variables *)
+              else
+              (*then σ < T′ (read: T′ is an instance of σ ) *)
+              (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
+              (* by applying this "substion" we put the ∃X *)
+              instantiate scheme
+        | `ty ty -> ty
+      in
+      solve_constraints env [ CEq (ty', ty) ]
+  | CExist (_vars, cos) -> solve_constraints env cos
+  | CLet (schemes, co, co') ->
+      enter_level ();
+      solve_constraints env co;
+      leave_level ();
+      solve_constraints
+        (List.map (fun (var, scheme) -> (var, generalize scheme)) schemes @ env)
+        co'
+  | CDef (types, co) ->
+      (* wish i did not have to do this coerrsion *)
+      (* maybe just have one clet that either in monomorphic or polymorphic *)
+      (* or just make constraint not schemes/type list not markedwith `ty or `for_all and only do that when put in env so it only happens once *)
+      let types = types |> List.map (fun (v, `ty t) -> (v, `ty t)) in
+      solve_constraints (types @ env) co
+
+and solve_constraints env = function
+  | [] -> ()
+  | cs :: constraints ->
+      solve_constraint env cs;
+      solve_constraints env constraints
+
+let infer program =
+  let cos, program' = generate_constraints_top program in
+  print_endline (constraints_to_string cos);
+  solve_constraints [] cos;
+  print_endline (constraints_to_string cos);
+  program'

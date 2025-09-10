@@ -19,7 +19,7 @@
  (name strings)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune (alcotest :with-test))
+ (depends ocaml dune monads AMPCL (alcotest :with-test))
  (tags
   (topics "to describe" your project)))
 

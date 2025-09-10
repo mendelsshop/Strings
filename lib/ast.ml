@@ -5,111 +5,130 @@ type typed_ident = { ident : ident; ty : ty option }
 type 'b field = { name : string; value : 'b }
 type ('a, 'b) projection = { value : 'a; projector : 'b }
 type ('a, 'b) case = { pattern : 'a; result : 'b }
+type 'a row = (string * 'a) list
 
 type pattern =
-  | PFloat of float
-  | PInt of int
-  | PRecord of pattern field list
-  | PString of string
-  | PIdent of ident
-  | PConstructor of { name : string; value : pattern }
+  | PVar of string
   | PUnit
-  | PWildCard
+  | PWildcard
+  | PFloat of float
+  | PInteger of int
+  | PBoolean of bool
+  | PRecord of pattern row
+  (*   TODO: does record extension makes sense for patterns   *)
+  | PConstructor of string * pattern
   | PAscribe of (pattern * ty)
+  | PString of string
 
-type ast =
-  | Float of float
-  | Int of int
-  (* tuples and record can be made into one form *)
-  | Record of ast field list
-  | RecordExtend of ast * ast field list
-  | RecordAcces of (ast, string) projection
-  | Constructor of { name : string; value : ast }
-  | String of string
-  | Ident of ident
-  | Application of { func : ast; arguement : ast }
-  | InfixApplication of { infix : ident; arguements : ast * ast }
-  | Function of { parameters : pattern list; abstraction : ast }
-  | If of { condition : ast; consequent : ast; alternative : ast }
-  | Let of { name : pattern; e1 : ast; e2 : ast }
-  | LetRec of { name : string; e1 : ast; e2 : ast }
-  | Match of { expr : ast; cases : (pattern, ast) case list }
-  | Ascribe of (ast * ty)
+type expr =
+  | Var of string
+  | Lambda of pattern list * expr
+  | Application of expr * expr
+  | Let of pattern * expr * expr
+  | LetRec of pattern * expr * expr
+  | InfixApplication of (ident * expr * expr)
   | Unit
+  | String of string
+  | Boolean of bool
+  | Float of float
+  | Integer of int
+  | RecordAccess of expr * string
+  | RecordExtend of expr * expr row
+  | Record of expr row
+  | Constructor of string * expr
+  | Match of expr * (pattern * expr) list
+  | If of expr * expr * expr
+  | Ascribe of (expr * ty)
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
-  | Bind of { name : pattern; value : ast }
-  | RecBind of { name : string; value : ast }
+  | Bind of { name : pattern; value : expr }
+  | RecBind of { name : string; value : expr }
   | PrintString of string
 
 type program = top_level list
 
 let list_to_string = String.concat " "
 
-let rec pattern_to_string pattern =
-  match pattern with
-  | PFloat f -> string_of_float f
-  | PInt i -> string_of_int i
-  | PRecord r ->
-      "{ "
-      ^ (r
-        |> List.map (fun { name; value } ->
-               name ^ " = " ^ pattern_to_string value)
-        |> String.concat "; ")
-      ^ " }"
-  | PString s -> "\"" ^ s ^ "\""
-  | PIdent i -> i
-  | PConstructor { name; value } -> name ^ "( " ^ pattern_to_string value ^ " )"
+let rec pattern_to_string = function
+  | PVar s -> s
+  | PString s -> s
   | PUnit -> "()"
-  | PWildCard -> "_"
-  | PAscribe (pat, _) -> pattern_to_string pat
-
-let rec ast_to_string ast =
-  match ast with
-  | Float f -> string_of_float f
-  | Int i -> string_of_int i
-  | String i -> "\"" ^ String.escaped i ^ "\""
-  | Ident i -> i
-  | InfixApplication { infix; arguements = e1, e2 } ->
-      ast_to_string e1 ^ " " ^ infix ^ " " ^ ast_to_string e2
-  | Application { func; arguement } ->
-      ast_to_string func ^ " " ^ ast_to_string arguement
-  | If { condition; consequent; alternative } ->
-      "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
-      ^ " else " ^ ast_to_string alternative
-  | LetRec { name; e1; e2 } ->
-      "let rec  " ^ name ^ " = " ^ ast_to_string e1 ^ " in " ^ ast_to_string e2
-  | Let { name; e1; e2 } ->
-      "let " ^ pattern_to_string name ^ " = " ^ ast_to_string e1 ^ " in "
-      ^ ast_to_string e2
-  | Function { parameters; abstraction } ->
-      "fun "
-      ^ list_to_string (List.map pattern_to_string parameters)
-      ^ "->" ^ ast_to_string abstraction
-  | Record record ->
+  | PBoolean b -> string_of_bool b
+  | PInteger n -> string_of_int n
+  | PFloat n -> string_of_float n
+  | PWildcard -> "_"
+  | PRecord row ->
       "{ "
-      ^ (record
-        |> List.map (function { name; value } ->
-               name ^ " = " ^ ast_to_string value)
+      ^ (row
+        |> List.map (fun (label, pat) -> label ^ " = " ^ pattern_to_string pat)
         |> String.concat "; ")
       ^ " }"
-  | RecordExtend (expr, row) ->
-      "{" ^ ast_to_string expr ^ " with "
-      ^ (row
-        |> List.map (fun { name; value } -> name ^ " = " ^ ast_to_string value)
-        |> String.concat "; ")
-      ^ "}"
-  | RecordAcces { value; projector } -> ast_to_string value ^ "." ^ projector
-  | Constructor { name; value } -> name ^ " " ^ ast_to_string value
-  | Match { expr; cases } ->
-      "match " ^ ast_to_string expr ^ " with "
-      ^ String.concat " | "
-          (cases
-          |> List.map (fun { pattern; result } ->
-                 pattern_to_string pattern ^ " -> " ^ ast_to_string result))
-  | Ascribe (expr, _) -> ast_to_string expr
+  | PConstructor (name, pattern) ->
+      name ^ " (" ^ pattern_to_string pattern ^ ")"
+  | PAscribe _ -> failwith ""
+
+let rec expr_to_string indent =
+  let next_level = indent + 1 in
+  let indent_string = String.make (next_level * 2) ' ' in
+  function
   | Unit -> "()"
+  | String s -> s
+  | Var s -> s
+  | Boolean b -> string_of_bool b
+  | Integer n -> string_of_int n
+  | Float n -> string_of_float n
+  | If (cond, cons, alt) ->
+      "if ( " ^ expr_to_string indent cond ^ " )\n" ^ indent_string ^ "then ( "
+      ^ expr_to_string next_level cons
+      ^ " )\n" ^ indent_string ^ "else ( "
+      ^ expr_to_string next_level alt
+      ^ " )"
+  | Let (var, e1, e2) ->
+      "let " ^ pattern_to_string var ^ " = ( " ^ expr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ expr_to_string next_level e2
+      ^ " )"
+  | LetRec (var, e1, e2) ->
+      "let rec " ^ pattern_to_string var ^ " = ( " ^ expr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ expr_to_string next_level e2
+  | Lambda (var, abs) ->
+      "\\"
+      ^ list_to_string (List.map pattern_to_string var)
+      ^ ".( " ^ expr_to_string indent abs ^ " )"
+  | Application (abs, arg) ->
+      "( " ^ expr_to_string indent abs ^ " ) ( " ^ expr_to_string indent arg
+      ^ " )"
+  | Record row ->
+      "{\n"
+      ^ (row
+        |> List.map (fun (label, pat) ->
+               indent_string ^ label ^ " = " ^ expr_to_string indent pat)
+        |> String.concat "; ")
+      ^ "\n" ^ indent_string ^ "}"
+  | RecordExtend (expr, row) ->
+      "{" ^ expr_to_string indent expr ^ " with "
+      ^ (row
+        |> List.map (fun (label, pat) ->
+               indent_string ^ label ^ " = " ^ expr_to_string indent pat)
+        |> String.concat "; ")
+      ^ "\n" ^ indent_string ^ "}"
+  | RecordAccess (record, label) -> expr_to_string indent record ^ "." ^ label
+  | Constructor (name, expr) -> name ^ " (" ^ expr_to_string indent expr ^ ")"
+  | Match (expr, cases) ->
+      "match ( " ^ expr_to_string indent expr ^ " ) with \n"
+      ^ indent_string
+        (* we have an indent before the first case as it does not get indented by concat *)
+      ^ (cases
+        |> List.map (fun (pat, case) ->
+               pattern_to_string pat ^ " -> " ^ expr_to_string next_level case)
+        |> String.concat ("\n" ^ indent_string ^ "|"))
+  | InfixApplication (infix, e1, e2) ->
+      expr_to_string indent e1 ^ " " ^ infix ^ " " ^ expr_to_string indent e2
+  | Ascribe (expr, _) -> expr_to_string indent expr
+
+let expr_to_string = expr_to_string 0
 
 let print_program program =
   String.concat "\n"
@@ -117,9 +136,9 @@ let print_program program =
        (fun exp ->
          match exp with
          | Bind { name; value } ->
-             "let " ^ pattern_to_string name ^ " = " ^ ast_to_string value
+             "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
          | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
          | RecBind { name; value } ->
-             "let rec " ^ name ^ " = " ^ ast_to_string value
+             "let rec " ^ name ^ " = " ^ expr_to_string value
          | PrintString s -> s)
        program)

@@ -1,51 +1,82 @@
-type ty =
-  | Meta of int
-  | TFunction of (ty * ty)
-  | TUnit
-  | TBool
-  | TInteger
-  | TFloat
-  | TString
-  | TPoly of int list * ty
-  | TRowExtension of { label : string; field : ty; row_extension : ty }
-    (* todo gadts so the row_extension can only be empty row or row extension *)
-  | TEmptyRow
-  | TRecord of ty
-  (* todo gadts so this can only be empty row or row extension *)
-  (* todo variants are also rows *)
-  | TVariant of ty
+open Utils
 
-let rec type_to_string ty type_delim delim empty =
-  match ty with
-  | TUnit -> "()"
-  | TBool -> "bool"
-  | TInteger -> "int"
-  | TString -> "string"
-  | TFloat -> "float"
-  | Meta m -> "'" ^ string_of_int m
-  | TFunction (t1, t2) ->
-      "("
-      ^ type_to_string t1 ": " "; " "{}"
-      ^ ") -> ("
-      ^ type_to_string t2 ": " "; " "{}"
-      ^ ")"
-  | TPoly (ms, t) ->
-      "∀"
-      ^ String.concat "," (List.map string_of_int ms)
-      ^ "."
-      ^ type_to_string t ": " "; " "{}"
-  | TRecord fields ->
-      "{ " ^ type_to_string fields ": " "; " "" ^ " }"
-      (* to make printing work if we swithc variants/adts to rows is call type_to_string with delim = " | " and type_delim = " of " *)
-  | TVariant fields -> type_to_string fields " " "| " ""
-  | TEmptyRow -> empty
-  | TRowExtension { label; field; row_extension = TEmptyRow } ->
-      (*TODO: is this case needed*)
-      label ^ type_delim ^ type_to_string field ": " "; " "{}"
-  | TRowExtension { label; field; row_extension } ->
-      label ^ type_delim
-      ^ type_to_string field ": " "; " "{}"
-      ^ delim
-      ^ type_to_string row_extension type_delim delim ""
+type 't ty_f =
+  | TyVar of string * int
+  | TyUnit
+  | TyInteger
+  | TyFloat
+  | TyBoolean
+  | TyArrow of 't * 't
+  | TyRowEmpty
+  | TyRowExtend of string * 't * 't
+  | TyRecord of 't
+  | TyVariant of 't
+  | TyGenVar of string
 
-let type_to_string x = type_to_string x ": " "; " "{}"
+type ty = 'a ty_f Union_find.elem as 'a
+
+let ftv_ty (ty : ty) =
+  let rec inner ty used =
+    let root, `root node = Union_find.find_set ty in
+    if List.memq root used then StringSet.empty
+    else
+      match node.data with
+      | TyVar (v, _) -> StringSet.singleton v
+      | TyGenVar _ -> StringSet.empty (* maybe free? *)
+      | TyArrow (p, r) ->
+          StringSet.union (inner p (root :: used)) (inner r (root :: used))
+      | TyRecord r -> inner r (root :: used)
+      | TyVariant v -> inner v (root :: used)
+      | TyRowExtend (_, p, r) ->
+          StringSet.union (inner p (root :: used)) (inner r (root :: used))
+      | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat -> StringSet.empty
+  in
+  inner ty []
+
+let type_to_string ty =
+  let rec inner used ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") ty =
+    let root, `root node = Union_find.find_set ty in
+    (List.assq_opt root used
+    |> Option.fold
+         ~some:(fun t () -> (t, [ ty ]))
+         ~none:(fun () ->
+           let sym = gensym () in
+           let string, used =
+             match node.data with
+             | TyVar (v, _) -> (v, [])
+             | TyGenVar v -> (v, [])
+             | TyUnit -> ("()", [])
+             | TyInteger -> ("integer", [])
+             | TyFloat -> ("float", [])
+             | TyBoolean -> ("boolean", [])
+             | TyRowEmpty -> (unit, [])
+             | TyRecord t ->
+                 let t, used' = inner ((root, sym) :: used) ~unit:"" t in
+                 ("{ " ^ t ^ " }", used')
+             | TyRowExtend (label, field, row_extension) ->
+                 let field, used' = inner ((root, sym) :: used) field in
+                 let row_extension, used'' =
+                   inner ((root, sym) :: used) row_extension
+                 in
+                 ( label ^ type_delim ^ field ^ delim ^ row_extension,
+                   used' @ used'' )
+             | TyVariant row ->
+                 let t, used' =
+                   inner ((root, sym) :: used) ~unit:"" ~delim:"| "
+                     ~type_delim:" " row
+                 in
+                 ("(" ^ t ^ ")", used')
+             | TyArrow (x, y) ->
+                 let x_string, used' = inner ((root, sym) :: used) x in
+                 let y_string, used'' = inner ((root, sym) :: used) y in
+                 let used' = used' @ used'' in
+                 (x_string ^ " -> " ^ y_string, used')
+           in
+           let recursive_prefix =
+             if List.memq root used then "recursive " ^ sym ^ ". " else ""
+           in
+           (recursive_prefix ^ string, used)))
+      ()
+  in
+
+  inner [] ty |> fst

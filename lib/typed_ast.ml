@@ -1,154 +1,138 @@
 open Types
-open Ast
 
-type typed_ident = { ty : ty; ident : ident }
 type 'b field = { name : string; value : 'b }
 type ('a, 'b) projection = { ty : ty; value : 'a; projector : 'b }
+type 'a row = (string * 'a) list
 
-type typed_pattern =
-  | PFloat of { value : float; ty : ty }
-  | PInt of { value : int; ty : ty }
-  | PRecord of { fields : typed_pattern field list; ty : ty }
-  | PString of { value : string; ty : ty }
-  | PIdent of { ident : ident; ty : ty }
-  | PConstructor of { name : string; value : typed_pattern; ty : ty }
-  | PUnit of { ty : ty }
-  | PWildCard of { ty : ty }
+type 't tpattern =
+  | PTVar of string * 't
+  | PTString of (string * 't)
+  | PTWildcard of 't
+  | PTInteger of int * 't
+  | PTFloat of float * 't
+  | PTBoolean of bool * 't
+  | PTRecord of 't tpattern row * 't
+  | PTConstructor of string * 't tpattern * 't
+  | PTUnit of ty
 
-type typed_ast =
-  | Unit of { ty : ty }
-  | Float of { ty : ty; value : float }
-  | Int of { ty : ty; value : int }
-  | String of { ty : ty; value : string }
-  | Ident of { ty : ty; ident : ident }
-  | Application of { ty : ty; func : typed_ast; arguement : typed_ast }
-  | Function of { ty : ty; parameter : typed_pattern; abstraction : typed_ast }
-  | If of {
-      ty : ty;
-      condition : typed_ast;
-      consequent : typed_ast;
-      alternative : typed_ast;
-    }
-  | Let of { ty : ty; binding : typed_pattern; e1 : typed_ast; e2 : typed_ast }
-  | Rec of { ty : ty; name : ident; expr : typed_ast }
-  | Poly of { metas : int list; e : typed_ast }
-  | RecordExtend of { ty : ty; value : typed_ast * typed_ast field list }
-  | Record of { ty : ty; fields : typed_ast field list }
-  | RecordAcces of (typed_ast, string) projection
-  | Constructor of { ty : ty; name : string; value : typed_ast }
-  | Match of {
-      expr : typed_ast;
-      cases : (typed_pattern, typed_ast) case list;
-      ty : ty;
-    }
+type 't texpr =
+  | TVar of string * 't
+  | TFloat of (float * 't)
+  | TString of (string * 't)
+  | TInteger of (int * 't)
+  | TBoolean of bool * 't
+  | TLambda of 't tpattern * 't * 't texpr * 't
+  | TApplication of 't texpr * 't texpr * 't
+  | TUnit of 't
+  | TLet of 't tpattern * 't * 't texpr * 't texpr * 't
+  | TLetRec of 't tpattern * 't * 't texpr * 't texpr * 't
+  | TIf of 't texpr * 't texpr * 't texpr * ty
+  | TRecordAccess of 't texpr * string * 't
+  | TRecordExtend of 't texpr * 't texpr row * 't
+  | TRecord of 't texpr row * 't
+  | TMatch of 't texpr * ('t tpattern * 't texpr) list * 't
+  | TConstructor of string * 't texpr * 't
 
-type top_level =
-  | Bind of { binding : typed_pattern; value : typed_ast }
+type 't top_level =
+  | Bind of { binding : 't tpattern; value : 't texpr }
+  | RecBind of { binding : 't tpattern; value : 't texpr }
   | TypeBind of { name : string; ty : ty }
   | PrintString of string
 
-type program = top_level list
-
-let type_of_pattern pattern =
-  match pattern with
-  | PInt a -> a.ty
-  | PFloat a -> a.ty
-  | PString a -> a.ty
-  | PIdent a -> a.ty
-  | PUnit a -> a.ty
-  | PRecord r -> r.ty
-  | PWildCard t -> t.ty
-  | PConstructor c -> c.ty
+type 't program = 't top_level list
 
 (* we can make this non recursive if we make poly ast node store their type *)
-let rec type_of expr =
-  match expr with
-  | Int a -> a.ty
-  | Float a -> a.ty
-  | String a -> a.ty
-  | Ident a -> a.ty
-  | Unit a -> a.ty
-  | If a -> a.ty
-  | Function a -> a.ty
-  | Application a -> a.ty
-  | Let a -> a.ty
-  | Poly p -> TPoly (p.metas, type_of p.e)
-  | Rec r -> r.ty
-  | Record r -> r.ty
-  | RecordAcces a -> a.ty
-  | Constructor c -> c.ty
-  | Match m -> m.ty
-  | RecordExtend r -> r.ty
 
-let rec pattern_to_string pattern =
-  match pattern with
-  | PFloat f -> string_of_float f.value
-  | PInt i -> string_of_int i.value
-  | PRecord r ->
-      "( "
-      ^ (r.fields
-        |> List.map (fun { name; value } ->
-               name ^ " = " ^ pattern_to_string value)
-        |> String.concat ", ")
-      ^ " )"
-  | PString s -> "\"" ^ s.value ^ "\""
-  | PIdent i -> i.ident ^ ": " ^ type_to_string i.ty
-  | PConstructor { name; value; _ } ->
-      name ^ "( " ^ pattern_to_string value ^ " )"
-  | PUnit _ -> "()"
-  | PWildCard { ty } -> "(_: " ^ type_to_string ty ^ ")"
-
-let rec ast_to_string ast =
-  match ast with
-  | Unit _ -> "()"
-  | Float { value; _ } -> string_of_float value
-  | Int { value; _ } -> string_of_int value
-  | String { value; _ } -> value
-  | Ident { ident; _ } -> ident
-  | Application { func; arguement; _ } ->
-      "( " ^ ast_to_string func ^ " " ^ ast_to_string arguement ^ " )"
-  | If { condition; consequent; alternative; _ } ->
-      "if " ^ ast_to_string condition ^ " then " ^ ast_to_string consequent
-      ^ " else " ^ ast_to_string alternative
-  | Let { binding; e1; e2; _ } ->
-      "let " ^ pattern_to_string binding ^ " = " ^ ast_to_string e1 ^ " in "
-      ^ ast_to_string e2
-  | Function { parameter; abstraction; _ } ->
-      "fun ("
-      ^ pattern_to_string parameter
-      ^ ") -> " ^ ast_to_string abstraction
-  | Poly p ->
-      "∀"
-      ^ String.concat "," (List.map string_of_int p.metas)
-      ^ "." ^ ast_to_string p.e
-  | Rec { name; expr; _ } -> "rec " ^ name ^ " " ^ ast_to_string expr
-  | Record { fields; _ } ->
+let rec tpattern_to_string = function
+  | PTVar (s, ty) -> s ^ " : " ^ type_to_string ty
+  | PTString (s, _) -> s
+  | PTUnit _ -> "()"
+  | PTBoolean (b, _) -> string_of_bool b
+  | PTFloat (n, _) -> string_of_float n
+  | PTInteger (n, _) -> string_of_int n
+  | PTWildcard _ -> "_"
+  | PTRecord (row, _ty) ->
       "{ "
-      ^ (fields
-        |> List.map (function { name; value } ->
-               name ^ " = " ^ ast_to_string value)
-        |> String.concat " , ")
-      ^ " }"
-  | RecordExtend { value = expr, row; _ } ->
-      "{" ^ ast_to_string expr ^ " with "
       ^ (row
-        |> List.map (fun { name; value } -> name ^ " = " ^ ast_to_string value)
+        |> List.map (fun (label, pat) -> label ^ " = " ^ tpattern_to_string pat)
         |> String.concat "; ")
-      ^ "}"
-  | RecordAcces { value; projector; _ } -> ast_to_string value ^ "." ^ projector
-  | Constructor { name; value; _ } -> name ^ " " ^ ast_to_string value
-  | Match { expr; cases; _ } ->
-      "match " ^ ast_to_string expr ^ " with "
-      ^ String.concat " | "
-          (cases
-          |> List.map (fun { pattern; result } ->
-                 pattern_to_string pattern ^ " -> " ^ ast_to_string result))
+      ^ " }"
+  | PTConstructor (name, pattern, _ty) ->
+      name ^ " (" ^ tpattern_to_string pattern ^ ")"
+
+let rec texpr_to_string indent =
+  let next_level = indent + 1 in
+  let indent_string = String.make (next_level * 2) ' ' in
+  function
+  | TUnit _ -> "()"
+  | TVar (s, _) -> s
+  | TString (s, _) -> s
+  | TInteger (n, _) -> string_of_int n
+  | TFloat (n, _) -> string_of_float n
+  | TBoolean (b, _) -> string_of_bool b
+  | TIf (cond, cons, alt, _) ->
+      "if ( "
+      ^ texpr_to_string indent cond
+      ^ " )\n" ^ indent_string ^ "then ( "
+      ^ texpr_to_string next_level cons
+      ^ " )\n" ^ indent_string ^ "else ( "
+      ^ texpr_to_string next_level alt
+      ^ " )"
+  | TLet (var, _, e1, e2, _) ->
+      "let " ^ tpattern_to_string var ^ " = ( " ^ texpr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ texpr_to_string next_level e2
+      ^ " )"
+  | TLetRec (var, _, e1, e2, _) ->
+      "let rec " ^ tpattern_to_string var ^ " = ( " ^ texpr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ texpr_to_string next_level e2
+      ^ " )"
+  | TLambda (var, _, abs, _) ->
+      "\\" ^ tpattern_to_string var ^ ".( " ^ texpr_to_string indent abs ^ " )"
+  | TApplication (abs, arg, _) ->
+      "( " ^ texpr_to_string indent abs ^ " ) ( " ^ texpr_to_string indent arg
+      ^ " )"
+  | TRecord (row, _ty) ->
+      "{\n"
+      ^ (row
+        |> List.map (fun (label, pat) ->
+               indent_string ^ label ^ " = " ^ texpr_to_string next_level pat)
+        |> String.concat ";\n")
+      ^ "\n}"
+  | TRecordAccess (record, label, _ty) ->
+      texpr_to_string indent record ^ "." ^ label
+  | TConstructor (name, expr, _ty) ->
+      name ^ " (" ^ texpr_to_string indent expr ^ ")"
+  | TMatch (expr, cases, _) ->
+      "match ( "
+      ^ texpr_to_string indent expr
+      ^ " ) with \n"
+      ^ indent_string
+        (* we have an indent before the first case as it does not get indented by concat *)
+      ^ (cases
+        |> List.map (fun (pat, case) ->
+               tpattern_to_string pat ^ " -> " ^ texpr_to_string next_level case)
+        |> String.concat ("\n" ^ indent_string ^ "|"))
+  | TRecordExtend (expr, row, _) ->
+      "{"
+      ^ texpr_to_string indent expr
+      ^ " with "
+      ^ (row
+        |> List.map (fun (label, pat) ->
+               indent_string ^ label ^ " = " ^ texpr_to_string indent pat)
+        |> String.concat "; ")
+      ^ "\n" ^ indent_string ^ "}"
+
+let texpr_to_string = texpr_to_string 0
 
 let top_level_to_string exp =
   match exp with
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
+  | RecBind { binding; value } ->
+      "rec" ^ tpattern_to_string binding ^ " = " ^ texpr_to_string value
   | Bind { binding; value } ->
-      "let (" ^ pattern_to_string binding ^ ") = " ^ ast_to_string value
+      "let (" ^ tpattern_to_string binding ^ ") = " ^ texpr_to_string value
   | PrintString s -> s
 
 let print_program program =
