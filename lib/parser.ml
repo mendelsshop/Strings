@@ -54,10 +54,10 @@ let comment = line_comment <|> multi_line_comment
 let junk = many (comment <|> white_space)
 
 let basic_identifier_without_junk =
-  letter <$> string_of_char >>= fun first ->
-  takeWhile is_hexadecimal <$> ( ^ ) first
-  |> check (not_in keywords)
-  <?> "identifier"
+  letter <$> string_of_char
+  >>= (fun first ->
+  takeWhile is_hexadecimal <$> ( ^ ) first |> check (not_in keywords))
+  |> tryP <?> "identifier"
 
 let basic_identifier = junk << basic_identifier_without_junk
 
@@ -71,12 +71,14 @@ let infix_identifier =
   junk << sat (infix_symbols &-> ( <> ) '`') <$> string_of_char >>= fun start ->
   takeWhile infix_symbols <$> ( ^ ) start
   |> check (not_in reserved_operators)
-  <?> "infix identifier"
+  |> tryP <?> "infix identifier"
 
 let identifier =
-  basic_identifier
+  basic_identifier |> tryP
   <|> (between (junk << char '(') (junk << char ')') infix_identifier
       <?> "infix identifier")
+
+let infix_identifier = infix_identifier
 
 (* TODO: for infix too *)
 let variant_identifier = junk << char '`' << identifier
@@ -379,12 +381,18 @@ let rec expr is_end =
     junk << string "match" << junk << expr false >> junk >> string "with"
     >>= fun expr ->
     (if is_end then
-       seq
-         (junk << char '|' |> opt << case false)
-         (seq
-            (junk << char '|' << case false |> many)
-            (junk << char '|' |> opt << case is_end))
-       <$> (fun (c, (cs, last)) -> (c :: cs) @ [ last ])
+       let end_cases =
+         makeRecParser (fun parser ->
+             choice
+               [
+                 return List.cons
+                 <*> (junk << char '|' << case false)
+                 <*> parser;
+                 (junk << char '|' << case true <$> fun end_case -> [ end_case ]);
+               ])
+       in
+       seq (junk << char '|' |> opt << case false) end_cases
+       <$> (fun (c, cases) -> c :: cases)
        <|> (junk << char '|' |> opt << case is_end <$> fun case -> [ case ])
      else
        seq
@@ -401,9 +409,13 @@ let rec expr is_end =
         unParse =
           (fun s ok err ->
             let (Parser { unParse }) =
-              expr' is_end
-              <|> funP (expr is_end)
-              <|> case expr is_end <|> letP expr is_end
+              choice
+                [
+                  expr' is_end;
+                  case expr is_end <?> "match";
+                  funP (expr is_end);
+                  letP expr is_end;
+                ]
             in
             unParse s ok err);
       }
@@ -425,9 +437,8 @@ let letP =
   junk << string "let" << junk << rec_parser
 
 let top_level =
-  char '\"'
-  << (letP
-     <|> (expr true <$> fun expr -> Bind { name = PWildcard; value = expr }))
+  char '\"' << letP
+  <|> (expr true <$> fun expr -> Bind { name = PWildcard; value = expr })
   <|> (stringP1 <?> "top level string" <$> fun string -> Ast.PrintString string)
 
 let parse = many1 top_level >> eof
