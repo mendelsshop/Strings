@@ -34,10 +34,10 @@ type 't texpr =
   | TConstructor of string * 't texpr * 't
 
 type 't top_level =
-  | Bind of { binding : 't tpattern; value : 't texpr }
-  | RecBind of { binding : 't tpattern; value : 't texpr }
-  | TypeBind of { name : string; ty : ty }
-  | PrintString of string
+  | TBind of { binding : 't tpattern; value : 't texpr }
+  | TRecBind of { binding : 't tpattern; value : 't texpr }
+  | TTypeBind of { name : string; ty : ty }
+  | TPrintString of string
 
 type 't program = 't top_level list
 
@@ -128,12 +128,12 @@ let texpr_to_string = texpr_to_string 0
 
 let top_level_to_string exp =
   match exp with
-  | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
-  | RecBind { binding; value } ->
-      "rec" ^ tpattern_to_string binding ^ " = " ^ texpr_to_string value
-  | Bind { binding; value } ->
+  | TTypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
+  | TRecBind { binding; value } ->
+      "let rec" ^ tpattern_to_string binding ^ " = " ^ texpr_to_string value
+  | TBind { binding; value } ->
       "let (" ^ tpattern_to_string binding ^ ") = " ^ texpr_to_string value
-  | PrintString s -> s
+  | TPrintString s -> s
 
 let print_program program =
   String.concat "\n" (List.map top_level_to_string program)

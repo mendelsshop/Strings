@@ -1,6 +1,7 @@
 open Types
 open Utils
-open Expr
+open Ast2
+open Typed_ast
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
@@ -53,6 +54,8 @@ let ty_var var = TyVar (var, !current_level)
 let rec generate_constraints_pattern ty = function
   | PVar x -> ([ (x, ty) ], [], PTVar (x, ty))
   | PWildcard -> ([], [], PTWildcard ty)
+  | PUnit -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit ty)
+  | PString b -> ([], [ CEq (ty, Union_find.make TyString) ], PTString (b, ty))
   | PBoolean b ->
       ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean (b, ty))
   | PFloat b -> ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat (b, ty))
@@ -176,6 +179,7 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
   | Integer n -> ([ CEq (ty, Union_find.make TyInteger) ], TInteger (n, ty))
   | Float n -> ([ CEq (ty, Union_find.make TyFloat) ], TFloat (n, ty))
+  | String s -> ([ CEq (ty, Union_find.make TyString) ], TString (s, ty))
   | Boolean n -> ([ CEq (ty, Union_find.make TyBoolean) ], TBoolean (n, ty))
   | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
   | Application (f, x) ->
@@ -278,15 +282,16 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
       let cs'', alternative = generate_constraints ty alternative in
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
         TIf (cond, consequent, alternative, ty) )
+  | Ascribe _ -> failwith ""
 
 let rec generate_constraints_top = function
   | [] -> ([], [])
-  | Bind (v, e) :: program ->
+  | Bind { name; value } :: program ->
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, v = generate_constraints_pattern a1_ty v in
-      let c, t1' = generate_constraints a1_ty e in
+      let env, cs, binding = generate_constraints_pattern a1_ty name in
+      let c, value = generate_constraints a1_ty value in
       leave_level ();
       let cs', program = generate_constraints_top program in
       ( [
@@ -296,19 +301,19 @@ let rec generate_constraints_top = function
               cs' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        Bind (v, t1') :: program )
-  | Expr e :: program' ->
-      let cs, e =
-        generate_constraints (Union_find.make (ty_var (gensym ()))) e
-      in
-      let cs', program'' = generate_constraints_top program' in
-      (cs @ cs', Expr e :: program'')
-  | RecBind (v, e) :: program ->
+        TBind { binding; value } :: program )
+  (* | Expr e :: program' -> *)
+  (*     let cs, e = *)
+  (*       generate_constraints (Union_find.make (ty_var (gensym ()))) e *)
+  (*     in *)
+  (*     let cs', program'' = generate_constraints_top program' in *)
+  (*     (cs @ cs', Expr e :: program'') *)
+  | RecBind { name; value } :: program ->
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, v = generate_constraints_pattern a1_ty v in
-      let cs', t1' = generate_constraints a1_ty e in
+      let env, cs, binding = generate_constraints_pattern a1_ty name in
+      let cs', value = generate_constraints a1_ty value in
       leave_level ();
       let cs'', program = generate_constraints_top program in
       ( [
@@ -318,7 +323,11 @@ let rec generate_constraints_top = function
               cs'' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        Bind (v, t1') :: program )
+        TBind { binding; value } :: program )
+  | PrintString s :: program ->
+      let cs, program' = generate_constraints_top program in
+      (cs, TPrintString s :: program')
+  | TypeBind _ :: _ -> failwith ""
 
 (* the way it is now we probably need to substitute into env *)
 (*     b/c of clet *)
@@ -342,6 +351,7 @@ let unify (s : ty) (t : ty) =
           inner s2 t2 ((s, t) :: used)
       | (TyUnit, _), (TyUnit, _) -> ()
       | (TyFloat, _), (TyFloat, _) -> ()
+      | (TyString, _), (TyString, _) -> ()
       | (TyInteger, _), (TyInteger, _) -> ()
       | (TyBoolean, _), (TyBoolean, _) -> ()
       | (TyRowEmpty, _), (TyRowEmpty, _) -> ()
@@ -372,7 +382,7 @@ let unify (s : ty) (t : ty) =
             inner gamma t used;
             inner (Union_find.make (TyRowExtend (l', t', beta))) r used
         | _ -> inner_row used l t r ty root.data)
-    | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
+    | TyString | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
     | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger | TyGenVar _
     | TyVar _ | TyBoolean | TyUnit ->
         failwith
@@ -438,7 +448,7 @@ let generalize (`for_all (_, ty)) =
                    (Union_find.make (TyRowExtend (l, t, r)))
                in
                (r, StringSet.union generalized generalized')
-           | TyRowEmpty | TyFloat | TyInteger | TyGenVar _ | TyUnit
+           | TyString | TyRowEmpty | TyFloat | TyInteger | TyGenVar _ | TyUnit
            | TyVar (_, _)
            | TyBoolean ->
                (ty, StringSet.empty)))
@@ -498,7 +508,8 @@ let instantiate (`for_all (vars, ty)) =
                    (Union_find.make (TyRowExtend (l, t, r)))
                in
                r
-           | TyBoolean | TyRowEmpty | TyFloat | TyInteger | TyVar _ | TyUnit ->
+           | TyString | TyBoolean | TyRowEmpty | TyFloat | TyInteger | TyVar _
+           | TyUnit ->
                ty))
       ()
   in

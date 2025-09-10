@@ -4,6 +4,7 @@ type 't ty_f =
   | TyVar of string * int
   | TyUnit
   | TyInteger
+  | TyString
   | TyFloat
   | TyBoolean
   | TyArrow of 't * 't
@@ -29,7 +30,7 @@ let ftv_ty (ty : ty) =
       | TyVariant v -> inner v (root :: used)
       | TyRowExtend (_, p, r) ->
           StringSet.union (inner p (root :: used)) (inner r (root :: used))
-      | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat -> StringSet.empty
+      | TyString | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat -> StringSet.empty
   in
   inner ty []
 
@@ -47,6 +48,7 @@ let type_to_string ty =
              | TyGenVar v -> (v, [])
              | TyUnit -> ("()", [])
              | TyInteger -> ("integer", [])
+             | TyString -> ("string", [])
              | TyFloat -> ("float", [])
              | TyBoolean -> ("boolean", [])
              | TyRowEmpty -> (unit, [])

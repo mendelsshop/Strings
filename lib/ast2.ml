@@ -1,4 +1,4 @@
-open Ast
+include Ast
 open Types
 
 type expr =
@@ -23,7 +23,7 @@ type expr =
 type top_level =
   | TypeBind of { name : string; ty : ty }
   | Bind of { name : pattern; value : expr }
-  | RecBind of { name : string; value : expr }
+  | RecBind of { name : pattern; value : expr }
   | PrintString of string
 
 type program = top_level list
@@ -136,13 +136,14 @@ let rec expr_to_string indent =
 
 let expr_to_string = expr_to_string 0
 
-let print_top_level tl =
+let top_level_to_string tl =
   match tl with
   | Bind { name; value } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
-  | RecBind { name; value } -> "let rec " ^ name ^ " = " ^ expr_to_string value
+  | RecBind { name; value } ->
+      "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | PrintString s -> s
 
-let print_program program =
-  String.concat "\n" (List.map print_top_level program)
+let program_to_string program =
+  String.concat "\n" (List.map top_level_to_string program)

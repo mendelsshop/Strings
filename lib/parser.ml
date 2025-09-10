@@ -1,9 +1,9 @@
 (* <<<<<<< HEAD *)
 open Types
 open Ast
+
 (* ======= *)
 open AMPCL
-open Expr
 (* >>>>>>> ml/main *)
 
 module Unit = struct
@@ -163,9 +163,9 @@ let constructor p zero = seq variant_identifier (p <|> zero) <?> "constructor"
 let rec typeP =
   let list_to_row ~k ~base list =
     (List.fold_right (fun (name, ty) row ->
-         TRowExtension { label = name; field = ty; row_extension = row }))
+         Union_find.make (TyRowExtend (name, ty, row))))
       list
-      (Option.value ~default:TEmptyRow base)
+      (Option.value ~default:(Union_find.make TyRowEmpty) base)
     |> k
   in
 
@@ -176,29 +176,35 @@ let rec typeP =
           let basic_type =
             choice
               [
-                unit <$> Fun.const TUnit;
+                unit <$> Fun.const (Union_find.make TyUnit);
                 paren typeP;
-                junk << string "int" <$> Fun.const TInteger;
-                junk << string "float" <$> Fun.const TFloat;
-                junk << string "string" <$> Fun.const TString;
-                junk << string "bool" <$> Fun.const TBool;
+                junk << string "int" <$> Fun.const (Union_find.make TyInteger);
+                junk << string "float" <$> Fun.const (Union_find.make TyFloat);
+                junk << string "string" <$> Fun.const (Union_find.make TyString);
+                junk << string "bool" <$> Fun.const (Union_find.make TyBoolean);
                 record typeP None ':'
                 <$> (fun (base, row) ->
-                list_to_row ~base ~k:(fun row -> Types.TRecord row) row)
+                list_to_row ~base
+                  ~k:(fun row -> Union_find.make (TyRecord row))
+                  row)
                 <?> "record";
               ]
           in
           let variant =
             many1
               (seq variant_identifier
-                 (opt basic_type <$> Option.value ~default:TUnit))
-            <$> list_to_row ~k:(fun row -> TVariant row) ~base:None
+                 (opt basic_type
+                 <$> Option.value ~default:(Union_find.make TyUnit)))
+            <$> list_to_row
+                  ~k:(fun row -> Union_find.make (TyVariant row))
+                  ~base:None
           in
           let functionP =
             variant <|> basic_type >>= fun first ->
             opt (junk << string "->" << typeP)
             <$> Option.fold
-                  ~some:(fun return -> TFunction (first, return))
+                  ~some:(fun return ->
+                    Union_find.make (TyArrow (first, return)))
                   ~none:first
           in
 
@@ -236,13 +242,13 @@ let rec pattern =
                   PString s );
                 (float <$> fun f -> Ast.PFloat f);
                 ( constructor pattern (return PUnit) <$> fun (name, value) ->
-                  PConstructor { name; value } );
-                (number <$> fun i -> Ast.PInt i);
-                junk << char '_' <$> Fun.const PWildCard;
-                (identifier <$> fun i -> Ast.PIdent i);
+                  PConstructor (name, value) );
+                (number <$> fun i -> PInteger i);
+                junk << char '_' <$> Fun.const PWildcard;
+                (identifier <$> fun i -> PVar i);
                 unit <$> Fun.const PUnit;
-                ( record pattern (Some (fun i -> PIdent i)) '='
-                <$> List.map (fun (name, value) -> { name; value })
+                ( record pattern (Some (fun i -> PVar i)) '='
+                <$> List.map (fun (name, value) -> (name, value))
                 <$> fun r -> PRecord r );
               ]
           in
@@ -278,18 +284,18 @@ let rec expr is_end =
                   (* TODO: for construction should a "constructor" be no different than an application, meaning that each constructor is a n-ary function, that can be destructed into its values, would also have to update type parsing to handle this *)
                   constructor (basic_expr is_end)
                     (last_quote is_end <$> Fun.const Unit)
-                  <$> (fun (name, value) -> Constructor { name; value })
+                  <$> (fun (name, value) -> Constructor (name, value))
                   >> last_quote is_end;
-                  number <$> (fun i -> Ast.Int i) >> last_quote is_end;
-                  identifier <$> (fun i -> Ast.Ident i) >> last_quote is_end;
+                  number <$> (fun i -> Integer i) >> last_quote is_end;
+                  identifier <$> (fun i -> Var i) >> last_quote is_end;
                   unit <$> Fun.const Unit >> last_quote is_end;
-                  record (expr false) (Some (fun i -> Ident i)) '='
+                  record (expr false) (Some (fun i -> Var i)) '='
                   <$> (fun (base, rows) ->
                   (fun rows ->
                     Option.fold
-                      ~some:(fun base -> Ast.RecordExtend (base, rows))
+                      ~some:(fun base -> RecordExtend (base, rows))
                       ~none:(Ast.Record rows) base)
-                    (List.map (fun (name, value) -> { name; value }) rows))
+                    (List.map (fun (name, value) -> (name, value)) rows))
                   >> last_quote is_end;
                 ]
             in
@@ -302,7 +308,7 @@ let rec expr is_end =
     >>= (fun value ->
     many
       (junk << char '.'
-      << (identifier <$> fun projector value -> RecordAcces { value; projector })
+      << (identifier <$> fun projector value -> RecordAccess (value, projector))
       )
     <$> List.fold_left ( |> ) value
     >> last_quote is_end)
@@ -313,7 +319,7 @@ let rec expr is_end =
       let rec go func =
         let get_func func arguement =
           Option.fold ~none:arguement
-            ~some:(fun func -> Application { func; arguement })
+            ~some:(fun func -> Application (func, arguement))
             func
         in
         project false ()
@@ -325,7 +331,7 @@ let rec expr is_end =
       many1 (project false ()) <$> function
       | single :: list ->
           List.fold_left
-            (fun app current -> Application { func = app; arguement = current })
+            (fun app current -> Application (app, current))
             single list
       | [] -> failwith "unreachable"
   in
@@ -344,30 +350,25 @@ let rec expr is_end =
                    (junk << string "then" << expr false)
                    (junk << string "else" << expr is_end))
               <$> fun (condition, (consequent, alternative)) ->
-              Ast.If { condition; consequent; alternative }
+              If (condition, consequent, alternative)
             in
             unParse s ok err);
       }
   in
   let funP expr =
     seq (junk << string "fun" << fun_params >> (junk << string "->")) expr
-    <$> fun (ps, exp) -> Ast.Function { parameters = ps; abstraction = exp }
+    <$> fun (ps, exp) -> Lambda (ps, exp)
   in
   let letP expr is_end =
     let rec_parser =
-      junk << string "rec" << seq identifier fun_params1
+      junk << string "rec" << seq pattern fun_params1
       <$> (fun (name, params) (e1, e2) ->
-      LetRec
-        { name; e1 = Function { parameters = params; abstraction = e1 }; e2 })
+      LetRec (name, Lambda (params, e1), e2))
       <|> ( seq pattern fun_params <$> fun (name, params) (e1, e2) ->
             Let
-              {
-                name;
-                e1 =
-                  (if List.is_empty params then e1
-                   else Function { parameters = params; abstraction = e1 });
-                e2;
-              } )
+              ( name,
+                (if List.is_empty params then e1 else Lambda (params, e1)),
+                e2 ) )
       >>= fun cons ->
       junk
       << seq (char '=' << expr false) (junk << string "in" << expr is_end)
@@ -379,7 +380,7 @@ let rec expr is_end =
     let case is_end =
       (* TODO: multi or pattern *)
       seq (junk << pattern) (junk << string "->" << expr is_end)
-      <$> fun (pattern, result) -> { pattern; result }
+      <$> fun (pattern, result) -> (pattern, result)
     in
     junk << string "match" << junk << expr false >> junk >> string "with"
     >>= fun expr ->
@@ -396,7 +397,7 @@ let rec expr is_end =
          (junk << char '|' |> opt << case false)
          (junk << char '|' << case false |> many)
        <$> fun (c, cs) -> c :: cs)
-    <$> fun cases -> Ast.Match { cases; expr }
+    <$> fun cases -> Match (expr, cases)
   in
   let expr' is_end = ifP is_end <|> application is_end in
 
@@ -417,16 +418,13 @@ let rec expr is_end =
 
 let letP =
   let rec_parser =
-    junk << string "rec" << seq identifier fun_params1
-    <$> (fun (name, params) e ->
-    RecBind { name; value = Function { parameters = params; abstraction = e } })
+    junk << string "rec" << seq pattern fun_params1
+    <$> (fun (name, params) e -> RecBind { name; value = Lambda (params, e) })
     <|> ( seq pattern fun_params <$> fun (name, params) e ->
           Bind
             {
               name;
-              value =
-                (if List.is_empty params then e
-                 else Function { parameters = params; abstraction = e });
+              value = (if List.is_empty params then e else Lambda (params, e));
             } )
     >>= fun cons -> junk << (char '=' << expr true) <$> cons
   in
@@ -435,11 +433,11 @@ let letP =
 let top_level =
   char '\"'
   << (letP
-     <|> (expr true <$> fun expr -> Ast.Bind { name = PWildCard; value = expr })
-     )
+     <|> (expr true <$> fun expr -> Bind { name = PWildcard; value = expr }))
   <|> (stringP1 <?> "top level string" <$> fun string -> Ast.PrintString string)
 
 let parser = many1 top_level >> eof
+
 (* ======= *)
 let key_words =
   [ "match"; "with"; "in"; "let"; "if"; "rec"; "then"; "else"; "\\"; "."; "|" ]
@@ -521,7 +519,7 @@ let pattern =
             parens_parser pattern;
             (char '_' <$> fun _ -> PWildcard);
             ident_parser (fun i -> PVar i);
-            number_parser (fun n -> PNumber n);
+            (* number_parser (fun n -> PNumber n); *)
             boolean_parser (fun b -> PBoolean b);
             record pattern;
             variant_parser (fun name p -> PConstructor (name, p)) pattern;
@@ -531,7 +529,7 @@ let lambda_parser expr =
   char '\\' >>= fun _ ->
   !pattern >>= fun ident ->
   !(char '.') >>= fun _ ->
-  expr <$> fun expr -> Lambda (ident, expr)
+  expr <$> fun expr -> Lambda ([ ident ], expr)
 
 let if_parser expr =
   string "if" >>= fun _ ->
@@ -597,7 +595,7 @@ let expr =
                 [
                   parens_parser expr;
                   boolean_parser (fun b -> Boolean b);
-                  number_parser (fun n -> Number n);
+                  (* number_parser (fun n -> Number n); *)
                   ident_parser (fun i -> Var i);
                   record expr;
                   variant_parser
@@ -618,16 +616,14 @@ let expr =
       !(choice
           [ if_parser; lambda_parser expr; match_parser expr; let_parser expr ]))
 
-let let_parser =
-  string "let" >>= fun _ ->
-  opt !(string "rec") >>= fun _rec ->
-  !pattern >>= fun ident ->
-  !(char '=') >>= fun _ ->
-  expr <$> fun e1 ->
-  if Option.is_some _rec then RecBind (ident, e1) else Bind (ident, e1)
-
-let top_level = expr <$> (fun e -> Expr e) <|> !let_parser
-
+(* let let_parser = *)
+(*   string "let" >>= fun _ -> *)
+(*   opt !(string "rec") >>= fun _rec -> *)
+(*   !pattern >>= fun ident -> *)
+(*   !(char '=') >>= fun _ -> *)
+(*   expr <$> fun e1 -> *)
+(*   if Option.is_some _rec then RecBind (ident, e1) else Bind (ident, e1) *)
+(* let top_level = expr <$> (fun e -> Expr e) <|> !let_parser *)
 let parse =
   many1
     ( top_level >>= fun tl ->
