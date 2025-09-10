@@ -30,7 +30,8 @@ let ftv_ty (ty : ty) =
       | TyVariant v -> inner v (root :: used)
       | TyRowExtend (_, p, r) ->
           StringSet.union (inner p (root :: used)) (inner r (root :: used))
-      | TyString | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat -> StringSet.empty
+      | TyString | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat ->
+          StringSet.empty
   in
   inner ty []
 

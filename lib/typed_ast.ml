@@ -135,5 +135,5 @@ let top_level_to_string exp =
       "let (" ^ tpattern_to_string binding ^ ") = " ^ texpr_to_string value
   | TPrintString s -> s
 
-let print_program program =
+let program_to_string program =
   String.concat "\n" (List.map top_level_to_string program)

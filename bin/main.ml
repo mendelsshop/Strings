@@ -1,9 +1,4 @@
-(* <<<<<<< HEAD *)
-let read_to_string file = open_in file |> In_channel.input_all
-(* ======= *)
-open Ml
-open Expr
-open Parser
+open Strings
 open Infer
 
 (* let () = UExist (Variables.of_list ["a1", "a2"], (UExist (Variables.of_list ["a3", "a4"], (UExist (Variables.of_list ["a5", "a6"], (UExist (Variables.of_list ["a7"], UAnd (UMulti ([TyVar], *)
@@ -60,28 +55,14 @@ let () =
         exit 1
   in
   let input = read_to_string file in
-<<<<<<< HEAD
-  let parsed = Strings.Parser.run Strings.Parser.parser input in
-  Result.fold ~error:Fun.id ~ok:Fun.id
-    (Result.map
-       (fun t ->
-         Strings.Ast.print_program t |> print_endline;
-         Strings.Ast2.ast_to_ast2 t |> Strings.Type_checker.infer
-         |> Result.fold
-              ~error:(fun e -> "not type checked: " ^ e)
-              ~ok:(fun typed ->
-                let typed = fst typed in
-                Strings.Typed_ast.print_program typed |> print_string;
-                Strings.Eval.eval typed Strings.Eval.env |> fst;
-                "evaled"))
-       parsed)
-(* ======= *)
-  let parsed = Ml.Parser.run parse input in
+
+  let parsed = Parser.run Parser.parse input in
   Result.fold ~error:Fun.id
     ~ok:(fun exprs ->
-      List.map program_to_string exprs |> String.concat "\n" |> print_endline;
+      Ast.program_to_string exprs |> print_endline;
+      let exprs = Strings.Ast2.ast_to_ast2 exprs in
       let exprs' = infer exprs in
-      List.map tprogram_to_string exprs' |> String.concat "\n")
+      Typed_ast.program_to_string exprs'
+      (*               Strings.Eval.eval typed Strings.Eval.env |> fst; *))
     parsed
-(* >>>>>>> ml/main *)
   |> print_endline

@@ -1,4 +1,5 @@
 (library
  (name strings)
  (libraries AMPCL monads)
- (modules Infer Parser Ast Ast2 Typed_ast Eval Eval_ast Types Gensym Utils Union_find))
+ ; (modules Infer Parser Ast Ast2 Typed_ast Eval Eval_ast Types Gensym Utils Union_find))
+ (modules Infer Parser Ast Ast2 Typed_ast Types Gensym Utils Union_find))

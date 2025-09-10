@@ -129,7 +129,8 @@ let top_level_to_string = function
   | Bind { name; value } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
-  | RecBind { name; value } -> "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
+  | RecBind { name; value } ->
+      "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | PrintString s -> s
 
 let program_to_string program =

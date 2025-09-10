@@ -8,7 +8,7 @@ let pattern =
   Alcotest.testable pp equal
 
 let ast =
-  let pp f t = Fmt.pf f "@[default=%s]" (ast_to_string t) in
+  let pp f t = Fmt.pf f "@[default=%s]" (expr_to_string t) in
   let equal = ( = ) in
   Alcotest.testable pp equal
 
@@ -68,7 +68,7 @@ let pattern =
   let wildcard =
     Strings.Parser.run Strings.Parser.pattern "_" |> Result.to_option
   in
-  let actual_wildcard = Some PWildCard in
+  let actual_wildcard = Some PWildcard in
   (*   let constructor = *)
   (*   Strings.Parser.run Strings.Parser.pattern "`foobar (5.5, \"baz\")" *)
   (*   |> Result.to_option *)
@@ -83,12 +83,7 @@ let pattern =
     |> Result.to_option
   in
   let actual_record =
-    Some
-      (PRecord
-         [
-           { name = ">>"; value = PInt 5 };
-           { name = "lag"; value = PString "baz" };
-         ])
+    Some (PRecord [ (">>", PInteger 5); ("lag", PString "baz") ])
   in
   ( "patterns",
     [
@@ -115,12 +110,7 @@ let expression =
     |> Result.to_option
   in
   let actual_application =
-    Some
-      (Application
-         {
-           func = Application { func = Ident "foo"; arguement = String "abc" };
-           arguement = Float 4.4;
-         })
+    Some (Application (Application (Var "foo", String "abc"), Float 4.4))
   in
   ( "expressions",
     [
