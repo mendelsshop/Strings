@@ -95,7 +95,10 @@ let rec generate_constraints_pattern ty = function
       in
       let ty' = Union_find.make (TyRecord pattern_ty) in
       (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord (pattern, ty))
-  | PAscribe _ -> failwith ""
+  | PAscribe (pat, ty') ->
+      let env, cs, pat' = generate_constraints_pattern ty' pat in
+      (* TODO: maybe don't remove ascription from typed ast? *)
+      (env, CEq (ty', ty) :: cs, pat')
 
 let rec generate_constraints ty : _ -> ty co list * _ = function
   | Record r ->
@@ -282,7 +285,9 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
       let cs'', alternative = generate_constraints ty alternative in
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
         TIf (cond, consequent, alternative, ty) )
-  | Ascribe _ -> failwith ""
+  | Ascribe (expr, ty') ->
+      let cs, expr' = generate_constraints ty' expr in
+      (CEq (ty', ty) :: cs, expr')
 
 let rec generate_constraints_top = function
   | [] -> ([], [])
@@ -349,6 +354,7 @@ let unify (s : ty) (t : ty) =
       | (TyArrow (s1, s2), _), (TyArrow (t1, t2), _) ->
           inner s1 t1 ((s, t) :: used);
           inner s2 t2 ((s, t) :: used)
+      (* could these be replaced with an structural eqaulity test *)
       | (TyUnit, _), (TyUnit, _) -> ()
       | (TyFloat, _), (TyFloat, _) -> ()
       | (TyString, _), (TyString, _) -> ()
@@ -515,8 +521,6 @@ let instantiate (`for_all (vars, ty)) =
   in
   inner ty []
 
-(* if we using cexist + union find for unification are we eventualy not going to need substition? *)
-(* we might be to many env substions more that needed *)
 let rec solve_constraint =
  fun env -> function
   | CEq (s, t) -> unify s t
@@ -561,7 +565,5 @@ and solve_constraints env = function
 
 let infer program =
   let cos, program' = generate_constraints_top program in
-  print_endline (constraints_to_string cos);
   solve_constraints [] cos;
-  print_endline (constraints_to_string cos);
   program'
