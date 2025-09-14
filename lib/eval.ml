@@ -40,32 +40,35 @@ let get_int n = match n with Int n -> n | _ -> error "not int"
 
 let rec get_bindings pattern expr =
   match (pattern, expr) with
-  | PIdent { ident; _ }, _ -> [ (ident, expr) ]
-  | (PFloat _ | PInt _ | PString _ | PUnit _ | PWildCard _), _ -> []
-  | PRecord { fields = pfields; _ }, Record fields ->
+  | PTVar (ident, _), _ -> [ (ident, expr) ]
+  | ( ( PTFloat _ | PTInteger _ | PTString _ | PTUnit _ | PTWildcard _
+      | PTBoolean _ ),
+      _ ) ->
+      []
+  | PTRecord (pfields, _), Record fields ->
       pfields
-      |> List.concat_map (fun { name; value } ->
+      |> List.concat_map (fun (name, value) ->
              let value' = List.assoc name fields in
              get_bindings value value')
-  | PRecord _, _ -> error "not a record"
-  | PConstructor _, _ ->
+  | PTRecord _, _ -> error "not a record"
+  | PTConstructor _, _ ->
       print_endline "todo: constructors";
       exit 1
 
-let rec eval (expr : typed_ast) =
+let rec eval expr =
   match expr with
-  | Rec { name; expr; _ } -> (
-      eval expr <$> function
-      | Function _ as expr' -> Rec { name; expr = expr' }
-      | e -> e)
-  | Unit _ -> return Unit
-  | Float { value; _ } -> Float value |> return
-  | Int { value; _ } -> Int value |> return
-  | String { value; _ } -> String value |> return
-  | Let { binding = PUnit _; e1; e2; _ } -> eval e1 >>= fun _ -> eval e2
-  | Let { binding; e1; e2; _ } ->
+  (* | TRec { name; expr; _ } -> ( *)
+  (*     eval expr <$> function *)
+  (*     | Function _ as expr' -> Rec { name; expr = expr' } *)
+  (*     | e -> e) *)
+  | TUnit _ -> return Unit
+  | TFloat (value, _) -> Float value |> return
+  | TInteger (value, _) -> Int value |> return
+  | TString (value, _) -> String value |> return
+  | TLet (PTUnit _, _, e1, e2, _) -> eval e1 >>= fun _ -> eval e2
+  | TLet (binding, _, e1, e2, _) ->
       eval e1 >>= fun e1' -> scoped_insert (get_bindings binding e1') (eval e2)
-  | Function { parameter; abstraction; _ } ->
+  | TLambda (parameter, _, abstraction, _) ->
       fun s ->
         ( Function
             ( s,
@@ -75,38 +78,37 @@ let rec eval (expr : typed_ast) =
                   s
                 |> fst ),
           s )
-  | Ident { ident; _ } -> get ident
-  | Application { func; arguement; _ } ->
+  | TVar (ident, _) -> get ident
+  | TApplication (func, arguement, _) ->
       eval func >>= fun func' ->
       eval arguement <$> fun arguement' -> apply func' arguement'
-  | If { condition; consequent; alternative; _ } ->
+  | TIf (condition, consequent, alternative, _) ->
       eval condition >>= fun cond' ->
       eval (if get_bool cond' then consequent else alternative)
-  | Poly { e; _ } -> eval e
-  | Record r ->
-      r.fields
+  | TRecord (fields, _) ->
+      fields
       |> List.fold_left
-           (fun rest { name; value } ->
+           (fun rest (name, value) ->
              rest >>= fun rest ->
              eval value <$> fun value -> rest @ [ (name, value) ])
            ([] |> return)
       <$> fun fields -> Record fields
-  | RecordAcces { value; projector; _ } ->
+  | TRecordAccess (value, projector, _) ->
       eval value <$> fun value -> get_record value |> List.assoc projector
   | e ->
-      print_endline ("todo: " ^ ast_to_string e);
+      print_endline ("todo: " ^ Typed_ast.texpr_to_string e);
       exit 1
 
 let eval expr =
   match expr with
-  | TypeBind _ -> return ()
-  (* | Bind { name; value; _ } -> eval value >>= fun value' -> insert (name, value') *)
-  | Bind { binding = PUnit _; value; _ } -> eval value <$> fun _ -> ()
-  | Bind { binding; value; _ } ->
+  | TTypeBind _ -> return ()
+  | TBind { binding = PTUnit _; value; _ } -> eval value <$> fun _ -> ()
+  | TBind { binding; value; _ } ->
       eval value >>= fun value' -> insert (get_bindings binding value')
-  | PrintString s ->
+  | TPrintString s ->
       print_string s;
       return ()
+  | _ -> failwith "let rec"
 
 let env =
   [
