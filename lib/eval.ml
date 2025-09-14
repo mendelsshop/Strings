@@ -1,55 +1,63 @@
 open Typed_ast
+include Monads.Std
 open Eval_ast
 
-let ( >>= ) t f s =
-  let t', s' = t s in
-  (f t') s'
+module M = struct
+  include Monad.State.T1 (Env) (Monad.Ident)
+  include Monad.State.Make (Env) (Monad.Ident)
+end
 
-let ( <$> ) t f s =
-  let t', s' = t s in
-  (f t', s')
+open M.Syntax
+open M.Let
 
-let return e s = (e, s)
-let bind = ( >>= )
-let map = ( <$> )
+let ( <$> ) x f = M.map x ~f
 
 (* type checker also checks for unbound variables so there is no need to do that here *)
-let get e s = (List.assoc e s, s)
-let insert v s = v @ s |> return ()
+let get e = M.gets (Env.find e)
+let insert v = M.update (Env.union v)
+let return = M.return
 
 let error msg =
   print_endline msg;
   exit 1
 
 (* needed for let in *)
-let scoped_insert v f s =
-  let _, s' = insert v s in
-  let e, _ = f s' in
-  (e, s)
+let scoped_insert v f =
+  let* env = M.get () in
+  let* _ = insert v in
+  let* v = f in
+  let* _ = M.put env in
+  return v
 
 let apply f a =
   match f with
-  | Function (env, f') -> f' env a
+  | Function (env', f') ->
+      let* env = M.get () in
+      let m, _ = M.run (f' a) env' in
+      let* _ = M.put env in
+      return m
   (* TODO: maybe account for rec of rec *)
-  | Rec { name; expr = Function (env, f') } -> f' ((name, f) :: env) a
+  (* | Rec { name; expr = Function (env, f') } -> f' ((name, f) :: env) a *)
   | _ -> error "cannot apply non function"
 
-let get_bool b = match b with Bool b -> b | _ -> error "not bool"
+let get_bool b = match b with Boolean b -> b | _ -> error "not bool"
 let get_record r = match r with Record r -> r | _ -> error "not record"
 let get_int n = match n with Int n -> n | _ -> error "not int"
 
 let rec get_bindings pattern expr =
   match (pattern, expr) with
-  | PTVar (ident, _), _ -> [ (ident, expr) ]
+  | PTVar (ident, _), _ -> Env.singleton ident expr
   | ( ( PTFloat _ | PTInteger _ | PTString _ | PTUnit _ | PTWildcard _
       | PTBoolean _ ),
       _ ) ->
-      []
+      Env.empty
   | PTRecord (pfields, _), Record fields ->
       pfields
-      |> List.concat_map (fun (name, value) ->
+      |> List.fold_left
+           (fun env (name, value) ->
              let value' = List.assoc name fields in
-             get_bindings value value')
+             Env.union (get_bindings value value') env)
+           Env.empty
   | PTRecord _, _ -> error "not a record"
   | PTConstructor _, _ ->
       print_endline "todo: constructors";
@@ -69,19 +77,18 @@ let rec eval expr =
   | TLet (binding, _, e1, e2, _) ->
       eval e1 >>= fun e1' -> scoped_insert (get_bindings binding e1') (eval e2)
   | TLambda (parameter, _, abstraction, _) ->
-      fun s ->
-        ( Function
-            ( s,
-              fun s x ->
-                ( insert (get_bindings parameter x) >>= fun () ->
-                  eval abstraction )
-                  s
-                |> fst ),
-          s )
+      let* s = M.get () in
+      return
+        (Function
+           ( s,
+             fun x ->
+               insert (get_bindings parameter x) >>= fun () -> eval abstraction
+           ))
   | TVar (ident, _) -> get ident
   | TApplication (func, arguement, _) ->
-      eval func >>= fun func' ->
-      eval arguement <$> fun arguement' -> apply func' arguement'
+      let* func' = eval func in
+      let* arguement' = eval arguement in
+      apply func' arguement'
   | TIf (condition, consequent, alternative, _) ->
       eval condition >>= fun cond' ->
       eval (if get_bool cond' then consequent else alternative)
@@ -95,9 +102,23 @@ let rec eval expr =
       <$> fun fields -> Record fields
   | TRecordAccess (value, projector, _) ->
       eval value <$> fun value -> get_record value |> List.assoc projector
-  | e ->
-      print_endline ("todo: " ^ Typed_ast.texpr_to_string e);
-      exit 1
+  | TBoolean (v, _) -> Boolean v |> return
+  | TRecordExtend (r, fields', _) ->
+      let* r' = eval r in
+      let fields = get_record r' in
+      let fields =
+        List.fold_left
+          (fun rest (name, value) ->
+            rest >>= fun rest ->
+            eval value <$> fun value -> rest @ [ (name, value) ])
+          (fields |> return) fields'
+      in
+      fields <$> fun fields -> Record fields
+  | TLetRec (_, _, _, _, _) -> failwith ""
+  | TMatch (_, _, _) -> failwith ""
+  | TConstructor (_, _, _) -> failwith ""
+(* print_endline ("todo: " ^ Typed_ast.texpr_to_string e); *)
+(* exit 1 *)
 
 let eval expr =
   match expr with
@@ -114,18 +135,31 @@ let env =
   [
     ( "print",
       Function
-        ( [],
-          fun _ x ->
+        ( Env.empty,
+          fun x ->
             print_ast x |> print_endline;
-            Unit ) );
-    ("=", Function ([], fun _ x -> Function ([], fun _ y -> Bool (x = y))));
+            return Unit ) );
+    ( "=",
+      Function
+        ( Env.empty,
+          fun x ->
+            return (Function (Env.empty, fun y -> return (Boolean (x = y)))) )
+    );
     ( "*",
       Function
-        ([], fun _ x -> Function ([], fun _ y -> Int (get_int x * get_int y)))
+        ( Env.empty,
+          fun x ->
+            return
+              (Function
+                 (Env.empty, fun y -> return (Int (get_int x * get_int y)))) )
     );
     ( "-",
       Function
-        ([], fun _ x -> Function ([], fun _ y -> Int (get_int x - get_int y)))
+        ( Env.empty,
+          fun x ->
+            return
+              (Function
+                 (Env.empty, fun y -> return (Int (get_int x - get_int y)))) )
     );
   ]
 

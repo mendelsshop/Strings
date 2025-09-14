@@ -3,6 +3,19 @@
 include Gensym
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
+module StringMap = Map.Make (String)
+
+module type T = sig
+  type t
+end
+
+module Env (T : T) = struct
+  include StringMap
+
+  type t = T.t StringMap.t
+
+  let union x y = union (fun _ x _ -> Some x) x y
+end
 (* let in_env new_env m = *)
 (*   let scope env = new_env @ env in *)
 (*   R.local scope m *)
