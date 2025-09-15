@@ -1,5 +1,5 @@
 open Typed_ast
-include Monads.Std
+open Monads.Std
 open Eval_ast
 
 module M = struct
@@ -63,10 +63,19 @@ let rec get_bindings pattern expr =
       print_endline "todo: constructors";
       exit 1
 
-let matches (e : eval_expr) (case : Types.ty tpattern) =
+let rec matches (e : eval_expr) (case : Types.ty tpattern) =
   match (case, e) with
   | PTVar (v, _), p -> Some (Env.singleton v p)
-  | PTRecord (_, _), _ | PTConstructor (_, _, _), _ -> failwith ""
+  | PTRecord (r, _), Record r' ->
+      List.map
+        (fun (f, f_pat) ->
+          let o = List.assoc_opt f r' in
+          Option.bind o (fun e -> matches e f_pat))
+        r
+      |> List.fold_left
+           (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
+           (Some Env.empty)
+  | PTConstructor (l, v, _), Constructor (l', v') when l == l' -> matches v' v
   | PTWildcard _, _ -> Some Env.empty
   | PTBoolean (v, _), Boolean v' when v = v' -> Some Env.empty
   | PTString (v, _), String v' when v = v' -> Some Env.empty
@@ -187,6 +196,9 @@ let env =
                  (Env.empty, fun y -> return (Integer (get_int x - get_int y))))
         ) );
   ]
+  |> Env.of_list
 
 let eval tls =
   List.fold_left (fun i tl -> i >>= fun _ -> eval tl) (return ()) tls
+
+let eval tls = M.run (eval tls) env

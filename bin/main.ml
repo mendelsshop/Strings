@@ -14,13 +14,13 @@ let () =
   in
   let input = read_to_string file in
 
-  let parsed = Parser.run Parser.parse input in
-  Result.fold ~error:Fun.id
-    ~ok:(fun exprs ->
+  let result = Parser.run Parser.parse input in
+  Result.fold
+    ~error:(fun e () -> print_endline e)
+    ~ok:(fun exprs () ->
       Ast.program_to_string exprs |> print_endline;
       let exprs = Strings.Ast2.ast_to_ast2 exprs in
       let exprs' = infer exprs in
-      Typed_ast.program_to_string exprs'
-      (*               Strings.Eval.eval typed Strings.Eval.env |> fst; *))
-    parsed
-  |> print_endline
+      Typed_ast.program_to_string exprs' |> print_endline;
+      Strings.Eval.eval exprs' |> fst)
+    result ()
