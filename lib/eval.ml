@@ -29,21 +29,6 @@ let scoped_insert v f =
   let* _ = M.put env in
   return v
 
-let apply f a =
-  match f with
-  | Function (env', f') ->
-      let* env = M.get () in
-      let m, _ = M.run (f' a) env' in
-      let* _ = M.put env in
-      return m
-  (* TODO: maybe account for rec of rec *)
-  (* | Rec { name; expr = Function (env, f') } -> f' ((name, f) :: env) a *)
-  | _ -> error "cannot apply non function"
-
-let get_bool b = match b with Boolean b -> b | _ -> error "not bool"
-let get_record r = match r with Record r -> r | _ -> error "not record"
-let get_int n = match n with Integer n -> n | _ -> error "not int"
-
 let rec get_bindings pattern expr =
   match (pattern, expr) with
   | PTVar (ident, _), _ -> Env.singleton ident expr
@@ -62,6 +47,32 @@ let rec get_bindings pattern expr =
   | PTConstructor _, _ ->
       print_endline "todo: constructors";
       exit 1
+
+let apply f a =
+  match f with
+  | Function (env', f') ->
+      let* env = M.get () in
+      let m, _ = M.run (f' a) env' in
+      let* _ = M.put env in
+      return m
+  | Rec (binders, Function (env', f')) ->
+      let* env = M.get () in
+      let binders = Env.map (fun e -> Rec (binders, e)) binders in
+      let m, _ = M.run (f' a) (Env.union binders env') in
+      let* _ = M.put env in
+      return m
+  (* TODO: maybe account for rec of rec *)
+  (* | Rec { name; expr = Function (env, f') } -> f' ((name, f) :: env) a *)
+  | _ -> error "cannot apply non function"
+
+let get_bool b =
+  match b with Boolean b | Rec (_, Boolean b) -> b | _ -> error "not bool"
+
+let get_record r =
+  match r with Record r | Rec (_, Record r) -> r | _ -> error "not record"
+
+let get_int n =
+  match n with Integer n | Rec (_, Integer n) -> n | _ -> error "not int"
 
 let rec matches (e : eval_expr) (case : Types.ty tpattern) =
   match (case, e) with
@@ -93,10 +104,6 @@ let matches e cases =
 
 let rec eval expr =
   match expr with
-  (* | TRec { name; expr; _ } -> ( *)
-  (*     eval expr <$> function *)
-  (*     | Function _ as expr' -> Rec { name; expr = expr' } *)
-  (*     | e -> e) *)
   | TUnit _ -> return Unit
   | TFloat (value, _) -> Float value |> return
   | TInteger (value, _) -> Integer value |> return
@@ -142,7 +149,11 @@ let rec eval expr =
           (fields |> return) fields'
       in
       fields <$> fun fields -> Record fields
-  | TLetRec (_, _, _, _, _) -> failwith ""
+  | TLetRec (binding, _, e1, e2, _) ->
+      let* e1' = eval e1 in
+      let bindings = get_bindings binding e1' in
+      let bindings = Env.map (fun e -> Rec (bindings, e)) bindings in
+      scoped_insert bindings (eval e2)
   | TMatch (e, cases, _) ->
       let* e' = eval e in
       let binders, case = matches e' cases in
@@ -150,9 +161,6 @@ let rec eval expr =
   | TConstructor (l, e, _) ->
       let* e' = eval e in
       return (Constructor (l, e'))
-
-(* print_endline ("todo: " ^ Typed_ast.texpr_to_string e); *)
-(* exit 1 *)
 
 let eval expr =
   match expr with
@@ -163,7 +171,11 @@ let eval expr =
   | TPrintString s ->
       print_string s;
       return ()
-  | _ -> failwith "let rec"
+  | TRecBind { binding; value } ->
+      let* value' = eval value in
+      let bindings = get_bindings binding value' in
+      let bindings = Env.map (fun e -> Rec (bindings, e)) bindings in
+      insert bindings
 
 let env =
   [
