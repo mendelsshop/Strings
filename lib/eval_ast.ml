@@ -1,7 +1,7 @@
 open Utils
 
 type eval_expr =
-  | Int of int
+  | Integer of int
   | Boolean of bool
   | Float of float
   | String of string
@@ -21,7 +21,7 @@ end)
 let print_ast expr =
   match expr with
   | Unit -> "()"
-  | Int i -> string_of_int i
+  | Integer i -> string_of_int i
   | Boolean b -> string_of_bool b
   | Float f -> string_of_float f
   | String s -> s

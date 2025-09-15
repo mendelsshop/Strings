@@ -42,7 +42,7 @@ let apply f a =
 
 let get_bool b = match b with Boolean b -> b | _ -> error "not bool"
 let get_record r = match r with Record r -> r | _ -> error "not record"
-let get_int n = match n with Int n -> n | _ -> error "not int"
+let get_int n = match n with Integer n -> n | _ -> error "not int"
 
 let rec get_bindings pattern expr =
   match (pattern, expr) with
@@ -63,7 +63,24 @@ let rec get_bindings pattern expr =
       print_endline "todo: constructors";
       exit 1
 
-let matches _e _cases = failwith ""
+let matches (e : eval_expr) (case : Types.ty tpattern) =
+  match (case, e) with
+  | PTVar (v, _), p -> Some (Env.singleton v p)
+  | PTRecord (_, _), _ | PTConstructor (_, _, _), _ -> failwith ""
+  | PTWildcard _, _ -> Some Env.empty
+  | PTBoolean (v, _), Boolean v' when v = v' -> Some Env.empty
+  | PTString (v, _), String v' when v = v' -> Some Env.empty
+  | PTFloat (v, _), Float v' when v = v' -> Some Env.empty
+  | PTInteger (v, _), Integer v' when v = v' -> Some Env.empty
+  | PTUnit _, Unit -> Some Env.empty
+  | _ -> None
+
+let matches e cases =
+  List.find_map
+    (fun (pat, result) ->
+      Option.map (fun binders -> (binders, result)) (matches e pat))
+    cases
+  |> Option.get
 
 let rec eval expr =
   match expr with
@@ -73,7 +90,7 @@ let rec eval expr =
   (*     | e -> e) *)
   | TUnit _ -> return Unit
   | TFloat (value, _) -> Float value |> return
-  | TInteger (value, _) -> Int value |> return
+  | TInteger (value, _) -> Integer value |> return
   | TString (value, _) -> String value |> return
   | TLet (PTUnit _, _, e1, e2, _) -> eval e1 >>= fun _ -> eval e2
   | TLet (binding, _, e1, e2, _) ->
@@ -159,16 +176,16 @@ let env =
           fun x ->
             return
               (Function
-                 (Env.empty, fun y -> return (Int (get_int x * get_int y)))) )
-    );
+                 (Env.empty, fun y -> return (Integer (get_int x * get_int y))))
+        ) );
     ( "-",
       Function
         ( Env.empty,
           fun x ->
             return
               (Function
-                 (Env.empty, fun y -> return (Int (get_int x - get_int y)))) )
-    );
+                 (Env.empty, fun y -> return (Integer (get_int x - get_int y))))
+        ) );
   ]
 
 let eval tls =
