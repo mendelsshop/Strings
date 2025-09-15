@@ -12,6 +12,7 @@ type eval_expr =
   | Unit
   (* | Rec of { name : string; expr : eval_expr } *)
   | Record of (string * eval_expr) list
+  | Constructor of string * eval_expr
 
 module Env = Env (struct
   type t = eval_expr
@@ -27,3 +28,4 @@ let print_ast expr =
   | Function _ -> "function"
   (* | Rec _ -> "rec" *)
   | Record _r -> "record"
+  | Constructor (label, _) -> label

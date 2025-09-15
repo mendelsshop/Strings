@@ -63,6 +63,8 @@ let rec get_bindings pattern expr =
       print_endline "todo: constructors";
       exit 1
 
+let matches _e _cases = failwith ""
+
 let rec eval expr =
   match expr with
   (* | TRec { name; expr; _ } -> ( *)
@@ -115,8 +117,14 @@ let rec eval expr =
       in
       fields <$> fun fields -> Record fields
   | TLetRec (_, _, _, _, _) -> failwith ""
-  | TMatch (_, _, _) -> failwith ""
-  | TConstructor (_, _, _) -> failwith ""
+  | TMatch (e, cases, _) ->
+      let* e' = eval e in
+      let binders, case = matches e' cases in
+      scoped_insert binders (eval case)
+  | TConstructor (l, e, _) ->
+      let* e' = eval e in
+      return (Constructor (l, e'))
+
 (* print_endline ("todo: " ^ Typed_ast.texpr_to_string e); *)
 (* exit 1 *)
 
