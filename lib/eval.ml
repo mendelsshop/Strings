@@ -29,24 +29,36 @@ let scoped_insert v f =
   let* _ = M.put env in
   return v
 
-let rec get_bindings pattern expr =
-  match (pattern, expr) with
-  | PTVar (ident, _), _ -> Env.singleton ident expr
-  | ( ( PTFloat _ | PTInteger _ | PTString _ | PTUnit _ | PTWildcard _
-      | PTBoolean _ ),
-      _ ) ->
-      Env.empty
-  | PTRecord (pfields, _), Record fields ->
-      pfields
+let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
+  match (case, e) with
+  | PTVar (v, _), p -> Some (Env.singleton v p)
+  | PTRecord (r, _), Record r' ->
+      List.map
+        (fun (f, f_pat) ->
+          let o = List.assoc_opt f r' in
+          Option.bind o (fun e -> matches_single e f_pat))
+        r
       |> List.fold_left
-           (fun env (name, value) ->
-             let value' = List.assoc name fields in
-             Env.union (get_bindings value value') env)
-           Env.empty
-  | PTRecord _, _ -> error "not a record"
-  | PTConstructor _, _ ->
-      print_endline "todo: constructors";
-      exit 1
+           (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
+           (Some Env.empty)
+  | PTConstructor (l, v, _), Constructor (l', v') when l == l' ->
+      matches_single v' v
+  | PTWildcard _, _ -> Some Env.empty
+  | PTBoolean (v, _), Boolean v' when v = v' -> Some Env.empty
+  | PTString (v, _), String v' when v = v' -> Some Env.empty
+  | PTFloat (v, _), Float v' when v = v' -> Some Env.empty
+  | PTInteger (v, _), Integer v' when v = v' -> Some Env.empty
+  | PTUnit _, Unit -> Some Env.empty
+  | _ -> None
+
+let matches_single' e case = matches_single e case |> Option.get
+
+let matches e cases =
+  List.find_map
+    (fun (pat, result) ->
+      Option.map (fun binders -> (binders, result)) (matches_single e pat))
+    cases
+  |> Option.get
 
 let apply f a =
   match f with
@@ -74,34 +86,6 @@ let get_record r =
 let get_int n =
   match n with Integer n | Rec (_, Integer n) -> n | _ -> error "not int"
 
-let rec matches (e : eval_expr) (case : Types.ty tpattern) =
-  match (case, e) with
-  | PTVar (v, _), p -> Some (Env.singleton v p)
-  | PTRecord (r, _), Record r' ->
-      List.map
-        (fun (f, f_pat) ->
-          let o = List.assoc_opt f r' in
-          Option.bind o (fun e -> matches e f_pat))
-        r
-      |> List.fold_left
-           (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
-           (Some Env.empty)
-  | PTConstructor (l, v, _), Constructor (l', v') when l == l' -> matches v' v
-  | PTWildcard _, _ -> Some Env.empty
-  | PTBoolean (v, _), Boolean v' when v = v' -> Some Env.empty
-  | PTString (v, _), String v' when v = v' -> Some Env.empty
-  | PTFloat (v, _), Float v' when v = v' -> Some Env.empty
-  | PTInteger (v, _), Integer v' when v = v' -> Some Env.empty
-  | PTUnit _, Unit -> Some Env.empty
-  | _ -> None
-
-let matches e cases =
-  List.find_map
-    (fun (pat, result) ->
-      Option.map (fun binders -> (binders, result)) (matches e pat))
-    cases
-  |> Option.get
-
 let rec eval expr =
   match expr with
   | TUnit _ -> return Unit
@@ -110,15 +94,16 @@ let rec eval expr =
   | TString (value, _) -> String value |> return
   | TLet (PTUnit _, _, e1, e2, _) -> eval e1 >>= fun _ -> eval e2
   | TLet (binding, _, e1, e2, _) ->
-      eval e1 >>= fun e1' -> scoped_insert (get_bindings binding e1') (eval e2)
+      eval e1 >>= fun e1' ->
+      scoped_insert (matches_single' e1' binding) (eval e2)
   | TLambda (parameter, _, abstraction, _) ->
       let* s = M.get () in
       return
         (Function
            ( s,
              fun x ->
-               insert (get_bindings parameter x) >>= fun () -> eval abstraction
-           ))
+               insert (matches_single' x parameter) >>= fun () ->
+               eval abstraction ))
   | TVar (ident, _) -> get ident
   | TApplication (func, arguement, _) ->
       let* func' = eval func in
@@ -151,7 +136,7 @@ let rec eval expr =
       fields <$> fun fields -> Record fields
   | TLetRec (binding, _, e1, e2, _) ->
       let* e1' = eval e1 in
-      let bindings = get_bindings binding e1' in
+      let bindings = matches_single' e1' binding in
       let bindings = Env.map (fun e -> Rec (bindings, e)) bindings in
       scoped_insert bindings (eval e2)
   | TMatch (e, cases, _) ->
@@ -167,13 +152,13 @@ let eval expr =
   | TTypeBind _ -> return ()
   | TBind { binding = PTUnit _; value; _ } -> eval value <$> fun _ -> ()
   | TBind { binding; value; _ } ->
-      eval value >>= fun value' -> insert (get_bindings binding value')
+      eval value >>= fun value' -> insert (matches_single' value' binding)
   | TPrintString s ->
       print_string s;
       return ()
   | TRecBind { binding; value } ->
       let* value' = eval value in
-      let bindings = get_bindings binding value' in
+      let bindings = matches_single' value' binding in
       let bindings = Env.map (fun e -> Rec (bindings, e)) bindings in
       insert bindings
 
