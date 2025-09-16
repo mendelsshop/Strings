@@ -1,15 +1,15 @@
 open Utils
 
 type 't ty_f =
-  | TyVar of string * int
+  | TyVar of { name : string; level : int }
   | TyUnit
   | TyInteger
   | TyString
   | TyFloat
   | TyBoolean
-  | TyArrow of 't * 't
+  | TyArrow of { domain : 't; range : 't }
   | TyRowEmpty
-  | TyRowExtend of string * 't * 't
+  | TyRowExtend of { label : string; field : 't; rest_row : 't }
   | TyRecord of 't
   | TyVariant of 't
   | TyGenVar of string
@@ -22,14 +22,18 @@ let ftv_ty (ty : ty) =
     if List.memq root used then StringSet.empty
     else
       match node.data with
-      | TyVar (v, _) -> StringSet.singleton v
+      | TyVar { name; _ } -> StringSet.singleton name
       | TyGenVar _ -> StringSet.empty (* maybe free? *)
-      | TyArrow (p, r) ->
-          StringSet.union (inner p (root :: used)) (inner r (root :: used))
+      | TyArrow { domain; range } ->
+          StringSet.union
+            (inner domain (root :: used))
+            (inner range (root :: used))
       | TyRecord r -> inner r (root :: used)
       | TyVariant v -> inner v (root :: used)
-      | TyRowExtend (_, p, r) ->
-          StringSet.union (inner p (root :: used)) (inner r (root :: used))
+      | TyRowExtend { field; rest_row; _ } ->
+          StringSet.union
+            (inner field (root :: used))
+            (inner rest_row (root :: used))
       | TyString | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat ->
           StringSet.empty
   in
@@ -45,7 +49,7 @@ let type_to_string ty =
            let sym = gensym () in
            let string, used =
              match node.data with
-             | TyVar (v, _) -> (v, [])
+             | TyVar { name; _ } -> (name, [])
              | TyGenVar v -> (v, [])
              | TyUnit -> ("()", [])
              | TyInteger -> ("integer", [])
@@ -56,10 +60,10 @@ let type_to_string ty =
              | TyRecord t ->
                  let t, used' = inner ((root, sym) :: used) ~unit:"" t in
                  ("{ " ^ t ^ " }", used')
-             | TyRowExtend (label, field, row_extension) ->
+             | TyRowExtend { label; field; rest_row } ->
                  let field, used' = inner ((root, sym) :: used) field in
                  let row_extension, used'' =
-                   inner ((root, sym) :: used) row_extension
+                   inner ((root, sym) :: used) rest_row
                  in
                  ( label ^ type_delim ^ field ^ delim ^ row_extension,
                    used' @ used'' )
@@ -69,9 +73,9 @@ let type_to_string ty =
                      ~type_delim:" " row
                  in
                  ("(" ^ t ^ ")", used')
-             | TyArrow (x, y) ->
-                 let x_string, used' = inner ((root, sym) :: used) x in
-                 let y_string, used'' = inner ((root, sym) :: used) y in
+             | TyArrow { domain; range } ->
+                 let x_string, used' = inner ((root, sym) :: used) domain in
+                 let y_string, used'' = inner ((root, sym) :: used) range in
                  let used' = used' @ used'' in
                  (x_string ^ " -> " ^ y_string, used')
            in

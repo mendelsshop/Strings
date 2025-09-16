@@ -141,10 +141,14 @@ let unit : unit t =
 let paren p = between (junk << char '(') (junk << char ')') p <?> "paren"
 
 let record p identifier_short_hand assign =
-  let field = seq identifier (junk << char assign << p) in
+  let field =
+    seq identifier (junk << char assign << p) <$> fun (label, value) ->
+    { label; value }
+  in
   let field =
     match identifier_short_hand with
-    | Some f -> field <|> (identifier <$> fun field -> (field, f field))
+    | Some f ->
+        field <|> (identifier <$> fun label -> { label; value = f label })
     | None -> field
   in
   between
@@ -158,8 +162,8 @@ let constructor p zero = seq variant_identifier (p <|> zero) <?> "constructor"
 
 let rec typeP =
   let list_to_row ~k ~base list =
-    (List.fold_right (fun (name, ty) row ->
-         Union_find.make (TyRowExtend (name, ty, row))))
+    (List.fold_right (fun { label; value } rest_row ->
+         Union_find.make (TyRowExtend { label; field = value; rest_row })))
       list
       (Option.value ~default:(Union_find.make TyRowEmpty) base)
     |> k
@@ -191,17 +195,18 @@ let rec typeP =
               (seq variant_identifier
                  (opt basic_type
                  <$> Option.value ~default:(Union_find.make TyUnit)))
+            <$> List.map (fun (label, value) -> { label; value })
             <$> list_to_row
                   ~k:(fun row -> Union_find.make (TyVariant row))
                   ~base:None
           in
           let functionP =
-            variant <|> basic_type >>= fun first ->
+            variant <|> basic_type >>= fun domain ->
             opt (junk << string "->" << typeP)
             <$> Option.fold
-                  ~some:(fun return ->
-                    Union_find.make (TyArrow (first, return)))
-                  ~none:first
+                  ~some:(fun range ->
+                    Union_find.make (TyArrow { domain; range }))
+                  ~none:domain
           in
 
           let (Parser { unParse }) = functionP in
@@ -238,13 +243,13 @@ let rec pattern =
                   PString s );
                 (float <$> fun f -> Ast.PFloat f);
                 ( constructor pattern (return PUnit) <$> fun (name, value) ->
-                  PConstructor (name, value) );
+                  PConstructor { name; value } );
                 (number <$> fun i -> PInteger i);
                 junk << char '_' <$> Fun.const PWildcard;
                 (identifier <$> fun i -> PVar i);
                 unit <$> Fun.const PUnit;
                 ( record pattern (Some (fun i -> PVar i)) '='
-                <$> List.map (fun (name, value) -> (name, value))
+                <$> List.map (fun (label, value) -> { label; value })
                 <$> fun r -> PRecord r );
               ]
           in
@@ -280,18 +285,16 @@ let rec expr is_end =
                   (* TODO: for construction should a "constructor" be no different than an application, meaning that each constructor is a n-ary function, that can be destructed into its values, would also have to update type parsing to handle this *)
                   constructor (basic_expr is_end)
                     (last_quote is_end <$> Fun.const Unit)
-                  <$> (fun (name, value) -> Constructor (name, value))
+                  <$> (fun (name, value) -> Constructor { name; value })
                   >> last_quote is_end;
                   number <$> (fun i -> Integer i) >> last_quote is_end;
                   identifier <$> (fun i -> Var i) >> last_quote is_end;
                   unit <$> Fun.const Unit >> last_quote is_end;
                   record (expr false) (Some (fun i -> Var i)) '='
-                  <$> (fun (base, rows) ->
-                  (fun rows ->
-                    Option.fold
-                      ~some:(fun base -> RecordExtend (base, rows))
-                      ~none:(Ast.Record rows) base)
-                    (List.map (fun (name, value) -> (name, value)) rows))
+                  <$> (fun (record, new_fields) ->
+                  Option.fold
+                    ~some:(fun record -> RecordExtend { record; new_fields })
+                    ~none:(Ast.Record new_fields) record)
                   >> last_quote is_end;
                 ]
             in
@@ -304,8 +307,8 @@ let rec expr is_end =
     >>= (fun value ->
     many
       (junk << char '.'
-      << (identifier <$> fun projector value -> RecordAccess (value, projector))
-      )
+      << ( identifier <$> fun projector record ->
+           RecordAccess { record; projector } ))
     <$> List.fold_left ( |> ) value
     >> last_quote is_end)
     <|> basic_expr is_end
@@ -315,7 +318,7 @@ let rec expr is_end =
       let rec go func =
         let get_func func arguement =
           Option.fold ~none:arguement
-            ~some:(fun func -> Application (func, arguement))
+            ~some:(fun lambda -> Application { lambda; arguement })
             func
         in
         project false ()
@@ -327,7 +330,7 @@ let rec expr is_end =
       many1 (project false ()) <$> function
       | single :: list ->
           List.fold_left
-            (fun app current -> Application (app, current))
+            (fun lambda arguement -> Application { lambda; arguement })
             single list
       | [] -> failwith "unreachable"
   in
@@ -346,25 +349,31 @@ let rec expr is_end =
                    (junk << string "then" << expr false)
                    (junk << string "else" << expr is_end))
               <$> fun (condition, (consequent, alternative)) ->
-              If (condition, consequent, alternative)
+              If { condition; consequent; alternative }
             in
             unParse s ok err);
       }
   in
   let funP expr =
     seq (junk << string "fun" << fun_params >> (junk << string "->")) expr
-    <$> fun (ps, exp) -> Lambda (ps, exp)
+    <$> fun (parameters, body) -> Lambda { parameters; body }
   in
   let letP expr is_end =
     let rec_parser =
-      junk << string "rec" << seq pattern fun_params1
-      <$> (fun (name, params) (e1, e2) ->
-      LetRec (name, Lambda (params, e1), e2))
-      <|> ( seq pattern fun_params <$> fun (name, params) (e1, e2) ->
+      junk << string "rec"
+      << seq pattern fun_params1
+         (* TODO: allow more complex letrec expressions *)
+      <$> (fun (name, parameters) (e1, e2) ->
+      LetRec { name; e1 = Lambda { parameters; body = e1 }; e2 })
+      <|> ( seq pattern fun_params <$> fun (name, parameters) (e1, e2) ->
             Let
-              ( name,
-                (if List.is_empty params then e1 else Lambda (params, e1)),
-                e2 ) )
+              {
+                name;
+                e1 =
+                  (if List.is_empty parameters then e1
+                   else Lambda { parameters; body = e1 });
+                e2;
+              } )
       >>= fun cons ->
       junk
       << seq (char '=' << expr false) (junk << string "in" << expr is_end)
@@ -376,10 +385,10 @@ let rec expr is_end =
     let case is_end =
       (* TODO: multi or pattern *)
       seq (junk << pattern) (junk << string "->" << expr is_end)
-      <$> fun (pattern, result) -> (pattern, result)
+      <$> fun (pattern, result) -> { pattern; result }
     in
     junk << string "match" << junk << expr false >> junk >> string "with"
-    >>= fun expr ->
+    >>= fun value ->
     (if is_end then
        let end_cases =
          makeRecParser (fun parser ->
@@ -399,7 +408,7 @@ let rec expr is_end =
          (junk << char '|' |> opt << case false)
          (junk << char '|' << case false |> many)
        <$> fun (c, cs) -> c :: cs)
-    <$> fun cases -> Match (expr, cases)
+    <$> fun cases -> Match { value; cases }
   in
   let expr' is_end = ifP is_end <|> application is_end in
 
@@ -424,13 +433,17 @@ let rec expr is_end =
 
 let letP =
   let rec_parser =
-    junk << string "rec" << seq pattern fun_params1
-    <$> (fun (name, params) e -> RecBind { name; value = Lambda (params, e) })
-    <|> ( seq pattern fun_params <$> fun (name, params) e ->
+    junk << string "rec"
+    << seq pattern fun_params1 (* TODO: allow more complex letrec expressions *)
+    <$> (fun (name, parameters) body ->
+    RecBind { name; value = Lambda { parameters; body } })
+    <|> ( seq pattern fun_params <$> fun (name, parameters) body ->
           Bind
             {
               name;
-              value = (if List.is_empty params then e else Lambda (params, e));
+              value =
+                (if List.is_empty parameters then body
+                 else Lambda { parameters; body });
             } )
     >>= fun cons -> junk << (char '=' << expr true) <$> cons
   in

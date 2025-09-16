@@ -1,6 +1,8 @@
 open Types
 
-type 'a row = (string * 'a) list
+type 'a field = { label : string; value : 'a }
+type 'a row = 'a field list
+type ('a, 'b) case = { pattern : 'a; result : 'b }
 
 type pattern =
   | PVar of string
@@ -11,29 +13,29 @@ type pattern =
   | PBoolean of bool
   | PRecord of pattern row
   (*   TODO: does record extension makes sense for patterns   *)
-  | PConstructor of string * pattern
-  | PAscribe of (pattern * ty)
+  | PConstructor of { name : string; value : pattern }
+  | PAscribe of { pattern : pattern; ty : ty }
   | PString of string
 
 type expr =
   | Var of string
-  | Lambda of pattern list * expr
-  | Application of expr * expr
-  | Let of pattern * expr * expr
-  | LetRec of pattern * expr * expr
-  | InfixApplication of (string * expr * expr)
+  | Lambda of { parameters : pattern list; body : expr }
+  | Application of { lambda : expr; arguement : expr }
+  | Let of { name : pattern; e1 : expr; e2 : expr }
+  | LetRec of { name : pattern; e1 : expr; e2 : expr }
+  | InfixApplication of { operator : string; left : expr; right : expr }
   | Unit
   | String of string
   | Boolean of bool
   | Float of float
   | Integer of int
-  | RecordAccess of expr * string
-  | RecordExtend of expr * expr row
+  | RecordAccess of { record : expr; projector : string }
+  | RecordExtend of { record : expr; new_fields : expr row }
   | Record of expr row
-  | Constructor of string * expr
-  | Match of expr * (pattern * expr) list
-  | If of expr * expr * expr
-  | Ascribe of (expr * ty)
+  | Constructor of { name : string; value : expr }
+  | Match of { value : expr; cases : (pattern, expr) case list }
+  | If of { condition : expr; consequent : expr; alternative : expr }
+  | Ascribe of { value : expr; ty : ty }
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
@@ -56,11 +58,11 @@ let rec pattern_to_string = function
   | PRecord row ->
       "{ "
       ^ (row
-        |> List.map (fun (label, pat) -> label ^ " = " ^ pattern_to_string pat)
+        |> List.map (fun { label; value } ->
+               label ^ " = " ^ pattern_to_string value)
         |> String.concat "; ")
       ^ " }"
-  | PConstructor (name, pattern) ->
-      name ^ " (" ^ pattern_to_string pattern ^ ")"
+  | PConstructor { name; value } -> name ^ " (" ^ pattern_to_string value ^ ")"
   | PAscribe _ -> failwith ""
 
 let rec expr_to_string indent =
@@ -73,55 +75,68 @@ let rec expr_to_string indent =
   | Boolean b -> string_of_bool b
   | Integer n -> string_of_int n
   | Float n -> string_of_float n
-  | If (cond, cons, alt) ->
-      "if ( " ^ expr_to_string indent cond ^ " )\n" ^ indent_string ^ "then ( "
-      ^ expr_to_string next_level cons
+  | If { condition; consequent; alternative } ->
+      "if ( "
+      ^ expr_to_string indent condition
+      ^ " )\n" ^ indent_string ^ "then ( "
+      ^ expr_to_string next_level consequent
       ^ " )\n" ^ indent_string ^ "else ( "
-      ^ expr_to_string next_level alt
+      ^ expr_to_string next_level alternative
       ^ " )"
-  | Let (var, e1, e2) ->
-      "let " ^ pattern_to_string var ^ " = ( " ^ expr_to_string indent e1
+  | Let { name; e1; e2 } ->
+      "let " ^ pattern_to_string name ^ " = ( " ^ expr_to_string indent e1
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ expr_to_string next_level e2
       ^ " )"
-  | LetRec (var, e1, e2) ->
-      "let rec " ^ pattern_to_string var ^ " = ( " ^ expr_to_string indent e1
+  | LetRec { name; e1; e2 } ->
+      "let rec " ^ pattern_to_string name ^ " = ( " ^ expr_to_string indent e1
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ expr_to_string next_level e2
-  | Lambda (var, abs) ->
+  | Lambda { parameters; body } ->
       "\\"
-      ^ list_to_string (List.map pattern_to_string var)
-      ^ ".( " ^ expr_to_string indent abs ^ " )"
-  | Application (abs, arg) ->
-      "( " ^ expr_to_string indent abs ^ " ) ( " ^ expr_to_string indent arg
+      ^ list_to_string (List.map pattern_to_string parameters)
+      ^ ".( " ^ expr_to_string indent body ^ " )"
+  | Application { lambda; arguement } ->
+      "( "
+      ^ expr_to_string indent lambda
+      ^ " ) ( "
+      ^ expr_to_string indent arguement
       ^ " )"
   | Record row ->
       "{\n"
       ^ (row
-        |> List.map (fun (label, pat) ->
-               indent_string ^ label ^ " = " ^ expr_to_string indent pat)
+        |> List.map (fun { label; value } ->
+               indent_string ^ label ^ " = " ^ expr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
-  | RecordExtend (expr, row) ->
-      "{" ^ expr_to_string indent expr ^ " with "
-      ^ (row
-        |> List.map (fun (label, pat) ->
-               indent_string ^ label ^ " = " ^ expr_to_string indent pat)
+  | RecordExtend { record; new_fields } ->
+      "{"
+      ^ expr_to_string indent record
+      ^ " with "
+      ^ (new_fields
+        |> List.map (fun { label; value } ->
+               indent_string ^ label ^ " = " ^ expr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
-  | RecordAccess (record, label) -> expr_to_string indent record ^ "." ^ label
-  | Constructor (name, expr) -> name ^ " (" ^ expr_to_string indent expr ^ ")"
-  | Match (expr, cases) ->
-      "match ( " ^ expr_to_string indent expr ^ " ) with \n"
+  | RecordAccess { record; projector } ->
+      expr_to_string indent record ^ "." ^ projector
+  | Constructor { name; value } ->
+      name ^ " (" ^ expr_to_string indent value ^ ")"
+  | Match { value; cases } ->
+      "match ( "
+      ^ expr_to_string indent value
+      ^ " ) with \n"
       ^ indent_string
         (* we have an indent before the first case as it does not get indented by concat *)
       ^ (cases
-        |> List.map (fun (pat, case) ->
-               pattern_to_string pat ^ " -> " ^ expr_to_string next_level case)
+        |> List.map (fun { pattern; result } ->
+               pattern_to_string pattern ^ " -> "
+               ^ expr_to_string next_level result)
         |> String.concat ("\n" ^ indent_string ^ "|"))
-  | InfixApplication (infix, e1, e2) ->
-      expr_to_string indent e1 ^ " " ^ infix ^ " " ^ expr_to_string indent e2
-  | Ascribe (expr, _) -> expr_to_string indent expr
+  | InfixApplication { operator; left; right } ->
+      expr_to_string indent left ^ " " ^ operator ^ " "
+      ^ expr_to_string indent right
+  | Ascribe { value; _ } -> expr_to_string indent value
 
 let expr_to_string = expr_to_string 0
 

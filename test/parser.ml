@@ -83,7 +83,12 @@ let pattern =
     |> Result.to_option
   in
   let actual_record =
-    Some (PRecord [ (">>", PInteger 5); ("lag", PString "baz") ])
+    Some
+      (PRecord
+         [
+           { label = ">>"; value = PInteger 5 };
+           { label = "lag"; value = PString "baz" };
+         ])
   in
   ( "patterns",
     [
@@ -110,7 +115,12 @@ let expression =
     |> Result.to_option
   in
   let actual_application =
-    Some (Application (Application (Var "foo", String "abc"), Float 4.4))
+    Some
+      (Application
+         {
+           lambda = Application { lambda = Var "foo"; arguement = String "abc" };
+           arguement = Float 4.4;
+         })
   in
   ( "expressions",
     [
