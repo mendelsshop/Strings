@@ -1,4 +1,5 @@
 open Typed_ast
+open Utils
 open Monads.Std
 open Eval_ast
 
@@ -34,15 +35,16 @@ let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
   | PTVar (v, _), p -> Some (Env.singleton v p)
   | PTRecord (r, _), Record r' ->
       List.map
-        (fun (f, f_pat) ->
-          let o = List.assoc_opt f r' in
-          Option.bind o (fun e -> matches_single e f_pat))
+        (fun (label, field) ->
+          let o = StringMap.find_opt label r' in
+          Option.bind o (fun e -> matches_single e field))
         r
       |> List.fold_left
            (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
            (Some Env.empty)
-  | PTConstructor (l, v, _), Constructor (l', v') when l == l' ->
-      matches_single v' v
+  | PTConstructor (l, v, _), Constructor { name = name'; value = value' }
+    when l == name' ->
+      matches_single value' v
   | PTWildcard _, _ -> Some Env.empty
   | PTBoolean (v, _), Boolean v' when v = v' -> Some Env.empty
   | PTString (v, _), String v' when v = v' -> Some Env.empty
@@ -60,31 +62,42 @@ let matches e cases =
     cases
   |> Option.get
 
+(* TODO: for apply/get_* or other places where there are recs allow unwinding of multiple recs also applies to matching *)
 let apply f a =
   match f with
-  | Function (env', f') ->
+  | Function { envoirnment = envoirnment'; lambda } ->
       let* env = M.get () in
-      let m, _ = M.run (f' a) env' in
+      let m, _ = M.run (lambda a) envoirnment' in
       let* _ = M.put env in
       return m
-  | Rec (binders, Function (env', f')) ->
+  | Rec
+      {
+        rec_envoirnment;
+        value = Function { envoirnment = envoirnment'; lambda };
+      } ->
       let* env = M.get () in
-      let binders = Env.map (fun e -> Rec (binders, e)) binders in
-      let m, _ = M.run (f' a) (Env.union binders env') in
+      let binders =
+        Env.map (fun e -> Rec { rec_envoirnment; value = e }) rec_envoirnment
+      in
+      let m, _ = M.run (lambda a) (Env.union binders envoirnment') in
       let* _ = M.put env in
       return m
-  (* TODO: maybe account for rec of rec *)
-  (* | Rec { name; expr = Function (env, f') } -> f' ((name, f) :: env) a *)
   | _ -> error "cannot apply non function"
 
 let get_bool b =
-  match b with Boolean b | Rec (_, Boolean b) -> b | _ -> error "not bool"
+  match b with
+  | Boolean b | Rec { value = Boolean b; _ } -> b
+  | _ -> error "not bool"
 
 let get_record r =
-  match r with Record r | Rec (_, Record r) -> r | _ -> error "not record"
+  match r with
+  | Record r | Rec { value = Record r; _ } -> r
+  | _ -> error "not record"
 
 let get_int n =
-  match n with Integer n | Rec (_, Integer n) -> n | _ -> error "not int"
+  match n with
+  | Integer n | Rec { value = Integer n; _ } -> n
+  | _ -> error "not int"
 
 let rec eval expr =
   match expr with
@@ -100,10 +113,13 @@ let rec eval expr =
       let* s = M.get () in
       return
         (Function
-           ( s,
-             fun x ->
-               insert (matches_single' x parameter) >>= fun () ->
-               eval abstraction ))
+           {
+             envoirnment = s;
+             lambda =
+               (fun x ->
+                 insert (matches_single' x parameter) >>= fun () ->
+                 eval abstraction);
+           })
   | TVar (ident, _) -> get ident
   | TApplication (func, arguement, _) ->
       let* func' = eval func in
@@ -117,11 +133,11 @@ let rec eval expr =
       |> List.fold_left
            (fun rest (name, value) ->
              rest >>= fun rest ->
-             eval value <$> fun value -> rest @ [ (name, value) ])
-           ([] |> return)
+             eval value <$> fun value -> StringMap.add name value rest)
+           (StringMap.empty |> return)
       <$> fun fields -> Record fields
   | TRecordAccess (value, projector, _) ->
-      eval value <$> fun value -> get_record value |> List.assoc projector
+      eval value <$> fun value -> get_record value |> StringMap.find projector
   | TBoolean (v, _) -> Boolean v |> return
   | TRecordExtend (r, fields', _) ->
       let* r' = eval r in
@@ -130,22 +146,24 @@ let rec eval expr =
         List.fold_left
           (fun rest (name, value) ->
             rest >>= fun rest ->
-            eval value <$> fun value -> rest @ [ (name, value) ])
+            eval value <$> fun value -> StringMap.add name value rest)
           (fields |> return) fields'
       in
       fields <$> fun fields -> Record fields
   | TLetRec (binding, _, e1, e2, _) ->
       let* e1' = eval e1 in
-      let bindings = matches_single' e1' binding in
-      let bindings = Env.map (fun e -> Rec (bindings, e)) bindings in
+      let rec_envoirnment = matches_single' e1' binding in
+      let bindings =
+        Env.map (fun value -> Rec { rec_envoirnment; value }) rec_envoirnment
+      in
       scoped_insert bindings (eval e2)
   | TMatch (e, cases, _) ->
       let* e' = eval e in
       let binders, case = matches e' cases in
       scoped_insert binders (eval case)
-  | TConstructor (l, e, _) ->
-      let* e' = eval e in
-      return (Constructor (l, e'))
+  | TConstructor (name, e, _) ->
+      let* value = eval e in
+      return (Constructor { name; value })
 
 let eval expr =
   match expr with
@@ -158,40 +176,64 @@ let eval expr =
       return ()
   | TRecBind { binding; value } ->
       let* value' = eval value in
-      let bindings = matches_single' value' binding in
-      let bindings = Env.map (fun e -> Rec (bindings, e)) bindings in
+      let rec_envoirnment = matches_single' value' binding in
+      let bindings =
+        Env.map (fun value -> Rec { rec_envoirnment; value }) rec_envoirnment
+      in
       insert bindings
 
 let env =
   [
     ( "print",
       Function
-        ( Env.empty,
-          fun x ->
-            print_ast x |> print_endline;
-            return Unit ) );
+        {
+          envoirnment = Env.empty;
+          lambda =
+            (fun x ->
+              print_ast x |> print_endline;
+              return Unit);
+        } );
     ( "=",
       Function
-        ( Env.empty,
-          fun x ->
-            return (Function (Env.empty, fun y -> return (Boolean (x = y)))) )
-    );
+        {
+          envoirnment = Env.empty;
+          lambda =
+            (fun x ->
+              return
+                (Function
+                   {
+                     envoirnment = Env.empty;
+                     lambda = (fun y -> return (Boolean (x = y)));
+                   }));
+        } );
     ( "*",
       Function
-        ( Env.empty,
-          fun x ->
-            return
-              (Function
-                 (Env.empty, fun y -> return (Integer (get_int x * get_int y))))
-        ) );
+        {
+          envoirnment = Env.empty;
+          lambda =
+            (fun x ->
+              return
+                (Function
+                   {
+                     envoirnment = Env.empty;
+                     lambda =
+                       (fun y -> return (Integer (get_int x * get_int y)));
+                   }));
+        } );
     ( "-",
       Function
-        ( Env.empty,
-          fun x ->
-            return
-              (Function
-                 (Env.empty, fun y -> return (Integer (get_int x - get_int y))))
-        ) );
+        {
+          envoirnment = Env.empty;
+          lambda =
+            (fun x ->
+              return
+                (Function
+                   {
+                     envoirnment = Env.empty;
+                     lambda =
+                       (fun y -> return (Integer (get_int x - get_int y)));
+                   }));
+        } );
   ]
   |> Env.of_list
 

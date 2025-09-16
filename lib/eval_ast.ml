@@ -5,14 +5,15 @@ type eval_expr =
   | Boolean of bool
   | Float of float
   | String of string
-  | Function of
-      (eval_expr StringMap.t
-      * (eval_expr ->
-        (eval_expr, eval_expr StringMap.t) Monads.Std.Monad.State.t))
+  | Function of {
+      envoirnment : eval_expr StringMap.t;
+      lambda :
+        eval_expr -> (eval_expr, eval_expr StringMap.t) Monads.Std.Monad.State.t;
+    }
   | Unit
-  | Rec of (eval_expr StringMap.t * eval_expr)
-  | Record of (string * eval_expr) list
-  | Constructor of string * eval_expr
+  | Rec of { rec_envoirnment : eval_expr StringMap.t; value : eval_expr }
+  | Record of eval_expr StringMap.t
+  | Constructor of { name : string; value : eval_expr }
 
 module Env = Env (struct
   type t = eval_expr
@@ -28,4 +29,4 @@ let print_ast expr =
   | Function _ -> "function"
   | Rec _ -> "rec"
   | Record _r -> "record"
-  | Constructor (label, _) -> label
+  | Constructor { name; _ } -> name
