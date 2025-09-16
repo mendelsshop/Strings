@@ -32,24 +32,25 @@ let scoped_insert v f =
 
 let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
   match (case, e) with
-  | PTVar (v, _), p -> Some (Env.singleton v p)
-  | PTRecord (r, _), Record r' ->
+  | PTVar { ident; _ }, p -> Some (Env.singleton ident p)
+  | PTRecord { fields; _ }, Record r' ->
       List.map
         (fun (label, field) ->
           let o = StringMap.find_opt label r' in
           Option.bind o (fun e -> matches_single e field))
-        r
+        fields
       |> List.fold_left
            (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
            (Some Env.empty)
-  | PTConstructor (l, v, _), Constructor { name = name'; value = value' }
-    when l == name' ->
-      matches_single value' v
+  | ( PTConstructor { name; value; _ },
+      Constructor { name = name'; value = value' } )
+    when name == name' ->
+      matches_single value' value
   | PTWildcard _, _ -> Some Env.empty
-  | PTBoolean (v, _), Boolean v' when v = v' -> Some Env.empty
-  | PTString (v, _), String v' when v = v' -> Some Env.empty
-  | PTFloat (v, _), Float v' when v = v' -> Some Env.empty
-  | PTInteger (v, _), Integer v' when v = v' -> Some Env.empty
+  | PTBoolean { value; _ }, Boolean v' when value = v' -> Some Env.empty
+  | PTString { value; _ }, String v' when value = v' -> Some Env.empty
+  | PTFloat { value; _ }, Float v' when value = v' -> Some Env.empty
+  | PTInteger { value; _ }, Integer v' when value = v' -> Some Env.empty
   | PTUnit _, Unit -> Some Env.empty
   | _ -> None
 
@@ -57,8 +58,8 @@ let matches_single' e case = matches_single e case |> Option.get
 
 let matches e cases =
   List.find_map
-    (fun (pat, result) ->
-      Option.map (fun binders -> (binders, result)) (matches_single e pat))
+    (fun { Ast.pattern; result } ->
+      Option.map (fun binders -> (binders, result)) (matches_single e pattern))
     cases
   |> Option.get
 
@@ -102,14 +103,13 @@ let get_int n =
 let rec eval expr =
   match expr with
   | TUnit _ -> return Unit
-  | TFloat (value, _) -> Float value |> return
-  | TInteger (value, _) -> Integer value |> return
-  | TString (value, _) -> String value |> return
-  | TLet (PTUnit _, _, e1, e2, _) -> eval e1 >>= fun _ -> eval e2
-  | TLet (binding, _, e1, e2, _) ->
-      eval e1 >>= fun e1' ->
-      scoped_insert (matches_single' e1' binding) (eval e2)
-  | TLambda (parameter, _, abstraction, _) ->
+  | TFloat { value; _ } -> Float value |> return
+  | TInteger { value; _ } -> Integer value |> return
+  | TString { value; _ } -> String value |> return
+  | TLet { name = PTUnit _; e1; e2; _ } -> eval e1 >>= fun _ -> eval e2
+  | TLet { name; e1; e2; _ } ->
+      eval e1 >>= fun e1' -> scoped_insert (matches_single' e1' name) (eval e2)
+  | TLambda { parameter; body; _ } ->
       let* s = M.get () in
       return
         (Function
@@ -117,18 +117,17 @@ let rec eval expr =
              envoirnment = s;
              lambda =
                (fun x ->
-                 insert (matches_single' x parameter) >>= fun () ->
-                 eval abstraction);
+                 insert (matches_single' x parameter) >>= fun () -> eval body);
            })
-  | TVar (ident, _) -> get ident
-  | TApplication (func, arguement, _) ->
-      let* func' = eval func in
+  | TVar { ident; _ } -> get ident
+  | TApplication { lambda; arguement; _ } ->
+      let* func' = eval lambda in
       let* arguement' = eval arguement in
       apply func' arguement'
-  | TIf (condition, consequent, alternative, _) ->
+  | TIf { condition; consequent; alternative; _ } ->
       eval condition >>= fun cond' ->
       eval (if get_bool cond' then consequent else alternative)
-  | TRecord (fields, _) ->
+  | TRecord { fields; _ } ->
       fields
       |> List.fold_left
            (fun rest (name, value) ->
@@ -136,47 +135,47 @@ let rec eval expr =
              eval value <$> fun value -> StringMap.add name value rest)
            (StringMap.empty |> return)
       <$> fun fields -> Record fields
-  | TRecordAccess (value, projector, _) ->
-      eval value <$> fun value -> get_record value |> StringMap.find projector
-  | TBoolean (v, _) -> Boolean v |> return
-  | TRecordExtend (r, fields', _) ->
-      let* r' = eval r in
+  | TRecordAccess { record; projector; _ } ->
+      eval record <$> fun value -> get_record value |> StringMap.find projector
+  | TBoolean { value; _ } -> Boolean value |> return
+  | TRecordExtend { record; new_fields; _ } ->
+      let* r' = eval record in
       let fields = get_record r' in
       let fields =
         List.fold_left
           (fun rest (name, value) ->
             rest >>= fun rest ->
             eval value <$> fun value -> StringMap.add name value rest)
-          (fields |> return) fields'
+          (fields |> return) new_fields
       in
       fields <$> fun fields -> Record fields
-  | TLetRec (binding, _, e1, e2, _) ->
+  | TLetRec { name; e1; e2; _ } ->
       let* e1' = eval e1 in
-      let rec_envoirnment = matches_single' e1' binding in
+      let rec_envoirnment = matches_single' e1' name in
       let bindings =
         Env.map (fun value -> Rec { rec_envoirnment; value }) rec_envoirnment
       in
       scoped_insert bindings (eval e2)
-  | TMatch (e, cases, _) ->
-      let* e' = eval e in
+  | TMatch { value; cases; _ } ->
+      let* e' = eval value in
       let binders, case = matches e' cases in
       scoped_insert binders (eval case)
-  | TConstructor (name, e, _) ->
-      let* value = eval e in
+  | TConstructor { name; value; _ } ->
+      let* value = eval value in
       return (Constructor { name; value })
 
 let eval expr =
   match expr with
   | TTypeBind _ -> return ()
-  | TBind { binding = PTUnit _; value; _ } -> eval value <$> fun _ -> ()
-  | TBind { binding; value; _ } ->
-      eval value >>= fun value' -> insert (matches_single' value' binding)
+  | TBind { name = PTUnit _; value; _ } -> eval value <$> fun _ -> ()
+  | TBind { name; value; _ } ->
+      eval value >>= fun value' -> insert (matches_single' value' name)
   | TPrintString s ->
       print_string s;
       return ()
-  | TRecBind { binding; value } ->
+  | TRecBind { name; value } ->
       let* value' = eval value in
-      let rec_envoirnment = matches_single' value' binding in
+      let rec_envoirnment = matches_single' value' name in
       let bindings =
         Env.map (fun value -> Rec { rec_envoirnment; value }) rec_envoirnment
       in

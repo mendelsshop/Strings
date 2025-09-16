@@ -52,21 +52,23 @@ let leave_level () = decr current_level
 let ty_var name = TyVar { name; level = !current_level }
 
 let rec generate_constraints_pattern ty = function
-  | PVar x -> ([ (x, ty) ], [], PTVar (x, ty))
+  | PVar ident -> ([ (ident, ty) ], [], PTVar { ident; ty })
   | PWildcard -> ([], [], PTWildcard ty)
   | PUnit -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit ty)
-  | PString b -> ([], [ CEq (ty, Union_find.make TyString) ], PTString (b, ty))
-  | PBoolean b ->
-      ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean (b, ty))
-  | PFloat b -> ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat (b, ty))
-  | PInteger b ->
-      ([], [ CEq (ty, Union_find.make TyInteger) ], PTInteger (b, ty))
+  | PString value ->
+      ([], [ CEq (ty, Union_find.make TyString) ], PTString { value; ty })
+  | PBoolean value ->
+      ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean { value; ty })
+  | PFloat value ->
+      ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat { value; ty })
+  | PInteger value ->
+      ([], [ CEq (ty, Union_find.make TyInteger) ], PTInteger { value; ty })
   | PConstructor { name; value } ->
       let other_variants_var = gensym () in
       let other_variants = Union_find.make (ty_var other_variants_var) in
       let value_var = gensym () in
       let value_ty = Union_find.make (ty_var value_var) in
-      let env, cs, pattern' = generate_constraints_pattern value_ty value in
+      let env, cs, value = generate_constraints_pattern value_ty value in
       let ty' =
         Union_find.make
           (TyVariant
@@ -76,11 +78,11 @@ let rec generate_constraints_pattern ty = function
       in
       ( env,
         [ CExist ([ other_variants_var; value_var ], CEq (ty', ty) :: cs) ],
-        PTConstructor (name, pattern', ty) )
+        PTConstructor { name; value; ty } )
   | PRecord row ->
       (* should this open to allow for matching on partial records? *)
       let row_init = ([], [], Union_find.make TyRowEmpty, [], []) in
-      let env, cs, pattern_ty, pattern, vars =
+      let env, cs, pattern_ty, fields, vars =
         List.fold_right
           (fun { label; value } result ->
             let env, cs, row_ty, row, vars = result in
@@ -97,7 +99,7 @@ let rec generate_constraints_pattern ty = function
           row row_init
       in
       let ty' = Union_find.make (TyRecord pattern_ty) in
-      (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord (pattern, ty))
+      (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord { fields; ty })
   | PAscribe { pattern; ty = ty' } ->
       let env, cs, pat' = generate_constraints_pattern ty' pattern in
       (* TODO: maybe don't remove ascription from typed ast? *)
@@ -107,10 +109,10 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
   | Lambda { parameter; body } ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, x = generate_constraints_pattern a1_ty parameter in
+      let env, cs, parameter = generate_constraints_pattern a1_ty parameter in
       let a2 = gensym () in
       let a2_ty = Union_find.make (ty_var a2) in
-      let c, t' = generate_constraints a2_ty body in
+      let c, body = generate_constraints a2_ty body in
       ( [
           CExist
             ( [ a1; a2 ],
@@ -120,7 +122,7 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
                      ty )
               :: cs );
         ],
-        TLambda (x, a1_ty, t', ty) )
+        TLambda { parameter; parameter_ty = a1_ty; body; ty } )
   | Record r ->
       let field_tys_and_constraints =
         List.map
@@ -145,10 +147,13 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
               CEq (ty, Union_find.make (TyRecord record_ty)) :: constraints );
         ],
         TRecord
-          ( List.map
-              (fun (field, _, (_, value), _) -> (field, value))
-              field_tys_and_constraints,
-            ty ) )
+          {
+            fields =
+              List.map
+                (fun (field, _, (_, value), _) -> (field, value))
+                field_tys_and_constraints;
+            ty;
+          } )
   | RecordAccess { record; projector } ->
       let rest_row_var = gensym () in
       let rest_row = Union_find.make (ty_var rest_row_var) in
@@ -167,11 +172,11 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
                              { label = projector; field = r_ty; rest_row }))) )
               :: cos );
         ],
-        TRecordAccess (record, projector, ty) )
+        TRecordAccess { record; projector; ty } )
   | RecordExtend { record; new_fields } ->
       let r_var = gensym () in
       let r_ty = Union_find.make (ty_var r_var) in
-      let cos, r = generate_constraints r_ty record in
+      let cos, record = generate_constraints r_ty record in
       let new_field_tys_and_constraints =
         List.map
           (fun { label; value } ->
@@ -196,35 +201,41 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
             );
         ],
         TRecordExtend
-          ( r,
-            List.map
-              (fun (field, _, (_, value), _) -> (field, value))
-              new_field_tys_and_constraints,
-            ty ) )
+          {
+            record;
+            new_fields =
+              List.map
+                (fun (field, _, (_, value), _) -> (field, value))
+                new_field_tys_and_constraints;
+            ty;
+          } )
   | Unit -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit ty)
-  | Integer n -> ([ CEq (ty, Union_find.make TyInteger) ], TInteger (n, ty))
-  | Float n -> ([ CEq (ty, Union_find.make TyFloat) ], TFloat (n, ty))
-  | String s -> ([ CEq (ty, Union_find.make TyString) ], TString (s, ty))
-  | Boolean n -> ([ CEq (ty, Union_find.make TyBoolean) ], TBoolean (n, ty))
-  | Var t -> ([ CInstance (t, ty) ], TVar (t, ty))
+  | Integer value ->
+      ([ CEq (ty, Union_find.make TyInteger) ], TInteger { value; ty })
+  | Float value -> ([ CEq (ty, Union_find.make TyFloat) ], TFloat { value; ty })
+  | String value ->
+      ([ CEq (ty, Union_find.make TyString) ], TString { value; ty })
+  | Boolean value ->
+      ([ CEq (ty, Union_find.make TyBoolean) ], TBoolean { value; ty })
+  | Var ident -> ([ CInstance (ident, ty) ], TVar { ident; ty })
   | Application { lambda; arguement } ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let c, f' =
+      let c, lambda =
         generate_constraints
           (Union_find.make (TyArrow { domain = a1_ty; range = ty }))
           lambda
       in
-      let c', x' = generate_constraints a1_ty arguement in
-      ([ CExist ([ a1 ], c @ c') ], TApplication (f', x', ty))
+      let c', arguement = generate_constraints a1_ty arguement in
+      ([ CExist ([ a1 ], c @ c') ], TApplication { lambda; arguement; ty })
   | Let { name; e1; e2 } ->
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, v = generate_constraints_pattern a1_ty name in
-      let c, t1' = generate_constraints a1_ty e1 in
+      let env, cs, name = generate_constraints_pattern a1_ty name in
+      let c, e1 = generate_constraints a1_ty e1 in
       leave_level ();
-      let c', t2' = generate_constraints ty e2 in
+      let c', e2 = generate_constraints ty e2 in
       ( [
           CLet
             ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
@@ -232,30 +243,28 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
               c' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TLet (v, a1_ty, t1', t2', ty) )
+        TLet { name; name_ty = a1_ty; e1; e2; ty } )
   | Match { value; cases } ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let cs, expr' = generate_constraints a1_ty value in
-      let cs', cases' =
+      let cs, value = generate_constraints a1_ty value in
+      let cs', cases =
         List.map
           (fun { pattern; result } ->
-            let env, cs, pattern' =
-              generate_constraints_pattern a1_ty pattern
-            in
-            let cs', case' = generate_constraints ty result in
+            let env, cs, pattern = generate_constraints_pattern a1_ty pattern in
+            let cs', result = generate_constraints ty result in
 
             ( CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
-              (pattern', case') ))
+              { pattern; result } ))
           cases
         |> List.split
       in
       let cs' = List.concat cs' in
-      ([ CExist ([ a1 ], cs' @ cs) ], TMatch (expr', cases', ty))
+      ([ CExist ([ a1 ], cs' @ cs) ], TMatch { value; cases; ty })
   | Constructor { name; value } ->
       let r = gensym () in
       let r_ty = Union_find.make (ty_var r) in
-      let cs, value' = generate_constraints r_ty value in
+      let cs, value = generate_constraints r_ty value in
       let rest_row = gensym () in
       let rest_row_ty = Union_find.make (ty_var rest_row) in
       ( [
@@ -274,15 +283,15 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
                              }))) )
               :: cs );
         ],
-        TConstructor (name, value', ty) )
+        TConstructor { name; value; ty } )
   | LetRec { name; e1; e2 } ->
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, v = generate_constraints_pattern a1_ty name in
-      let cs', t1' = generate_constraints a1_ty e1 in
+      let env, cs, name = generate_constraints_pattern a1_ty name in
+      let cs', e1 = generate_constraints a1_ty e1 in
       leave_level ();
-      let cs'', t2' = generate_constraints ty e2 in
+      let cs'', e2 = generate_constraints ty e2 in
       ( [
           CLet
             ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
@@ -290,15 +299,15 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
               cs'' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TLet (v, a1_ty, t1', t2', ty) )
+        TLet { name; name_ty = a1_ty; e1; e2; ty } )
   | If { condition; consequent; alternative } ->
       let cond_var = gensym () in
       let cond_ty = Union_find.make (ty_var cond_var) in
-      let cs, cond = generate_constraints cond_ty condition in
+      let cs, condition = generate_constraints cond_ty condition in
       let cs', consequent = generate_constraints ty consequent in
       let cs'', alternative = generate_constraints ty alternative in
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
-        TIf (cond, consequent, alternative, ty) )
+        TIf { condition; consequent; alternative; ty } )
   | Ascribe { value; ty = ty' } ->
       let cs, expr' = generate_constraints ty' value in
       (CEq (ty', ty) :: cs, expr')
@@ -309,7 +318,7 @@ let rec generate_constraints_top = function
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, binding = generate_constraints_pattern a1_ty name in
+      let env, cs, name = generate_constraints_pattern a1_ty name in
       let c, value = generate_constraints a1_ty value in
       leave_level ();
       let cs', program = generate_constraints_top program in
@@ -320,7 +329,7 @@ let rec generate_constraints_top = function
               cs' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TBind { binding; value } :: program )
+        TBind { name; value } :: program )
   (* | Expr e :: program' -> *)
   (*     let cs, e = *)
   (*       generate_constraints (Union_find.make (ty_var (gensym ()))) e *)
@@ -331,7 +340,7 @@ let rec generate_constraints_top = function
       enter_level ();
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
-      let env, cs, binding = generate_constraints_pattern a1_ty name in
+      let env, cs, name = generate_constraints_pattern a1_ty name in
       let cs', value = generate_constraints a1_ty value in
       leave_level ();
       let cs'', program = generate_constraints_top program in
@@ -342,7 +351,7 @@ let rec generate_constraints_top = function
               cs'' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TBind { binding; value } :: program )
+        TBind { name; value } :: program )
   | PrintString s :: program ->
       let cs, program' = generate_constraints_top program in
       (cs, TPrintString s :: program')
