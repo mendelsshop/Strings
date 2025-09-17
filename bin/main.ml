@@ -22,5 +22,6 @@ let () =
       let exprs = Strings.Ast2.ast_to_ast2 exprs in
       let exprs' = infer exprs in
       Typed_ast.program_to_string exprs' |> print_endline;
+      Letrec_checking.check_program exprs';
       Strings.Eval.eval exprs' |> fst)
     result ()
