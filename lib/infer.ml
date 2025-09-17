@@ -355,7 +355,6 @@ let rec generate_constraints_top = function
   | PrintString s :: program ->
       let cs, program' = generate_constraints_top program in
       (cs, TPrintString s :: program')
-  | TypeBind _ :: _ -> failwith ""
 
 (* the way it is now we probably need to substitute into env *)
 (*     b/c of clet *)

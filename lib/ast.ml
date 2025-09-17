@@ -39,6 +39,7 @@ type expr =
 
 type top_level =
   | TypeBind of { name : string; ty : ty }
+  | NominalTypeBind of { name : string; ty : ty }
   | Bind of { name : pattern; value : expr }
   | RecBind of { name : pattern; value : expr }
   | PrintString of string
@@ -144,9 +145,17 @@ let top_level_to_string = function
   | Bind { name; value } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
+  | NominalTypeBind { name; ty } -> "data " ^ name ^ " = " ^ type_to_string ty
   | RecBind { name; value } ->
       "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | PrintString s -> s
+
+let get_type_env = function
+  | Bind _ | RecBind _ | PrintString _ -> ([], [])
+  | TypeBind { name; ty } ->
+      ([ (name, ty) ], [])
+      (* for nominal types there "constructor" is also needed at the expression level *)
+  | NominalTypeBind { name; ty } -> ([ (name, ty) ], [ (name, ty) ])
 
 let program_to_string program =
   String.concat "\n" (List.map top_level_to_string program)

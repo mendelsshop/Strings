@@ -21,7 +21,6 @@ type expr =
   | Ascribe of { value : expr; ty : ty }
 
 type top_level =
-  | TypeBind of { name : string; ty : ty }
   | Bind of { name : pattern; value : expr }
   | RecBind of { name : pattern; value : expr }
   | PrintString of string
@@ -95,12 +94,15 @@ let rec ast_to_ast2 (ast : Ast.expr) =
         }
 
 let ast_to_ast2 =
-  List.map (fun (tl : Ast.top_level) ->
+  List.filter_map (fun (tl : Ast.top_level) ->
       match tl with
-      | Bind { name; value } -> Bind { name; value = ast_to_ast2 value }
-      | TypeBind { name; ty } -> TypeBind { name; ty }
-      | RecBind { name; value } -> RecBind { name; value = ast_to_ast2 value }
-      | PrintString s -> PrintString s)
+      | Bind { name; value } ->
+          Bind { name; value = ast_to_ast2 value } |> Option.some
+      | TypeBind _ -> None
+      | NominalTypeBind _ -> None
+      | RecBind { name; value } ->
+          RecBind { name; value = ast_to_ast2 value } |> Option.some
+      | PrintString s -> PrintString s |> Option.some)
 
 let rec expr_to_string indent =
   let next_level = indent + 1 in
@@ -178,7 +180,6 @@ let top_level_to_string tl =
   match tl with
   | Bind { name; value } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
-  | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
   | RecBind { name; value } ->
       "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | PrintString s -> s

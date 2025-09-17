@@ -215,6 +215,14 @@ let rec typeP =
 
 let ascription p = seq p (junk << char ':' << typeP)
 
+let type_signature =
+  seq (string "type" << basic_identifier) (junk << char '=' << typeP)
+  <$> fun (name, ty) -> TypeBind { name; ty }
+
+let nominal_type_signature =
+  seq (string "data" << basic_identifier) (junk << char '=' << typeP)
+  <$> fun (name, ty) -> NominalTypeBind { name; ty }
+
 let rec pattern =
   let record p identifier_short_hand assign =
     let field = seq identifier (junk << char assign << p) in
@@ -438,8 +446,14 @@ let letP =
 
 let top_level =
   char '\"'
-  << (letP
-     <|> (expr true <$> fun expr -> Bind { name = PWildcard; value = expr }))
+  << choice (* TODO: maybe allow mutliple top level term in single quotes *)
+       [
+         letP;
+         (expr true <$> fun expr -> Bind { name = PWildcard; value = expr });
+         (* TODO: maybe consume new line *)
+         type_signature >> junk >> char '\"';
+         nominal_type_signature >> junk >> char '\"';
+       ]
   <|> (stringP1 <?> "top level string" <$> fun string -> Ast.PrintString string)
 
 let parse = many1 top_level >> eof
