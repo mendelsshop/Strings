@@ -9,6 +9,12 @@ type 't tpattern =
   | PTBoolean of { value : bool; ty : 't }
   | PTRecord of { fields : 't tpattern Ast.row; ty : 't }
   | PTConstructor of { name : string; value : 't tpattern; ty : 't }
+  | PTNominalConstructor of {
+      name : string;
+      value : 't tpattern;
+      ty : 't;
+      id : int;
+    }
   | PTUnit of 't
 
 type 't texpr =
@@ -58,6 +64,12 @@ type 't texpr =
       ty : ty;
     }
   | TConstructor of { name : string; value : 't texpr; ty : ty }
+  | TNominalConstructor of {
+      name : string;
+      value : 't texpr;
+      ty : ty;
+      id : int;
+    }
 
 type 't top_level =
   | TBind of { name : 't tpattern; value : 't texpr }
@@ -85,6 +97,8 @@ let rec tpattern_to_string = function
         |> String.concat "; ")
       ^ " }"
   | PTConstructor { name; value; _ } ->
+      name ^ " (" ^ tpattern_to_string value ^ ")"
+  | PTNominalConstructor { name; value; _ } ->
       name ^ " (" ^ tpattern_to_string value ^ ")"
 
 let rec texpr_to_string indent =
@@ -137,6 +151,8 @@ let rec texpr_to_string indent =
   | TRecordAccess { record; projector; _ } ->
       texpr_to_string indent record ^ "." ^ projector
   | TConstructor { name; value; _ } ->
+      name ^ " (" ^ texpr_to_string indent value ^ ")"
+  | TNominalConstructor { name; value; _ } ->
       name ^ " (" ^ texpr_to_string indent value ^ ")"
   | TMatch { value; cases; _ } ->
       "match ( "

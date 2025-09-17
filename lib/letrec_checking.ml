@@ -18,6 +18,7 @@ let rec get_binders = function
   | PTRecord { fields; _ } ->
       List.concat_map (fun { Ast.value; _ } -> get_binders value) fields
   | PTConstructor { value; _ } -> get_binders value
+  | PTNominalConstructor { value; _ } -> get_binders value
   | PTUnit _ -> []
 
 (* we dont autimatically turn letrec exprs into string we do it on demand as in most cases letrec are correct *)
@@ -67,6 +68,7 @@ let rec check_expr rec_env = function
           check_expr (remove_all (get_binders pattern) rec_env) result)
         cases
   | TConstructor { value; _ } -> check_expr rec_env value
+  | TNominalConstructor { value; _ } -> check_expr rec_env value
 
 let check_top_level = function
   | TBind { value; _ } -> check_expr Env.empty value

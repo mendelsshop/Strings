@@ -42,8 +42,12 @@ let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
       |> List.fold_left
            (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
            (Some Env.empty)
+  | ( PTNominalConstructor { name; value; id; _ },
+      Constructor { name = name'; value = value'; id = Some id' } )
+    when name == name' && id = id' ->
+      matches_single value' value
   | ( PTConstructor { name; value; _ },
-      Constructor { name = name'; value = value' } )
+      Constructor { name = name'; value = value'; id = None } )
     when name == name' ->
       matches_single value' value
   | PTWildcard _, _ -> Some Env.empty
@@ -162,7 +166,10 @@ let rec eval expr =
       scoped_insert binders (eval case)
   | TConstructor { name; value; _ } ->
       let* value = eval value in
-      return (Constructor { name; value })
+      return (Constructor { name; value; id = None })
+  | TNominalConstructor { name; value; id; _ } ->
+      let* value = eval value in
+      return (Constructor { name; value; id = Some id })
 
 let eval expr =
   match expr with

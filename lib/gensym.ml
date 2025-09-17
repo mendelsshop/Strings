@@ -1,6 +1,8 @@
 let counter = ref 0
 
-let gensym () =
+let gensym_int () =
   let counter' = !counter in
   incr counter;
-  string_of_int counter'
+  counter'
+
+let gensym () = gensym_int () |> string_of_int

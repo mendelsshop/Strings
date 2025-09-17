@@ -5,6 +5,30 @@ open Typed_ast
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
+let get_type_env = function
+  | Ast.Bind _ | RecBind _ | PrintString _ -> ([], [])
+  | TypeBind { name; ty } ->
+      ([ (name, ty) ], [])
+      (* for nominal types there "constructor" is also needed at the expression level *)
+  | NominalTypeBind { name; ty } -> (
+      let _, `root ty_data = Union_find.find_set ty in
+      let sym = gensym () in
+      match ty_data.data with
+      | TyNominal { ty = ty'; id; _ } ->
+          ( [ (name, ty) ],
+            [
+              ( name,
+                TLambda
+                  {
+                    parameter = PTVar { ident = sym; ty = ty' };
+                    parameter_ty = ty';
+                    body =
+                      TNominalConstructor
+                        { name; value = TVar { ident = sym; ty = ty' }; ty; id };
+                    ty;
+                  } );
+            ] )
+      | _ -> failwith "")
 
 type 't co =
   | CExist of string list * 't co list
@@ -52,6 +76,7 @@ let leave_level () = decr current_level
 let ty_var name = TyVar { name; level = !current_level }
 
 let rec generate_constraints_pattern ty = function
+  (* for var see it its in nominal type env if so turn into ptnominalconstructor *)
   | PVar ident -> ([ (ident, ty) ], [], PTVar { ident; ty })
   | PWildcard -> ([], [], PTWildcard ty)
   | PUnit -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit ty)
@@ -379,6 +404,10 @@ let unify (s : ty) (t : ty) =
           inner range range1 ((s, t) :: used)
       (* could these be replaced with an structural eqaulity test *)
       | (TyUnit, _), (TyUnit, _) -> ()
+      | ( (TyNominal { id; name; _ }, _),
+          (TyNominal { id = id'; name = name'; _ }, _) )
+        when id = id' && name = name' ->
+          ()
       | (TyFloat, _), (TyFloat, _) -> ()
       | (TyString, _), (TyString, _) -> ()
       | (TyInteger, _), (TyInteger, _) -> ()
@@ -418,7 +447,7 @@ let unify (s : ty) (t : ty) =
         | _ -> inner_row used l t r ty root.data)
     | TyString | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
     | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger | TyGenVar _
-    | TyVar _ | TyBoolean | TyUnit ->
+    | TyVar _ | TyBoolean | TyUnit | TyNominal _ ->
         failwith
           (type_to_string ty
          ^ " is not a row, so it cannot be extended with label `" ^ l ^ "`.")
@@ -483,7 +512,8 @@ let generalize (`for_all (_, ty)) =
                in
                (r, StringSet.union generalized generalized')
            | TyString | TyRowEmpty | TyFloat | TyInteger | TyGenVar _ | TyUnit
-           | TyVar _ | TyBoolean ->
+           (*nominal types even though they contain other types are considered complete - inference should not change their contents *)
+           | TyNominal _ | TyVar _ | TyBoolean ->
                (ty, StringSet.empty)))
       ()
   in
@@ -544,7 +574,8 @@ let instantiate (`for_all (vars, ty)) =
                in
                r
            | TyString | TyBoolean | TyRowEmpty | TyFloat | TyInteger | TyVar _
-           | TyUnit ->
+           (*nominal types even though they contain other types are considered complete - inference should not change their contents *)
+           | TyNominal _ | TyUnit ->
                ty))
       ()
   in

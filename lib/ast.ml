@@ -150,12 +150,5 @@ let top_level_to_string = function
       "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | PrintString s -> s
 
-let get_type_env = function
-  | Bind _ | RecBind _ | PrintString _ -> ([], [])
-  | TypeBind { name; ty } ->
-      ([ (name, ty) ], [])
-      (* for nominal types there "constructor" is also needed at the expression level *)
-  | NominalTypeBind { name; ty } -> ([ (name, ty) ], [ (name, ty) ])
-
 let program_to_string program =
   String.concat "\n" (List.map top_level_to_string program)

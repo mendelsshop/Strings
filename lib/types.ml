@@ -13,6 +13,7 @@ type 't ty_f =
   | TyRecord of 't
   | TyVariant of 't
   | TyGenVar of string
+  | TyNominal of { name : string; id : int; ty : 't }
 
 type ty = 'a ty_f Union_find.elem as 'a
 
@@ -30,6 +31,7 @@ let ftv_ty (ty : ty) =
             (inner range (root :: used))
       | TyRecord r -> inner r (root :: used)
       | TyVariant v -> inner v (root :: used)
+      | TyNominal { ty; _ } -> inner ty (root :: used)
       | TyRowExtend { field; rest_row; _ } ->
           StringSet.union
             (inner field (root :: used))
@@ -50,6 +52,9 @@ let type_to_string ty =
            let string, used =
              match node.data with
              | TyVar { name; _ } -> (name, [])
+             | TyNominal { name; ty; _ } ->
+                 let ty, used' = inner ((root, sym) :: used) ty in
+                 (name ^ "(" ^ ty ^ ")", used')
              | TyGenVar v -> (v, [])
              | TyUnit -> ("()", [])
              | TyInteger -> ("integer", [])

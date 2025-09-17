@@ -13,7 +13,8 @@ type eval_expr =
   | Unit
   | Rec of { rec_envoirnment : eval_expr StringMap.t; value : eval_expr }
   | Record of eval_expr StringMap.t
-  | Constructor of { name : string; value : eval_expr }
+    (* we could probably do the same thing in the other asts (not having to constructor types) and just put an optional id if its nominal *)
+  | Constructor of { name : string; value : eval_expr; id : int option }
 
 module Env = Env.Make (struct
   type t = eval_expr

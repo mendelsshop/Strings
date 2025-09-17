@@ -221,7 +221,12 @@ let type_signature =
 
 let nominal_type_signature =
   seq (string "data" << basic_identifier) (junk << char '=' << typeP)
-  <$> fun (name, ty) -> NominalTypeBind { name; ty }
+  <$> fun (name, ty) ->
+  NominalTypeBind
+    {
+      name;
+      ty = Union_find.make (TyNominal { name; ty; id = Utils.gensym_int () });
+    }
 
 let rec pattern =
   let record p identifier_short_hand assign =
