@@ -299,7 +299,7 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
               cs'' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TLet { name; name_ty = a1_ty; e1; e2; ty } )
+        TLetRec { name; name_ty = a1_ty; e1; e2; ty } )
   | If { condition; consequent; alternative } ->
       let cond_var = gensym () in
       let cond_ty = Union_find.make (ty_var cond_var) in
@@ -351,7 +351,7 @@ let rec generate_constraints_top = function
               cs'' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TBind { name; value } :: program )
+        TRecBind { name; value } :: program )
   | PrintString s :: program ->
       let cs, program' = generate_constraints_top program in
       (cs, TPrintString s :: program')

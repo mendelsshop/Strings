@@ -1,7 +1,5 @@
 open Types
 
-type ('a, 'b) projection = { ty : ty; value : 'a; projector : 'b }
-
 type 't tpattern =
   | PTVar of { ident : string; ty : 't }
   | PTString of { value : string; ty : 't }
@@ -167,7 +165,7 @@ let top_level_to_string exp =
   match exp with
   | TTypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
   | TRecBind { name; value } ->
-      "let rec" ^ tpattern_to_string name ^ " = " ^ texpr_to_string value
+      "let rec " ^ tpattern_to_string name ^ " = " ^ texpr_to_string value
   | TBind { name; value } ->
       "let (" ^ tpattern_to_string name ^ ") = " ^ texpr_to_string value
   | TPrintString s -> s
