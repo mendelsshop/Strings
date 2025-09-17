@@ -159,8 +159,18 @@ let rec generate_constraints_pattern cs_env ty = function
       (* TODO: maybe don't remove ascription from typed ast? *)
       (env, CEq (ty', ty) :: cs, pat')
 
+(* new binders should remove variables being binded from constructor list of cs_state this is how we shaddow constructors *)
+let shaddow { types; constructors } binders =
+  {
+    types;
+    constructors =
+      ConstructorEnv.merge
+        (fun _ x y -> if Option.is_some y then None else x)
+        constructors
+        (ConstructorEnv.of_list binders);
+  }
+
 let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
-  (* TODO: any new binders should remove variables being binded from constructor list of cs_state *)
   | Lambda { parameter; body } ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
@@ -169,7 +179,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       in
       let a2 = gensym () in
       let a2_ty = Union_find.make (ty_var a2) in
-      let c, body = generate_constraints cs_state a2_ty body in
+      let c, body = generate_constraints (shaddow cs_state env) a2_ty body in
       ( [
           CExist
             ( [ a1; a2 ],
@@ -275,7 +285,6 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
   | Boolean value ->
       ([ CEq (ty, Union_find.make TyBoolean) ], TBoolean { value; ty })
   | Var ident ->
-      (* TODO: do we want constructors to be shaddowable *)
       ConstructorEnv.find_opt ident cs_state.constructors
       |> Option.fold
            ~none:([ CInstance (ident, ty) ], TVar { ident; ty })
@@ -298,7 +307,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       let env, cs, name = generate_constraints_pattern cs_state a1_ty name in
       let c, e1 = generate_constraints cs_state a1_ty e1 in
       leave_level ();
-      let c', e2 = generate_constraints cs_state ty e2 in
+      let c', e2 = generate_constraints (shaddow cs_state env) ty e2 in
       ( [
           CLet
             ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
@@ -317,7 +326,9 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
             let env, cs, pattern =
               generate_constraints_pattern cs_state a1_ty pattern
             in
-            let cs', result = generate_constraints cs_state ty result in
+            let cs', result =
+              generate_constraints (shaddow cs_state env) ty result
+            in
 
             ( CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
               { pattern; result } ))
@@ -354,9 +365,9 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
       let env, cs, name = generate_constraints_pattern cs_state a1_ty name in
-      let cs', e1 = generate_constraints cs_state a1_ty e1 in
+      let cs', e1 = generate_constraints (shaddow cs_state env) a1_ty e1 in
       leave_level ();
-      let cs'', e2 = generate_constraints cs_state ty e2 in
+      let cs'', e2 = generate_constraints (shaddow cs_state env) ty e2 in
       ( [
           CLet
             ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
@@ -386,7 +397,9 @@ let rec generate_constraints_top cs_state = function
       let env, cs, name = generate_constraints_pattern cs_state a1_ty name in
       let c, value = generate_constraints cs_state a1_ty value in
       leave_level ();
-      let cs', program = generate_constraints_top cs_state program in
+      let cs', program =
+        generate_constraints_top (shaddow cs_state env) program
+      in
       ( [
           CLet
             ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
@@ -406,9 +419,13 @@ let rec generate_constraints_top cs_state = function
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
       let env, cs, name = generate_constraints_pattern cs_state a1_ty name in
-      let cs', value = generate_constraints cs_state a1_ty value in
+      let cs', value =
+        generate_constraints (shaddow cs_state env) a1_ty value
+      in
       leave_level ();
-      let cs'', program = generate_constraints_top cs_state program in
+      let cs'', program =
+        generate_constraints_top (shaddow cs_state env) program
+      in
       ( [
           CLet
             ( List.map (fun (name, ty) -> (name, `for_all ([ a1 ], ty))) env,
