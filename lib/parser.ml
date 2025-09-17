@@ -23,7 +23,19 @@ let ( &-> ) f g x = f x && g x
 let ( !-> ) f = not & f
 
 let keywords =
-  [ "fun"; "let"; "rec"; "in"; "if"; "then"; "else"; "match"; "with" ]
+  [
+    "fun";
+    "let";
+    "rec";
+    "in";
+    "if";
+    "then";
+    "else";
+    "match";
+    "with";
+    "type";
+    "data";
+  ]
 
 let reserved_operators = [ "->"; "."; "_" ]
 let is_white_space = Fun.flip List.mem [ ' '; '\t'; '\n' ]
@@ -159,6 +171,7 @@ let record p identifier_short_hand assign =
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
 let constructor p zero = seq variant_identifier (p <|> zero) <?> "constructor"
+let nominal_constructor p = seq identifier p <?> "constructor"
 
 let rec typeP =
   let list_to_row ~k ~base list =
@@ -259,6 +272,12 @@ let rec pattern =
                 (float <$> fun f -> Ast.PFloat f);
                 ( constructor pattern (return PUnit) <$> fun (name, value) ->
                   PConstructor { name; value } );
+                (* we dont do shorthand for nominal records as that would mean any pattern variable would automatically be nominal constructor - so we want to be consistent between patterns and data declarations *)
+                (* if we would want to be consitent we would also want to make expression/pattern have shorthand *)
+                (* which we be problem especilaly for expression where we use function to represent nominal constructor (but i guess if we mark it as such instead of turning it into function we could just make the variable representing this constructor just be the Constructor term itself *)
+                (* for patterns whe would also need to lookup for vars if there are any constructors with that name *)
+                ( nominal_constructor pattern <$> fun (name, value) ->
+                  PNominalConstructor { name; value } );
                 (number <$> fun i -> PInteger i);
                 junk << char '_' <$> Fun.const PWildcard;
                 (identifier <$> fun i -> PVar i);

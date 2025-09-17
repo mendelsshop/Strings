@@ -77,6 +77,26 @@ type 't top_level =
   | TTypeBind of { name : string; ty : ty }
   | TPrintString of string
 
+let type_of_expr = function
+  | TVar { ty; _ }
+  | TFloat { ty; _ }
+  | TString { ty; _ }
+  | TInteger { ty; _ }
+  | TBoolean { ty; _ }
+  | TLambda { ty; _ }
+  | TApplication { ty; _ }
+  | TUnit ty
+  | TLet { ty; _ }
+  | TLetRec { ty; _ }
+  | TIf { ty; _ }
+  | TRecordAccess { ty; _ }
+  | TRecordExtend { ty; _ }
+  | TRecord { ty; _ }
+  | TMatch { ty; _ }
+  | TConstructor { ty; _ }
+  | TNominalConstructor { ty; _ } ->
+      ty
+
 type 't program = 't top_level list
 
 (* we can make this non recursive if we make poly ast node store their type *)

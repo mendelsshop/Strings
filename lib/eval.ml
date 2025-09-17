@@ -44,7 +44,7 @@ let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
            (Some Env.empty)
   | ( PTNominalConstructor { name; value; id; _ },
       Constructor { name = name'; value = value'; id = Some id' } )
-    when name == name' && id = id' ->
+    when name = name' && id = id' ->
       matches_single value' value
   | ( PTConstructor { name; value; _ },
       Constructor { name = name'; value = value'; id = None } )

@@ -18,9 +18,12 @@ let () =
   Result.fold
     ~error:(fun e () -> print_endline e)
     ~ok:(fun exprs () ->
+      let types, constructors = get_type_env exprs in
+      let types = TypeEnv.of_list types in
+      let constructors = ConstructorEnv.of_list constructors in
       Ast.program_to_string exprs |> print_endline;
       let exprs = Strings.Ast2.ast_to_ast2 exprs in
-      let exprs' = infer exprs in
+      let exprs' = infer exprs { types; constructors } in
       Typed_ast.program_to_string exprs' |> print_endline;
       Letrec_checking.check_program exprs';
       Strings.Eval.eval exprs' |> fst)

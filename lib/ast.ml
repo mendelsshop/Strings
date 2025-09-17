@@ -6,6 +6,7 @@ type ('a, 'b) case = { pattern : 'a; result : 'b }
 
 type pattern =
   | PVar of string
+  | PNominalConstructor of { name : string; value : pattern }
   | PUnit
   | PWildcard
   | PFloat of float
@@ -64,6 +65,8 @@ let rec pattern_to_string = function
         |> String.concat "; ")
       ^ " }"
   | PConstructor { name; value } -> name ^ " (" ^ pattern_to_string value ^ ")"
+  | PNominalConstructor { name; value } ->
+      name ^ "nominal (" ^ pattern_to_string value ^ ")"
   | PAscribe _ -> failwith ""
 
 let rec expr_to_string indent =
