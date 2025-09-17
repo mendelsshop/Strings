@@ -178,10 +178,12 @@ let rec typeP =
               [
                 unit <$> Fun.const (Union_find.make TyUnit);
                 paren typeP;
-                junk << string "int" <$> Fun.const (Union_find.make TyInteger);
+                junk << string "integer"
+                <$> Fun.const (Union_find.make TyInteger);
                 junk << string "float" <$> Fun.const (Union_find.make TyFloat);
                 junk << string "string" <$> Fun.const (Union_find.make TyString);
-                junk << string "bool" <$> Fun.const (Union_find.make TyBoolean);
+                junk << string "boolean"
+                <$> Fun.const (Union_find.make TyBoolean);
                 record typeP None ':'
                 <$> (fun (base, row) ->
                 list_to_row ~base
