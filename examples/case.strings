@@ -1,0 +1,2 @@
+"let foo = Cons 5"
+  "let x foo =match foo with\n        | Cons a -> a\n        | V v -> 6"

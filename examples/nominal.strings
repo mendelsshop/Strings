@@ -1,0 +1,3 @@
+"data Id = integer"
+"let ids = (Id 1)"
+"let id (Id i) = i in id ids"

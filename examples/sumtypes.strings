@@ -1,0 +1,1 @@
+"let foo = Odd 1" "match foo with\n| Odd n -> ()\n| Even n -> ()"

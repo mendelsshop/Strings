@@ -1,0 +1,1 @@
+"let rec leaf tree = match tree with  | `leaf x -> x | `branch b -> leaf b"

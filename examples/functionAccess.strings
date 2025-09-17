@@ -1,0 +1,4 @@
+"let dotX r = r.x" "let dotXdotY r = (dotX r).y"
+  "let dotXanddotY r = (*) r.x  r.y"
+  "let dotXordotY r c = if c then r.x else r.y"
+  "let ifZdotXelsedotY r c = if r.z then r.x else r.y"

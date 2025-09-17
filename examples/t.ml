@@ -1,6 +1,0 @@
-"let bar = 11"
-"let ff = 5"
-"let  foo = 5"
-        "let {f;bar;b;g = {t}} = {g= {t= 6}; f=ff; bar; b= 8; foo}"
-"print t"
-"print bar"
