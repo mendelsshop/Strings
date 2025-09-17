@@ -257,8 +257,21 @@ let rec pattern =
     }
 
 let unless b p = if b then return None else p <$> fun x -> Some x
+let whenP b p = if b then p <$> fun x -> Some x else return None
 let fun_params = many pattern
 let fun_params1 = many1 pattern
+
+let let_head is_rec expr =
+  let expr = junk << char '=' << expr in
+  let function_signature =
+    return (fun name parameters e ->
+        (PVar name, Lambda { parameters; body = e }))
+    <*> identifier <*> fun_params1 <*> expr
+  in
+  let plain_let = seq pattern expr in
+  junk << string "let"
+  << whenP is_rec (junk << string "rec")
+  << (function_signature <|> plain_let)
 
 let rec expr is_end =
   let last_quote is_end =
@@ -359,28 +372,15 @@ let rec expr is_end =
     <$> fun (parameters, body) -> Lambda { parameters; body }
   in
   let letP expr is_end =
-    let rec_parser =
-      junk << string "rec"
-      << seq pattern fun_params1
-         (* TODO: allow more complex letrec expressions *)
-      <$> (fun (name, parameters) (e1, e2) ->
-      LetRec { name; e1 = Lambda { parameters; body = e1 }; e2 })
-      <|> ( seq pattern fun_params <$> fun (name, parameters) (e1, e2) ->
-            Let
-              {
-                name;
-                e1 =
-                  (if List.is_empty parameters then e1
-                   else Lambda { parameters; body = e1 });
-                e2;
-              } )
-      >>= fun cons ->
-      junk
-      << seq (char '=' << expr false) (junk << string "in" << expr is_end)
-      <$> cons
-    in
-    junk << string "let" << junk << rec_parser
+    let endP = junk << string "in" << expr is_end in
+    return (fun (name, e1) e2 -> LetRec { name; e1; e2 })
+    <*> let_head true (expr false)
+    <*> endP
+    <|> (return (fun (name, e1) e2 -> Let { name; e1; e2 })
+        <*> let_head false (expr false)
+        <*> endP)
   in
+
   let case expr is_end =
     let case is_end =
       (* TODO: multi or pattern *)
@@ -432,22 +432,9 @@ let rec expr is_end =
   expr is_end
 
 let letP =
-  let rec_parser =
-    junk << string "rec"
-    << seq pattern fun_params1 (* TODO: allow more complex letrec expressions *)
-    <$> (fun (name, parameters) body ->
-    RecBind { name; value = Lambda { parameters; body } })
-    <|> ( seq pattern fun_params <$> fun (name, parameters) body ->
-          Bind
-            {
-              name;
-              value =
-                (if List.is_empty parameters then body
-                 else Lambda { parameters; body });
-            } )
-    >>= fun cons -> junk << (char '=' << expr true) <$> cons
-  in
-  junk << string "let" << junk << rec_parser
+  let_head true (expr false)
+  <$> (fun (name, value) -> RecBind { name; value })
+  <|> (let_head false (expr false) <$> fun (name, value) -> Bind { name; value })
 
 let top_level =
   char '\"' << letP
