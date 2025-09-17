@@ -432,13 +432,14 @@ let rec expr is_end =
   expr is_end
 
 let letP =
-  let_head true (expr false)
+  let_head true (expr true)
   <$> (fun (name, value) -> RecBind { name; value })
-  <|> (let_head false (expr false) <$> fun (name, value) -> Bind { name; value })
+  <|> (let_head false (expr true) <$> fun (name, value) -> Bind { name; value })
 
 let top_level =
-  char '\"' << letP
-  <|> (expr true <$> fun expr -> Bind { name = PWildcard; value = expr })
+  char '\"'
+  << (letP
+     <|> (expr true <$> fun expr -> Bind { name = PWildcard; value = expr }))
   <|> (stringP1 <?> "top level string" <$> fun string -> Ast.PrintString string)
 
 let parse = many1 top_level >> eof
