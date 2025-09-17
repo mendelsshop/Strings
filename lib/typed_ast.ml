@@ -1,8 +1,6 @@
 open Types
 
-type 'b field = { name : string; value : 'b }
 type ('a, 'b) projection = { ty : ty; value : 'a; projector : 'b }
-type 'a row = (string * 'a) list
 
 type 't tpattern =
   | PTVar of { ident : string; ty : 't }
@@ -11,7 +9,7 @@ type 't tpattern =
   | PTInteger of { value : int; ty : 't }
   | PTFloat of { value : float; ty : 't }
   | PTBoolean of { value : bool; ty : 't }
-  | PTRecord of { fields : 't tpattern row; ty : 't }
+  | PTRecord of { fields : 't tpattern Ast.row; ty : 't }
   | PTConstructor of { name : string; value : 't tpattern; ty : 't }
   | PTUnit of 't
 
@@ -50,8 +48,12 @@ type 't texpr =
       ty : ty;
     }
   | TRecordAccess of { record : 't texpr; projector : string; ty : ty }
-  | TRecordExtend of { record : 't texpr; new_fields : 't texpr row; ty : ty }
-  | TRecord of { fields : 't texpr row; ty : ty }
+  | TRecordExtend of {
+      record : 't texpr;
+      new_fields : 't texpr Ast.row;
+      ty : ty;
+    }
+  | TRecord of { fields : 't texpr Ast.row; ty : ty }
   | TMatch of {
       value : 't texpr;
       cases : ('t tpattern, 't texpr) Ast.case list;
@@ -80,7 +82,8 @@ let rec tpattern_to_string = function
   | PTRecord { fields; _ } ->
       "{ "
       ^ (fields
-        |> List.map (fun (label, pat) -> label ^ " = " ^ tpattern_to_string pat)
+        |> List.map (fun { Ast.label; value } ->
+               label ^ " = " ^ tpattern_to_string value)
         |> String.concat "; ")
       ^ " }"
   | PTConstructor { name; value; _ } ->
@@ -129,8 +132,8 @@ let rec texpr_to_string indent =
   | TRecord { fields; _ } ->
       "{\n"
       ^ (fields
-        |> List.map (fun (label, pat) ->
-               indent_string ^ label ^ " = " ^ texpr_to_string next_level pat)
+        |> List.map (fun { Ast.label; value } ->
+               indent_string ^ label ^ " = " ^ texpr_to_string next_level value)
         |> String.concat ";\n")
       ^ "\n}"
   | TRecordAccess { record; projector; _ } ->
@@ -153,7 +156,7 @@ let rec texpr_to_string indent =
       ^ texpr_to_string indent record
       ^ " with "
       ^ (new_fields
-        |> List.map (fun (label, value) ->
+        |> List.map (fun { Ast.label; value } ->
                indent_string ^ label ^ " = " ^ texpr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"

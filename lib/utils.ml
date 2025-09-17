@@ -9,12 +9,20 @@ module type T = sig
   type t
 end
 
-module Env (T : T) = struct
-  include StringMap
+module Env = struct
+  module type S = sig
+    include Map.S
 
-  type t = T.t StringMap.t
+    val union : 'a t -> 'a t -> 'a t
+  end
 
-  let union x y = union (fun _ x _ -> Some x) x y
+  module Make (T : T) = struct
+    include StringMap
+
+    type t = T.t StringMap.t
+
+    let union x y = union (fun _ x _ -> Some x) x y
+  end
 end
 (* let in_env new_env m = *)
 (*   let scope env = new_env @ env in *)

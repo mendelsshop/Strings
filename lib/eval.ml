@@ -35,9 +35,9 @@ let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
   | PTVar { ident; _ }, p -> Some (Env.singleton ident p)
   | PTRecord { fields; _ }, Record r' ->
       List.map
-        (fun (label, field) ->
+        (fun { Ast.label; value } ->
           let o = StringMap.find_opt label r' in
-          Option.bind o (fun e -> matches_single e field))
+          Option.bind o (fun e -> matches_single e value))
         fields
       |> List.fold_left
            (fun acc o -> Option.bind o (fun o -> Option.map (Env.union o) acc))
@@ -130,9 +130,9 @@ let rec eval expr =
   | TRecord { fields; _ } ->
       fields
       |> List.fold_left
-           (fun rest (name, value) ->
+           (fun rest { Ast.label; value } ->
              rest >>= fun rest ->
-             eval value <$> fun value -> StringMap.add name value rest)
+             eval value <$> fun value -> StringMap.add label value rest)
            (StringMap.empty |> return)
       <$> fun fields -> Record fields
   | TRecordAccess { record; projector; _ } ->
@@ -143,9 +143,9 @@ let rec eval expr =
       let fields = get_record r' in
       let fields =
         List.fold_left
-          (fun rest (name, value) ->
+          (fun rest { Ast.label; value } ->
             rest >>= fun rest ->
-            eval value <$> fun value -> StringMap.add name value rest)
+            eval value <$> fun value -> StringMap.add label value rest)
           (fields |> return) new_fields
       in
       fields <$> fun fields -> Record fields

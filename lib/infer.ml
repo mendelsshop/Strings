@@ -88,13 +88,13 @@ let rec generate_constraints_pattern ty = function
             let env, cs, row_ty, row, vars = result in
             let ty_name = gensym () in
             let ty = Union_find.make (ty_var ty_name) in
-            let env', cs', pat' = generate_constraints_pattern ty value in
+            let env', cs', value = generate_constraints_pattern ty value in
 
             ( env @ env',
               cs @ cs',
               Union_find.make
                 (TyRowExtend { label; field = ty; rest_row = row_ty }),
-              (label, pat') :: row,
+              { label; value } :: row,
               ty_name :: vars ))
           row row_init
       in
@@ -150,7 +150,7 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
           {
             fields =
               List.map
-                (fun (field, _, (_, value), _) -> (field, value))
+                (fun (label, _, (_, value), _) -> { label; value })
                 field_tys_and_constraints;
             ty;
           } )
@@ -205,7 +205,7 @@ let rec generate_constraints ty : _ -> ty co list * _ = function
             record;
             new_fields =
               List.map
-                (fun (field, _, (_, value), _) -> (field, value))
+                (fun (label, _, (_, value), _) -> { label; value })
                 new_field_tys_and_constraints;
             ty;
           } )

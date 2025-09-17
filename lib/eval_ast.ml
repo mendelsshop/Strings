@@ -15,7 +15,7 @@ type eval_expr =
   | Record of eval_expr StringMap.t
   | Constructor of { name : string; value : eval_expr }
 
-module Env = Env (struct
+module Env = Env.Make (struct
   type t = eval_expr
 end)
 
