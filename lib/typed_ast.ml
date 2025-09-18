@@ -16,6 +16,8 @@ type 't tpattern =
       id : int;
     }
   | PTUnit of 't
+  | PTOr of { patterns : 't tpattern list; ty : 't }
+  | PTAs of { name : string; value : 't tpattern; ty : 't }
 
 type 't texpr =
   | TVar of { ident : string; ty : ty }
@@ -120,6 +122,9 @@ let rec tpattern_to_string = function
       name ^ " (" ^ tpattern_to_string value ^ ")"
   | PTNominalConstructor { name; value; _ } ->
       name ^ " (" ^ tpattern_to_string value ^ ")"
+  | PTAs { name; value; _ } -> name ^ " as " ^ tpattern_to_string value
+  | PTOr { patterns; _ } ->
+      List.map tpattern_to_string patterns |> String.concat " | "
 
 let rec texpr_to_string indent =
   let next_level = indent + 1 in

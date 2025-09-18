@@ -55,17 +55,22 @@ let rec matches_single (e : eval_expr) (case : Types.ty tpattern) =
   | PTString { value; _ }, String v' when value = v' -> Some Env.empty
   | PTFloat { value; _ }, Float v' when value = v' -> Some Env.empty
   | PTInteger { value; _ }, Integer v' when value = v' -> Some Env.empty
+  | PTOr { patterns; _ }, value' -> matches value' patterns
+  | PTAs { name; value; _ }, value' ->
+      matches_single value' value |> Option.map (Env.add name value')
   | PTUnit _, Unit -> Some Env.empty
   | _ -> None
 
-let matches_single' e case = matches_single e case |> Option.get
+and matches e = List.find_map (matches_single e)
 
 let matches e cases =
   List.find_map
     (fun { Ast.pattern; result } ->
       Option.map (fun binders -> (binders, result)) (matches_single e pattern))
     cases
-  |> Option.get
+
+let matches_single' e case = matches_single e case |> Option.get
+let matches' e cases = matches e cases |> Option.get
 
 (* TODO: for apply/get_* or other places where there are recs allow unwinding of multiple recs also applies to matching *)
 let apply f a =
@@ -162,7 +167,7 @@ let rec eval expr =
       scoped_insert bindings (eval e2)
   | TMatch { value; cases; _ } ->
       let* e' = eval value in
-      let binders, case = matches e' cases in
+      let binders, case = matches' e' cases in
       scoped_insert binders (eval case)
   | TConstructor { name; value; _ } ->
       let* value = eval value in

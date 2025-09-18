@@ -17,6 +17,8 @@ type pattern =
   | PConstructor of { name : string; value : pattern }
   | PAscribe of { pattern : pattern; ty : ty }
   | PString of string
+  | POr of pattern list
+  | PAs of { name : string; value : pattern }
 
 type expr =
   | Var of string
@@ -68,6 +70,8 @@ let rec pattern_to_string = function
   | PNominalConstructor { name; value } ->
       name ^ "nominal (" ^ pattern_to_string value ^ ")"
   | PAscribe _ -> failwith ""
+  | PAs { name; value } -> name ^ " as " ^ pattern_to_string value
+  | POr patterns -> List.map pattern_to_string patterns |> String.concat " | "
 
 let rec expr_to_string indent =
   let next_level = indent + 1 in

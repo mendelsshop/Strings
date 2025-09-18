@@ -12,5 +12,6 @@
   Eval_ast
   Types
   Gensym
+  Pattern_exhaustiveness
   Utils
   Union_find))

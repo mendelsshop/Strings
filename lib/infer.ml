@@ -154,6 +154,45 @@ let rec generate_constraints_pattern cs_env ty = function
       in
       let ty' = Union_find.make (TyRecord pattern_ty) in
       (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord { fields; ty })
+  | PAs { name; value } ->
+      let env, cs, value = generate_constraints_pattern cs_env ty value in
+      ((name, ty) :: env, cs, PTAs { value; name; ty })
+  | POr (pattern :: patterns) ->
+      let env, cs, pattern = generate_constraints_pattern cs_env ty pattern in
+      let env_map = StringMap.of_list env in
+
+      let cs, patterns =
+        (* TODO: we should probably be carefull about the order of the fold as the resulting tpattern with a different ordering might change errors for duplicate pattern *)
+        List.fold_left
+          (fun (cs, patterns) pattern ->
+            let env', cs', pattern =
+              generate_constraints_pattern cs_env ty pattern
+            in
+            let env' = StringMap.of_list env' in
+            let cs'' =
+              StringMap.merge
+                (fun v x y ->
+                  match (x, y) with
+                  (* maybe we should have some way to communicate that this is an issue with an or pattern if unification fails on one of these *)
+                  | Some x, Some y -> CEq (x, y) |> Option.some
+                  | Some _, None ->
+                      failwith
+                        ("part of or pattern " ^ tpattern_to_string pattern
+                       ^ " missing variable " ^ v)
+                  | None, Some _ ->
+                      failwith
+                        ("part of or pattern " ^ tpattern_to_string pattern
+                       ^ " has extra variable " ^ v)
+                  | _ -> failwith "unreachable")
+                env_map env'
+            in
+            let cs'' = StringMap.to_list cs'' |> List.map snd in
+            (* StringMap.merge *)
+            (cs @ cs' @ cs'', pattern :: patterns))
+          (cs, [ pattern ]) patterns
+      in
+      (env, cs, PTOr { patterns; ty })
+  | POr [] -> failwith "unreachable"
   | PAscribe { pattern; ty = ty' } ->
       let env, cs, pat' = generate_constraints_pattern cs_env ty' pattern in
       (* TODO: maybe don't remove ascription from typed ast? *)

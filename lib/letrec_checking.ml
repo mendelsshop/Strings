@@ -19,6 +19,8 @@ let rec get_binders = function
       List.concat_map (fun { Ast.value; _ } -> get_binders value) fields
   | PTConstructor { value; _ } -> get_binders value
   | PTNominalConstructor { value; _ } -> get_binders value
+  | PTAs { name; value; _ } -> name :: get_binders value
+  | PTOr { patterns; _ } -> List.concat_map get_binders patterns
   | PTUnit _ -> []
 
 (* we dont autimatically turn letrec exprs into string we do it on demand as in most cases letrec are correct *)
