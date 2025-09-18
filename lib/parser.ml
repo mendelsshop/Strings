@@ -264,28 +264,41 @@ let rec pattern =
       unParse =
         (fun s ok err ->
           let (Parser { unParse }) =
-            choice
-              [
-                paren pattern;
-                ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
-                  PString s );
-                (float <$> fun f -> Ast.PFloat f);
-                ( constructor pattern (return PUnit) <$> fun (name, value) ->
-                  PConstructor { name; value } );
-                (* we dont do shorthand for nominal records as that would mean any pattern variable would automatically be nominal constructor - so we want to be consistent between patterns and data declarations *)
-                (* if we would want to be consitent we would also want to make expression/pattern have shorthand *)
-                (* which we be problem especilaly for expression where we use function to represent nominal constructor (but i guess if we mark it as such instead of turning it into function we could just make the variable representing this constructor just be the Constructor term itself *)
-                (* for patterns whe would also need to lookup for vars if there are any constructors with that name *)
-                ( nominal_constructor pattern <$> fun (name, value) ->
-                  PNominalConstructor { name; value } );
-                (number <$> fun i -> PInteger i);
-                junk << char '_' <$> Fun.const PWildcard;
-                (identifier <$> fun i -> PVar i);
-                unit <$> Fun.const PUnit;
-                ( record pattern (Some (fun i -> PVar i)) '='
-                <$> List.map (fun (label, value) -> { label; value })
-                <$> fun r -> PRecord r );
-              ]
+            let basic =
+              choice
+                [
+                  paren pattern;
+                  ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
+                    PString s );
+                  (float <$> fun f -> Ast.PFloat f);
+                  ( constructor pattern (return PUnit) <$> fun (name, value) ->
+                    PConstructor { name; value } );
+                  (* we dont do shorthand for nominal records as that would mean any pattern variable would automatically be nominal constructor - so we want to be consistent between patterns and data declarations *)
+                  (* if we would want to be consitent we would also want to make expression/pattern have shorthand *)
+                  (* which we be problem especilaly for expression where we use function to represent nominal constructor (but i guess if we mark it as such instead of turning it into function we could just make the variable representing this constructor just be the Constructor term itself *)
+                  (* for patterns whe would also need to lookup for vars if there are any constructors with that name *)
+                  ( nominal_constructor pattern <$> fun (name, value) ->
+                    PNominalConstructor { name; value } );
+                  (number <$> fun i -> PInteger i);
+                  junk << char '_' <$> Fun.const PWildcard;
+                  (identifier <$> fun i -> PVar i);
+                  unit <$> Fun.const PUnit;
+                  ( record pattern (Some (fun i -> PVar i)) '='
+                  <$> List.map (fun (label, value) -> { label; value })
+                  <$> fun r -> PRecord r );
+                ]
+            in
+            let asP =
+              return (fun value ->
+                  Option.fold
+                    ~some:(fun name -> PAs { name; value })
+                    ~none:value)
+              <*> basic
+              <*> (junk << string "as" << identifier |> opt)
+            in
+            sepby1 asP (junk << char '|') <$> function
+            | [ p ] -> p
+            | patterns -> POr patterns
           in
           unParse s ok err);
     }
