@@ -15,7 +15,23 @@ type space =
   | SVar
   | SNominal of { value : space; name : string; id : int }
 
-let space_subset _s1 _s2 = failwith ""
+(* maybe this can be combined wiht combine space *)
+let rec space_subset s1 s2 =
+  match (s1, s2) with
+  (* for constants like integers/strings/floats since this is only used for redudedant pattern checking so it suffices to make sure all possible value in s1 are in s2 *)
+  | SInteger s1, SInteger s2 -> IntegerSet.diff s1 s2 |> IntegerSet.is_empty
+  | SFloat s1, SFloat s2 -> FloatSet.diff s1 s2 |> FloatSet.is_empty
+  | SString s1, SString s2 -> StringSet.diff s1 s2 |> StringSet.is_empty
+  | SBoolean b1, SBoolean b2 -> b1 = b2
+  | SUnit, SUnit -> true
+  | ( SNominal { value; name; id },
+      SNominal { value = value1; name = name1; id = id1 } )
+    when id = id1 && name = name1 ->
+      space_subset value value1
+  | SVar, SVar | _, SVar -> true
+  | SVar, _ -> false
+  | _, _ -> failwith "mismatch"
+
 let type_subset _ty _s = failwith ""
 
 let rec combine_space s1 s2 =
