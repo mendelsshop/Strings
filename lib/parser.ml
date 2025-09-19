@@ -243,7 +243,7 @@ let nominal_type_signature =
       ty = Union_find.make (TyNominal { name; ty; id = Utils.gensym_int () });
     }
 
-let rec pattern =
+let pattern =
   let record p identifier_short_hand assign =
     let field = seq identifier (junk << char assign << p) in
     let field =
