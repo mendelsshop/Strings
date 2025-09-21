@@ -1,3 +1,4 @@
+open Utils
 open Types
 open Typed_ast
 module IntegerSet = Set.Make (Int)
@@ -14,6 +15,8 @@ type space =
   | SUnit
   | SVar
   | SNominal of { value : space; name : string; id : int }
+  | SRecord of space StringMap.t
+  | SVariant of space StringMap.t
 
 (* maybe this can be combined with combine space *)
 let rec space_subset s1 s2 =
@@ -22,6 +25,28 @@ let rec space_subset s1 s2 =
   | SInteger s1, SInteger s2 -> IntegerSet.diff s1 s2 |> IntegerSet.is_empty
   | SFloat s1, SFloat s2 -> FloatSet.diff s1 s2 |> FloatSet.is_empty
   | SString s1, SString s2 -> StringSet.diff s1 s2 |> StringSet.is_empty
+  | SRecord s1, SRecord s2 ->
+      StringMap.merge
+        (fun _ s1 s2 ->
+          Option.fold s1
+            ~some:(fun s1' ->
+              Option.fold s2
+                ~some:(fun s2' -> space_subset s1' s2' |> Option.some)
+                ~none:(Some false))
+            ~none:(Some true))
+        s1 s2
+      |> StringMap.for_all (fun _ b -> b)
+  | SVariant s1, SVariant s2 ->
+      StringMap.merge
+        (fun _ s1 s2 ->
+          Option.fold s1
+            ~some:(fun s1' ->
+              Option.fold s2
+                ~some:(fun s2' -> space_subset s1' s2' |> Option.some)
+                ~none:(Some false))
+            ~none:(Some true))
+        s1 s2
+      |> StringMap.for_all (fun _ b -> b)
   | SBoolean b1, SBoolean b2 -> b1 = b2
   | SUnit, SUnit -> true
   | ( SNominal { value; name; id },
@@ -42,6 +67,10 @@ let rec type_subset ty s =
   | TyFloat, SFloat _ ->
       false
   | TyUnit, SUnit -> false
+  (* for variants/record need function from row type to type StringMap.t *)
+  (* only difference from space_subset is that for variants if its open (end in a tyvar) then it will never be susbset *)
+  | TyRecord _, SRecord _ -> failwith ""
+  | TyVariant _, SVariant _ -> failwith ""
   | _, SVar -> true
   | ( TyNominal { id; name; ty : _ },
       SNominal { id = id'; name = name'; value : _ } )
@@ -52,6 +81,28 @@ let rec type_subset ty s =
 let rec combine_space s1 s2 =
   match (s1, s2) with
   | SInteger s1, SInteger s2 -> SInteger (IntegerSet.union s1 s2)
+  | SRecord s1, SRecord s2 ->
+      SRecord
+        (StringMap.merge
+           (fun _ s1 s2 ->
+             Option.fold s1
+               ~some:(fun s1' ->
+                 Option.fold s2
+                   ~some:(fun s2' -> combine_space s1' s2' |> Option.some)
+                   ~none:s1)
+               ~none:s2)
+           s1 s2)
+  | SVariant s1, SVariant s2 ->
+      SVariant
+        (StringMap.merge
+           (fun _ s1 s2 ->
+             Option.fold s1
+               ~some:(fun s1' ->
+                 Option.fold s2
+                   ~some:(fun s2' -> combine_space s1' s2' |> Option.some)
+                   ~none:s1)
+               ~none:s2)
+           s1 s2)
   | SString s1, SString s2 -> SString (StringSet.union s1 s2)
   | SFloat s1, SFloat s2 -> SFloat (FloatSet.union s1 s2)
   | SBoolean b1, SBoolean b2 -> if b1 = b2 then SBoolean b1 else SVar
@@ -70,8 +121,14 @@ let rec pattern_to_space = function
   | PTFloat { value; _ } -> SFloat (FloatSet.singleton value)
   | PTString { value; _ } -> SString (StringSet.singleton value)
   | PTBoolean { value; _ } -> SBoolean value
-  | PTRecord _ -> SVar (* replace svar with actual handling of records *)
-  | PTConstructor _ -> SVar (* replace svar with actual handling of variants *)
+  | PTRecord { fields; _ } ->
+      SRecord
+        (fields
+        |> List.map (fun { Ast.label; value } ->
+               (label, pattern_to_space value))
+        |> StringMap.of_list)
+  | PTConstructor { name; value; _ } ->
+      SVariant (StringMap.singleton name (pattern_to_space value))
   | PTNominalConstructor { name; id; value; _ } ->
       SNominal { name; id; value = pattern_to_space value }
   | PTUnit _ -> SUnit
