@@ -1,4 +1,4 @@
-(* open Types *)
+open Types
 open Typed_ast
 module IntegerSet = Set.Make (Int)
 module FloatSet = Set.Make (Float)
@@ -15,7 +15,7 @@ type space =
   | SVar
   | SNominal of { value : space; name : string; id : int }
 
-(* maybe this can be combined wiht combine space *)
+(* maybe this can be combined with combine space *)
 let rec space_subset s1 s2 =
   match (s1, s2) with
   (* for constants like integers/strings/floats since this is only used for redudedant pattern checking so it suffices to make sure all possible value in s1 are in s2 *)
@@ -32,7 +32,22 @@ let rec space_subset s1 s2 =
   | SVar, _ -> false
   | _, _ -> failwith "mismatch"
 
-let type_subset _ty _s = failwith ""
+(* is this type a subset of this space? *)
+let rec type_subset ty s =
+  let _, `root { Union_find.data = ty_data; _ } = Union_find.find_set ty in
+  match (ty_data, s) with
+  | TyBoolean, SBoolean _
+  | TyInteger, SInteger _
+  | TyString, SString _
+  | TyFloat, SFloat _ ->
+      false
+  | TyUnit, SUnit -> false
+  | _, SVar -> true
+  | ( TyNominal { id; name; ty : _ },
+      SNominal { id = id'; name = name'; value : _ } )
+    when id = id' && name = name' ->
+      type_subset ty value
+  | _ -> failwith "mismatch"
 
 let rec combine_space s1 s2 =
   match (s1, s2) with
