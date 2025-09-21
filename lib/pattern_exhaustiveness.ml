@@ -57,6 +57,19 @@ let rec space_subset s1 s2 =
   | SVar, _ -> false
   | _, _ -> failwith "mismatch"
 
+(* returns the flattened out row and if its closed *)
+let rec flattern_row (ty : ty) =
+  let _, `root { Union_find.data = ty'; _ } = Union_find.find_set ty in
+  match ty' with
+  | TyVar _ -> (StringMap.empty, false)
+  | TyNominal _ | TyRecord _ | TyVariant _ | TyInteger | TyString | TyFloat
+  | TyGenVar _ | TyBoolean | TyArrow _ | TyUnit ->
+      failwith "unreachable"
+  | TyRowEmpty -> (StringMap.empty, true)
+  | TyRowExtend { label; field; rest_row } ->
+      let map, is_open = flattern_row rest_row in
+      (StringMap.add label field map, is_open)
+
 (* is this type a subset of this space? *)
 let rec type_subset ty s =
   let _, `root { Union_find.data = ty_data; _ } = Union_find.find_set ty in
@@ -69,8 +82,31 @@ let rec type_subset ty s =
   | TyUnit, SUnit -> false
   (* for variants/record need function from row type to type StringMap.t *)
   (* only difference from space_subset is that for variants if its open (end in a tyvar) then it will never be susbset *)
-  | TyRecord _, SRecord _ -> failwith ""
-  | TyVariant _, SVariant _ -> failwith ""
+  | TyRecord s1, SRecord s2 ->
+      let s1, _ = flattern_row s1 in
+      StringMap.merge
+        (fun _ s1 s2 ->
+          Option.fold s1
+            ~some:(fun s1' ->
+              Option.fold s2
+                ~some:(fun s2' -> type_subset s1' s2' |> Option.some)
+                ~none:(Some false))
+            ~none:(Some true))
+        s1 s2
+      |> StringMap.for_all (fun _ b -> b)
+  | TyVariant s1, SVariant s2 ->
+      let s1, closed = flattern_row s1 in
+      closed
+      && StringMap.merge
+           (fun _ s1 s2 ->
+             Option.fold s1
+               ~some:(fun s1' ->
+                 Option.fold s2
+                   ~some:(fun s2' -> type_subset s1' s2' |> Option.some)
+                   ~none:(Some false))
+               ~none:(Some true))
+           s1 s2
+         |> StringMap.for_all (fun _ b -> b)
   | _, SVar -> true
   | ( TyNominal { id; name; ty : _ },
       SNominal { id = id'; name = name'; value : _ } )
