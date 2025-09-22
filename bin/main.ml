@@ -25,6 +25,11 @@ let () =
       let exprs = Strings.Ast2.ast_to_ast2 exprs in
       let exprs' = infer exprs { types; constructors } in
       Typed_ast.program_to_string exprs' |> print_endline;
+      let errors = Pattern_checking.check exprs' in
+      print_endline (Pattern_checking.errors_to_string errors);
+      (* TODO: non fail fast letrec checking *)
       Letrec_checking.check_program exprs';
-      Strings.Eval.eval exprs' |> fst)
+      if not (List.is_empty errors) then
+        failwith ("errors: " ^ string_of_int (List.length errors))
+      else Strings.Eval.eval exprs' |> fst)
     result ()

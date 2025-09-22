@@ -446,7 +446,7 @@ let rec generate_constraints_top cs_state = function
               cs' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TBind { name; value } :: program )
+        TBind { name; value; name_ty = a1_ty } :: program )
   (* | Expr e :: program' -> *)
   (*     let cs, e = *)
   (*       generate_constraints (Union_find.make (ty_var (gensym ()))) e *)
@@ -472,7 +472,7 @@ let rec generate_constraints_top cs_state = function
               cs'' );
         ],
         (* TODO: maybe a1 has to be in a forall *)
-        TRecBind { name; value } :: program )
+        TRecBind { name; value; name_ty = a1_ty } :: program )
   | PrintString s :: program ->
       let cs, program' = generate_constraints_top cs_state program in
       (cs, TPrintString s :: program')

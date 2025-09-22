@@ -5,6 +5,9 @@ module IntegerSet = Set.Make (Int)
 module FloatSet = Set.Make (Float)
 module StringSet = Set.Make (String)
 
+(* exhaustiveness checking: combine all the patterns into one big space and then see if the type is a subset of this *)
+(* rededundent checking: as we combine the patterns check if the current space is a subset of the accumulated space *)
+(* these two can be done together *)
 type space =
   | SInteger of IntegerSet.t
   | SString of StringSet.t
@@ -17,6 +20,13 @@ type space =
   | SNominal of { value : space; name : string; id : int }
   | SRecord of space StringMap.t
   | SVariant of space StringMap.t
+
+let space_to_string = function
+  | SVariant _ -> "variant"
+  | SVar -> "var"
+  | SUnit -> "unit"
+  | SRecord _ -> "record"
+  | _ -> ""
 
 (* no infiinte reucstion becasue althouth types can be infinite, since: *)
 (* 1: within a row there should not be infinity so flattening should not cause infinite recursion *)
@@ -74,15 +84,17 @@ let rec type_subset ty s =
            s1 s2
          |> StringMap.for_all (fun _ b -> b)
   | _, SVar -> true
+  | TyVar _, _ -> false
   | ( TyNominal { id; name; ty : _ },
       SNominal { id = id'; name = name'; value : _ } )
     when id = id' && name = name' ->
       type_subset ty value
-  | _ -> failwith "mismatch"
+  | _ -> failwith ("mismatch " ^ type_to_string ty ^ " and " ^ space_to_string s)
 
 (* patterns that are redudundent *)
 let duplicate_patterns : ty tpattern list ref = ref []
 let mcons e l = l := e :: !l
+let reset l = l := []
 
 let rec pattern_to_space = function
   | PTVar _ -> SVar
@@ -171,12 +183,104 @@ and combine_space s p =
             |> Option.some)
           s1
       in
-      SRecord s1
+      SVariant s1
   | _, PTOr { patterns; _ } ->
       (* TODO: check for redudant inner patterns *)
       List.fold_left combine_space s patterns
-  | _, _ -> failwith "mismatch"
+  | _, _ -> failwith "mismatch2"
 
-(* exhaustiveness checking: combine all the patterns into one big space and then see if the type is a subset of this *)
-(* rededundent checking: as we combine the patterns check if the current space is a subset of the accumulated space *)
-(* these two can be done together *)
+type pattern_error = {
+  redudedant : ty tpattern list;
+  exhaustive : bool;
+  loc : unit;
+}
+
+let error_to_string { redudedant; exhaustive; loc = (); _ } =
+  let redudedant =
+    redudedant
+    |> List.map tpattern_to_string
+    |> List.map (( ^ ) "redudedant pattern: ")
+  in
+  let errors =
+    if not exhaustive then "non exhaustive match" :: redudedant else redudedant
+  in
+  String.concat "\n" errors
+
+let errors_to_string errors =
+  errors |> List.map error_to_string |> String.concat "\n\n"
+
+let rec check_expr = function
+  | TVar _ | TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _ -> []
+  (* its possible that were matching against is a single value like 1, or `Foo 1 ... *)
+  (* but right now we just go by the type *)
+  | TMatch { cases = case :: cases; value; _ } ->
+      let ty = type_of_expr value in
+      let space = pattern_to_space case.pattern in
+      let patterns = List.map (fun { Ast.pattern; _ } -> pattern) cases in
+      let space = List.fold_left combine_space space patterns in
+      let redudedant_patterns = !duplicate_patterns in
+      reset duplicate_patterns;
+      {
+        redudedant = redudedant_patterns;
+        exhaustive = type_subset ty space;
+        loc = ();
+      }
+      :: check_expr value
+      @ List.concat_map
+          (fun { Ast.result; _ } -> check_expr result)
+          (case :: cases)
+  | TMatch { ty = _ty; _ } ->
+      [ { redudedant = []; exhaustive = false; loc = () } ]
+  | TLambda { parameter; parameter_ty; body; _ } ->
+      let space = pattern_to_space parameter in
+      let redudedant_patterns = !duplicate_patterns in
+      reset duplicate_patterns;
+      {
+        redudedant = redudedant_patterns;
+        exhaustive = type_subset parameter_ty space;
+        loc = ();
+      }
+      :: check_expr body
+  | TLet { name; name_ty; e1; e2; _ } | TLetRec { name; name_ty; e1; e2; _ } ->
+      let space = pattern_to_space name in
+      let redudedant_patterns = !duplicate_patterns in
+      reset duplicate_patterns;
+      {
+        redudedant = redudedant_patterns;
+        exhaustive = type_subset name_ty space;
+        loc = ();
+      }
+      :: check_expr e1
+      @ check_expr e2
+  | TApplication { lambda; arguement; _ } ->
+      check_expr lambda @ check_expr arguement
+  | TIf { condition; consequent; alternative; _ } ->
+      check_expr condition @ check_expr consequent @ check_expr alternative
+  | TRecordAccess { record; _ } -> check_expr record
+  | TRecordExtend { record; new_fields; _ } ->
+      check_expr record
+      @ List.concat_map (fun { Ast.value; _ } -> check_expr value) new_fields
+  | TRecord { fields; _ } ->
+      List.concat_map (fun { Ast.value; _ } -> check_expr value) fields
+  | TConstructor { value; _ } | TNominalConstructor { value; _ } ->
+      check_expr value
+
+let check_tl : ty top_level -> _ = function
+  | TBind { name; value; name_ty; _ } | TRecBind { name; value; name_ty; _ } ->
+      let space = pattern_to_space name in
+      let redudedant_patterns = !duplicate_patterns in
+      reset duplicate_patterns;
+      {
+        redudedant = redudedant_patterns;
+        exhaustive = type_subset name_ty space;
+        loc = ();
+      }
+      :: check_expr value
+  | TPrintString _ -> []
+
+let check tls =
+  reset duplicate_patterns;
+  List.concat_map check_tl tls
+  (* maybe do this filtering at error construction time *)
+  |> List.filter (fun { redudedant; exhaustive; loc = (); _ } ->
+         (not exhaustive) || not (List.is_empty redudedant))

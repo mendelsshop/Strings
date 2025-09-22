@@ -184,7 +184,7 @@ let eval expr =
   | TPrintString s ->
       print_string s;
       return ()
-  | TRecBind { name; value } ->
+  | TRecBind { name; value; _ } ->
       let* value' = eval value in
       let rec_envoirnment = matches_single' value' name in
       let bindings =
