@@ -85,26 +85,37 @@ let infix_identifier =
   |> check (not_in reserved_operators)
   |> tryP <?> "infix identifier"
 
-let identifier =
-  basic_identifier |> tryP
-  <|> (between (junk << char '(') (junk << char ')') infix_identifier
-      <?> "infix identifier")
+let ignore_span x _ = x
 
+let identifier_without_junk w =
+  junk
+  << spanned'
+       (return w
+       <*> (basic_identifier_without_junk |> tryP
+           <|> (between (char '(') (junk << char ')') infix_identifier
+               <?> "infix identifier")))
+
+let identifier w = junk << identifier_without_junk w
 let infix_identifier = infix_identifier
 
 (* TODO: for infix too *)
-let variant_identifier = junk << char '`' << identifier
+let variant_identifier w = junk << char '`' << identifier_without_junk w
 let number_inner = takeWhile is_decimal
 let number1_inner = takeWhile1 is_decimal
-let number = junk << number1_inner <$> int_of_string <?> "number"
 
-let float =
+let number w =
+  junk << spanned' (return w <*> (number1_inner <$> int_of_string)) <?> "number"
+
+let float w =
   junk
-  << (number1_inner
-     >>= (fun first -> char '.' << number_inner <$> ( ^ ) (first ^ "."))
-     <|> ( number_inner >>= fun first ->
-           char '.' << number1_inner <$> ( ^ ) (first ^ ".") ))
-  <$> float_of_string <?> "float"
+  << spanned'
+       (return w
+       <*> (number1_inner
+           >>= (fun first -> char '.' << number_inner <$> ( ^ ) (first ^ "."))
+           <|> ( number_inner >>= fun first ->
+                 char '.' << number1_inner <$> ( ^ ) (first ^ ".") )
+           <$> float_of_string))
+  <?> "float"
 
 let escaped =
   let parse_to_char format =
@@ -147,20 +158,23 @@ let stringP_inner = escaped <|> sat (( <> ) '\"')
 let stringP = many stringP_inner <$> AMPCL.implode <?> "string"
 let stringP1 = many1 stringP_inner <$> AMPCL.implode <?> "string"
 
-let unit : unit t =
-  junk << char '(' << junk << char ')' <$> Fun.const () <?> "unit"
+let unit w =
+  junk
+  << spanned'
+       (return w <*> (char '(' << junk << char ')' <$> Fun.const () <?> "unit"))
 
 let paren p = between (junk << char '(') (junk << char ')') p <?> "paren"
 
 let record p identifier_short_hand assign =
   let field =
-    seq identifier (junk << char assign << p) <$> fun (label, value) ->
-    { label; value }
+    seq (identifier ignore_span) (junk << char assign << p)
+    <$> fun (label, value) -> { label; value }
   in
   let field =
     match identifier_short_hand with
     | Some f ->
-        field <|> (identifier <$> fun label -> { label; value = f label })
+        field
+        <|> (identifier ignore_span <$> fun label -> { label; value = f label })
     | None -> field
   in
   between
@@ -170,8 +184,10 @@ let record p identifier_short_hand assign =
   <?> "record"
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
-let constructor p zero = seq variant_identifier (p <|> zero) <?> "constructor"
-let nominal_constructor p = seq identifier p <?> "constructor"
+let constructor p zero =
+  seq (variant_identifier ignore_span) (p <|> zero) <?> "constructor"
+
+let nominal_constructor p = seq (identifier ignore_span) p <?> "constructor"
 
 let rec typeP =
   let list_to_row ~k ~base list =
@@ -189,7 +205,7 @@ let rec typeP =
           let basic_type =
             choice
               [
-                unit <$> Fun.const (Union_find.make TyUnit);
+                unit ignore_span <$> Fun.const (Union_find.make TyUnit);
                 paren typeP;
                 junk << string "integer"
                 <$> Fun.const (Union_find.make TyInteger);
@@ -206,10 +222,15 @@ let rec typeP =
               ]
           in
           let variant =
-            many1
-              (seq variant_identifier
-                 (opt basic_type
-                 <$> Option.value ~default:(Union_find.make TyUnit)))
+            between
+              (junk << char '[')
+              (junk << char ']')
+              (sepby1
+                 (seq
+                    (variant_identifier ignore_span)
+                    (opt basic_type
+                    <$> Option.value ~default:(Union_find.make TyUnit)))
+                 (junk << char '|'))
             <$> List.map (fun (label, value) -> { label; value })
             <$> list_to_row
                   ~k:(fun row -> Union_find.make (TyVariant row))
@@ -245,10 +266,11 @@ let nominal_type_signature =
 
 let pattern =
   let record p identifier_short_hand assign =
-    let field = seq identifier (junk << char assign << p) in
+    let field = seq (identifier ignore_span) (junk << char assign << p) in
     let field =
       match identifier_short_hand with
-      | Some f -> field <|> (identifier <$> fun field -> (field, f field))
+      | Some f ->
+          field <|> (identifier ignore_span <$> fun field -> (field, f field))
       | None -> field
     in
     between
@@ -257,17 +279,30 @@ let pattern =
       (sepby field (junk << char ';'))
     <?> "record"
   in
+  let string =
+    junk
+    << spanned'
+         (return (fun value span -> PString { value; span })
+         <*> (char '\"' << stringP >> char '\"'))
+  in
 
   (* TODO: what is ascription's precedence *)
+  let wildcard =
+    junk << spanned (char '_') <$> fun { start; finish; _ } ->
+    PWildcard { start; finish }
+  in
   makeRecParser (fun pattern ->
       let basic =
         makeRecParser (fun basic ->
             choice
               [
+                identifier (fun ident span -> PVar { ident; span });
+                unit (fun _ span -> PUnit span);
+                wildcard;
                 paren pattern;
-                ( junk << char '\"' << stringP >> char '\"' <$> fun s ->
-                  PString s );
-                (float <$> fun f -> Ast.PFloat f);
+                string;
+                float (fun value span -> Ast.PFloat { value; span });
+                number (fun value span -> Ast.PInteger { value; span });
                 ( constructor basic (return PUnit) <$> fun (name, value) ->
                   PConstructor { name; value } );
                 (* we dont do shorthand for nominal records as that would mean any pattern variable would automatically be nominal constructor - so we want to be consistent between patterns and data declarations *)
@@ -276,10 +311,6 @@ let pattern =
                 (* for patterns whe would also need to lookup for vars if there are any constructors with that name *)
                 ( nominal_constructor basic <$> fun (name, value) ->
                   PNominalConstructor { name; value } );
-                (number <$> fun i -> PInteger i);
-                junk << char '_' <$> Fun.const PWildcard;
-                (identifier <$> fun i -> PVar i);
-                unit <$> Fun.const PUnit;
                 ( record pattern (Some (fun i -> PVar i)) '='
                 <$> List.map (fun (label, value) -> { label; value })
                 <$> fun r -> PRecord r );
@@ -306,7 +337,7 @@ let let_head is_rec expr =
   let function_signature =
     return (fun name parameters e ->
         (PVar name, Lambda { parameters; body = e }))
-    <*> identifier <*> fun_params1 <*> expr
+    <*> identifier ignore_span <*> fun_params1 <*> expr
   in
   let plain_let = seq pattern expr in
   junk << string "let"
@@ -334,15 +365,20 @@ let rec expr is_end =
                        stringP
                   >> unless is_end (char '\"' <?> "end of expression")
                   <$> fun s -> String s );
-                  float <$> (fun f -> Ast.Float f) >> last_quote is_end;
+                  float (fun value _span -> Ast.Float value)
+                  >> last_quote is_end;
                   (* TODO: for construction should a "constructor" be no different than an application, meaning that each constructor is a n-ary function, that can be destructed into its values, would also have to update type parsing to handle this *)
                   constructor (basic_expr is_end)
                     (last_quote is_end <$> Fun.const Unit)
                   <$> (fun (name, value) -> Constructor { name; value })
                   >> last_quote is_end;
-                  number <$> (fun i -> Integer i) >> last_quote is_end;
-                  identifier <$> (fun i -> Var i) >> last_quote is_end;
-                  unit <$> Fun.const Unit >> last_quote is_end;
+                  number ignore_span
+                  <$> (fun i -> Integer i)
+                  >> last_quote is_end;
+                  identifier ignore_span
+                  <$> (fun i -> Var i)
+                  >> last_quote is_end;
+                  unit ignore_span <$> Fun.const Unit >> last_quote is_end;
                   record (expr false) (Some (fun i -> Var i)) '='
                   <$> (fun (record, new_fields) ->
                   Option.fold
@@ -360,7 +396,7 @@ let rec expr is_end =
     >>= (fun value ->
     many
       (junk << char '.'
-      << ( identifier <$> fun projector record ->
+      << ( identifier ignore_span <$> fun projector record ->
            RecordAccess { record; projector } ))
     <$> List.fold_left ( |> ) value
     >> last_quote is_end)

@@ -101,7 +101,7 @@ let rec generate_constraints_pattern cs_env ty = function
       ([], [ CEq (ty, Union_find.make TyString) ], PTString { value; ty })
   | PBoolean value ->
       ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean { value; ty })
-  | PFloat value ->
+  | PFloat { value; _ } ->
       ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat { value; ty })
   | PInteger value ->
       ([], [ CEq (ty, Union_find.make TyInteger) ], PTInteger { value; ty })

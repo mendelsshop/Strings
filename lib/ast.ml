@@ -5,20 +5,20 @@ type 'a row = 'a field list
 type ('a, 'b) case = { pattern : 'a; result : 'b }
 
 type pattern =
-  | PVar of string
-  | PNominalConstructor of { name : string; value : pattern }
-  | PUnit
-  | PWildcard
-  | PFloat of float
-  | PInteger of int
-  | PBoolean of bool
+  | PVar of { ident : string; span : AMPCL.span }
+  | PNominalConstructor of { name : string; value : pattern; span : AMPCL.span }
+  | PUnit of AMPCL.span
+  | PWildcard of AMPCL.span
+  | PFloat of { value : float; span : AMPCL.span }
+  | PInteger of { value : int; span : AMPCL.span }
+  | PBoolean of { value : bool; span : AMPCL.span }
   | PRecord of pattern row
   (*   TODO: does record extension makes sense for patterns   *)
-  | PConstructor of { name : string; value : pattern }
-  | PAscribe of { pattern : pattern; ty : ty }
-  | PString of string
-  | POr of pattern list
-  | PAs of { name : string; value : pattern }
+  | PConstructor of { name : string; value : pattern; span : AMPCL.span }
+  | PAscribe of { pattern : pattern; ty : ty; span : AMPCL.span }
+  | PString of { value : string; span : AMPCL.span }
+  | POr of { patterns : pattern list; span : AMPCL.span }
+  | PAs of { name : string; value : pattern; span : AMPCL.span }
 
 type expr =
   | Var of string
@@ -52,13 +52,13 @@ type program = top_level list
 let list_to_string = String.concat " "
 
 let rec pattern_to_string = function
-  | PVar s -> s
-  | PString s -> s
-  | PUnit -> "()"
-  | PBoolean b -> string_of_bool b
-  | PInteger n -> string_of_int n
-  | PFloat n -> string_of_float n
-  | PWildcard -> "_"
+  | PVar { ident; _ } -> ident
+  | PString { value; _ } -> value
+  | PUnit _ -> "()"
+  | PBoolean { value; _ } -> string_of_bool value
+  | PInteger { value; _ } -> string_of_int value
+  | PFloat { value; _ } -> string_of_float value
+  | PWildcard _ -> "_"
   | PRecord row ->
       "{ "
       ^ (row
@@ -66,12 +66,14 @@ let rec pattern_to_string = function
                label ^ " = " ^ pattern_to_string value)
         |> String.concat "; ")
       ^ " }"
-  | PConstructor { name; value } -> name ^ " (" ^ pattern_to_string value ^ ")"
-  | PNominalConstructor { name; value } ->
+  | PConstructor { name; value; _ } ->
+      "`" ^ name ^ " (" ^ pattern_to_string value ^ ")"
+  | PNominalConstructor { name; value; _ } ->
       name ^ "nominal (" ^ pattern_to_string value ^ ")"
   | PAscribe _ -> failwith ""
-  | PAs { name; value } -> name ^ " as " ^ pattern_to_string value
-  | POr patterns -> List.map pattern_to_string patterns |> String.concat " | "
+  | PAs { name; value; _ } -> name ^ " as " ^ pattern_to_string value
+  | POr { patterns; _ } ->
+      List.map pattern_to_string patterns |> String.concat " | "
 
 let rec expr_to_string indent =
   let next_level = indent + 1 in
