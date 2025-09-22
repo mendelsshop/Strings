@@ -18,44 +18,9 @@ type space =
   | SRecord of space StringMap.t
   | SVariant of space StringMap.t
 
-(* maybe this can be combined with combine space *)
-let rec space_subset s1 s2 =
-  match (s1, s2) with
-  (* for constants like integers/strings/floats since this is only used for redudedant pattern checking so it suffices to make sure all possible value in s1 are in s2 *)
-  | SInteger s1, SInteger s2 -> IntegerSet.diff s1 s2 |> IntegerSet.is_empty
-  | SFloat s1, SFloat s2 -> FloatSet.diff s1 s2 |> FloatSet.is_empty
-  | SString s1, SString s2 -> StringSet.diff s1 s2 |> StringSet.is_empty
-  | SRecord s1, SRecord s2 ->
-      StringMap.merge
-        (fun _ s1 s2 ->
-          Option.fold s1
-            ~some:(fun s1' ->
-              Option.fold s2
-                ~some:(fun s2' -> space_subset s1' s2' |> Option.some)
-                ~none:(Some false))
-            ~none:(Some true))
-        s1 s2
-      |> StringMap.for_all (fun _ b -> b)
-  | SVariant s1, SVariant s2 ->
-      StringMap.merge
-        (fun _ s1 s2 ->
-          Option.fold s1
-            ~some:(fun s1' ->
-              Option.fold s2
-                ~some:(fun s2' -> space_subset s1' s2' |> Option.some)
-                ~none:(Some false))
-            ~none:(Some true))
-        s1 s2
-      |> StringMap.for_all (fun _ b -> b)
-  | SBoolean b1, SBoolean b2 -> b1 = b2
-  | SUnit, SUnit -> true
-  | ( SNominal { value; name; id },
-      SNominal { value = value1; name = name1; id = id1 } )
-    when id = id1 && name = name1 ->
-      space_subset value value1
-  | SVar, SVar | _, SVar -> true
-  | SVar, _ -> false
-  | _, _ -> failwith "mismatch"
+(* no infiinte reucstion becasue althouth types can be infinite, since: *)
+(* 1: within a row there should not be infinity so flattening should not cause infinite recursion *)
+(* 2: bdcause the space itself is not infinite we only go as far as the space "unwraps" *)
 
 (* returns the flattened out row and if its closed *)
 let rec flattern_row (ty : ty) =
@@ -70,6 +35,7 @@ let rec flattern_row (ty : ty) =
       let map, is_open = flattern_row rest_row in
       (StringMap.add label field map, is_open)
 
+(* used for exhaustiveness checking *)
 (* is this type a subset of this space? *)
 let rec type_subset ty s =
   let _, `root { Union_find.data = ty_data; _ } = Union_find.find_set ty in
@@ -114,41 +80,9 @@ let rec type_subset ty s =
       type_subset ty value
   | _ -> failwith "mismatch"
 
-let rec combine_space s1 s2 =
-  match (s1, s2) with
-  | SInteger s1, SInteger s2 -> SInteger (IntegerSet.union s1 s2)
-  | SRecord s1, SRecord s2 ->
-      SRecord
-        (StringMap.merge
-           (fun _ s1 s2 ->
-             Option.fold s1
-               ~some:(fun s1' ->
-                 Option.fold s2
-                   ~some:(fun s2' -> combine_space s1' s2' |> Option.some)
-                   ~none:s1)
-               ~none:s2)
-           s1 s2)
-  | SVariant s1, SVariant s2 ->
-      SVariant
-        (StringMap.merge
-           (fun _ s1 s2 ->
-             Option.fold s1
-               ~some:(fun s1' ->
-                 Option.fold s2
-                   ~some:(fun s2' -> combine_space s1' s2' |> Option.some)
-                   ~none:s1)
-               ~none:s2)
-           s1 s2)
-  | SString s1, SString s2 -> SString (StringSet.union s1 s2)
-  | SFloat s1, SFloat s2 -> SFloat (FloatSet.union s1 s2)
-  | SBoolean b1, SBoolean b2 -> if b1 = b2 then SBoolean b1 else SVar
-  | SUnit, SUnit -> SUnit
-  | ( SNominal { value; name; id },
-      SNominal { value = value1; name = name1; id = id1 } )
-    when id = id1 && name = name1 ->
-      SNominal { name = name1; id; value = combine_space value value1 }
-  | SVar, _ | _, SVar -> SVar
-  | _, _ -> failwith "mismatch"
+(* patterns that are redudundent *)
+let duplicate_patterns : ty tpattern list ref = ref []
+let mcons e l = l := e :: !l
 
 let rec pattern_to_space = function
   | PTVar _ -> SVar
@@ -170,12 +104,78 @@ let rec pattern_to_space = function
   | PTUnit _ -> SUnit
   | PTOr { patterns = pattern :: patterns; _ } ->
       let pattern = pattern_to_space pattern in
-      let patterns = List.map pattern_to_space patterns in
 
       (* TODO: check for redudant inner patterns *)
       List.fold_left combine_space pattern patterns
   | PTOr _ -> failwith "unreachable"
   | PTAs { value; _ } -> pattern_to_space value
+
+(* combine accumulated space with new space *)
+(* also accumulate a lit of redudedant patterns from the new space when compared to accumulated space *)
+and combine_space s p =
+  match (s, p) with
+  | SInteger s, PTInteger { value; _ } ->
+      if IntegerSet.mem value s then mcons p duplicate_patterns;
+      SInteger (IntegerSet.add value s)
+  | SFloat s, PTFloat { value; _ } ->
+      if FloatSet.mem value s then mcons p duplicate_patterns;
+      SFloat (FloatSet.add value s)
+  | SString s, PTString { value; _ } ->
+      if StringSet.mem value s then mcons p duplicate_patterns;
+      SString (StringSet.add value s)
+  | SBoolean b1, PTBoolean { value; _ } ->
+      if b1 = value then (
+        mcons p duplicate_patterns;
+        SBoolean b1)
+      else SVar
+  | SUnit, PTUnit _ ->
+      mcons p duplicate_patterns;
+      SUnit
+  | ( SNominal { value; name; id },
+      PTNominalConstructor { value = value1; name = name1; id = id1; _ } )
+    when id = id1 && name = name1 ->
+      let value = combine_space value value1 in
+      SNominal { name = name1; id; value }
+  | SVar, (PTVar _ | PTWildcard _) ->
+      mcons p duplicate_patterns;
+      SVar
+  | _, (PTVar _ | PTWildcard _) -> SVar
+  | _, PTAs { value; _ } -> combine_space s value
+  | SRecord s1, PTRecord { fields; _ } ->
+      let s2 =
+        fields
+        |> List.map (fun { Ast.label; value } -> (label, value))
+        |> StringMap.of_list
+      in
+      let fields =
+        StringMap.merge
+          (fun _ s1 s2 ->
+            Option.fold s1
+              ~some:(fun s1' ->
+                Option.fold s2
+                  ~some:(fun s2' -> combine_space s1' s2' |> Option.some)
+                  ~none:(Some s1'))
+              ~none:(Option.map (fun s2' -> pattern_to_space s2') s2))
+          s1 s2
+      in
+      SRecord fields
+  | SVariant s1, PTConstructor { name; value; _ } ->
+      let s1 =
+        StringMap.update name
+          (fun s1 ->
+            Option.fold s1
+              ~some:(fun s1 ->
+                let s1 = combine_space s1 value in
+                s1)
+              ~none:(pattern_to_space value)
+            |> Option.some)
+          s1
+      in
+      SRecord s1
+  | _, PTOr { patterns; _ } ->
+      (* TODO: check for redudant inner patterns *)
+      List.fold_left combine_space s patterns
+  | _, _ -> failwith "mismatch"
 
 (* exhaustiveness checking: combine all the patterns into one big space and then see if the type is a subset of this *)
 (* rededundent checking: as we combine the patterns check if the current space is a subset of the accumulated space *)
