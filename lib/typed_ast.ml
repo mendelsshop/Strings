@@ -76,7 +76,6 @@ type 't texpr =
 type 't top_level =
   | TBind of { name : 't tpattern; value : 't texpr }
   | TRecBind of { name : 't tpattern; value : 't texpr }
-  | TTypeBind of { name : string; ty : ty }
   | TPrintString of string
 
 let type_of_expr = function
@@ -204,7 +203,6 @@ let texpr_to_string = texpr_to_string 0
 
 let top_level_to_string exp =
   match exp with
-  | TTypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty
   | TRecBind { name; value } ->
       "let rec " ^ tpattern_to_string name ^ " = " ^ texpr_to_string value
   | TBind { name; value } ->

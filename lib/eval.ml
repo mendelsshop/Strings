@@ -178,7 +178,6 @@ let rec eval expr =
 
 let eval expr =
   match expr with
-  | TTypeBind _ -> return ()
   | TBind { name = PTUnit _; value; _ } -> eval value <$> fun _ -> ()
   | TBind { name; value; _ } ->
       eval value >>= fun value' -> insert (matches_single' value' name)
