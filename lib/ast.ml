@@ -12,7 +12,7 @@ type pattern =
   | PFloat of { value : float; span : AMPCL.span }
   | PInteger of { value : int; span : AMPCL.span }
   | PBoolean of { value : bool; span : AMPCL.span }
-  | PRecord of pattern row
+  | PRecord of { fields : pattern row; span : AMPCL.span }
   (*   TODO: does record extension makes sense for patterns   *)
   | PConstructor of { name : string; value : pattern; span : AMPCL.span }
   | PAscribe of { pattern : pattern; ty : ty; span : AMPCL.span }
@@ -41,6 +41,7 @@ type expr =
   | Ascribe of { value : expr; ty : ty }
 
 type top_level =
+  | Expr of expr
   | TypeBind of { name : string; ty : ty }
   | NominalTypeBind of { name : string; ty : ty }
   | Bind of { name : pattern; value : expr }
@@ -59,9 +60,9 @@ let rec pattern_to_string = function
   | PInteger { value; _ } -> string_of_int value
   | PFloat { value; _ } -> string_of_float value
   | PWildcard _ -> "_"
-  | PRecord row ->
+  | PRecord { fields; _ } ->
       "{ "
-      ^ (row
+      ^ (fields
         |> List.map (fun { label; value } ->
                label ^ " = " ^ pattern_to_string value)
         |> String.concat "; ")
@@ -151,6 +152,7 @@ let rec expr_to_string indent =
 let expr_to_string = expr_to_string 0
 
 let top_level_to_string = function
+  | Expr e -> expr_to_string e
   | Bind { name; value } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | TypeBind { name; ty } -> "type " ^ name ^ " = " ^ type_to_string ty

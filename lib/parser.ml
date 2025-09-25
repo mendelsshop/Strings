@@ -100,6 +100,7 @@ let infix_identifier = infix_identifier
 
 (* TODO: for infix too *)
 let variant_identifier w = junk << char '`' << identifier_without_junk w
+let variant_identifier_without_junk w = char '`' << identifier_without_junk w
 let number_inner = takeWhile is_decimal
 let number1_inner = takeWhile1 is_decimal
 
@@ -184,10 +185,17 @@ let record p identifier_short_hand assign =
   <?> "record"
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
-let constructor p zero =
-  seq (variant_identifier ignore_span) (p <|> zero) <?> "constructor"
+let constructor p zero w =
+  junk
+  << spanned'
+       (return w
+       <*> variant_identifier_without_junk ignore_span
+       <*> (p <|> zero) <?> "constructor")
 
-let nominal_constructor p = seq (identifier ignore_span) p <?> "constructor"
+let nominal_constructor p w =
+  junk
+  << spanned'
+       (return w <*> identifier_without_junk ignore_span <*> p <?> "constructor")
 
 let rec typeP =
   let list_to_row ~k ~base list =
@@ -265,21 +273,23 @@ let nominal_type_signature =
     }
 
 let pattern =
-  let record p identifier_short_hand assign =
-    let field = seq (identifier ignore_span) (junk << char assign << p) in
+  let record p =
     let field =
-      match identifier_short_hand with
-      | Some f ->
-          field <|> (identifier ignore_span <$> fun field -> (field, f field))
-      | None -> field
+      seq (identifier ignore_span) (junk << char '=' << p)
+      <$> fun (label, value) -> { label; value }
     in
-    between
-      (junk << char '{')
-      (junk << char '}')
-      (sepby field (junk << char ';'))
+    let field =
+      field
+      <|> identifier (fun ident span ->
+              { label = ident; value = PVar { ident; span } })
+    in
+    junk
+    << spanned'
+         ( between (char '{') (junk << char '}') (sepby field (junk << char ';'))
+         <$> fun fields span -> PRecord { fields; span } )
     <?> "record"
   in
-  let string =
+  let stringP =
     junk
     << spanned'
          (return (fun value span -> PString { value; span })
@@ -300,32 +310,35 @@ let pattern =
                 unit (fun _ span -> PUnit span);
                 wildcard;
                 paren pattern;
-                string;
+                stringP;
                 float (fun value span -> Ast.PFloat { value; span });
                 number (fun value span -> Ast.PInteger { value; span });
-                ( constructor basic (return PUnit) <$> fun (name, value) ->
-                  PConstructor { name; value } );
+                constructor basic
+                  (spanned' (return (fun span -> PUnit span)))
+                  (fun name value span -> PConstructor { name; value; span });
                 (* we dont do shorthand for nominal records as that would mean any pattern variable would automatically be nominal constructor - so we want to be consistent between patterns and data declarations *)
                 (* if we would want to be consitent we would also want to make expression/pattern have shorthand *)
                 (* which we be problem especilaly for expression where we use function to represent nominal constructor (but i guess if we mark it as such instead of turning it into function we could just make the variable representing this constructor just be the Constructor term itself *)
                 (* for patterns whe would also need to lookup for vars if there are any constructors with that name *)
-                ( nominal_constructor basic <$> fun (name, value) ->
-                  PNominalConstructor { name; value } );
-                ( record pattern (Some (fun i -> PVar i)) '='
-                <$> List.map (fun (label, value) -> { label; value })
-                <$> fun r -> PRecord r );
+                nominal_constructor basic (fun name value span ->
+                    PNominalConstructor { name; value; span });
+                record pattern;
               ])
       in
       let asP =
-        return (fun value ->
-            Option.fold ~some:(fun name -> PAs { name; value }) ~none:value)
-        <*> basic
-        <*> (junk << string "as" << identifier |> opt)
+        spanned'
+          (return (fun value ->
+               Option.fold
+                 ~some:(fun name span -> PAs { name; value; span })
+                 ~none:(fun _ -> value))
+          <*> basic
+          <*> (junk << string "as" << identifier ignore_span |> opt))
       in
       (* maybe the asP should come after or not before *)
-      sepby1 asP (junk << char '|') <$> function
-      | [ p ] -> p
-      | patterns -> POr patterns)
+      spanned'
+        ( sepby1 asP (junk << char '|') <$> function
+          | [ p ] -> fun _ -> p
+          | patterns -> fun span -> POr { patterns; span } ))
 
 let unless b p = if b then return None else p <$> fun x -> Some x
 let whenP b p = if b then p <$> fun x -> Some x else return None
@@ -335,9 +348,9 @@ let fun_params1 = many1 pattern
 let let_head is_rec expr =
   let expr = junk << char '=' << expr in
   let function_signature =
-    return (fun name parameters e ->
-        (PVar name, Lambda { parameters; body = e }))
-    <*> identifier ignore_span <*> fun_params1 <*> expr
+    return (fun name parameters e -> (name, Lambda { parameters; body = e }))
+    <*> identifier (fun ident span -> PVar { ident; span })
+    <*> fun_params1 <*> expr
   in
   let plain_let = seq pattern expr in
   junk << string "let"
@@ -370,7 +383,7 @@ let rec expr is_end =
                   (* TODO: for construction should a "constructor" be no different than an application, meaning that each constructor is a n-ary function, that can be destructed into its values, would also have to update type parsing to handle this *)
                   constructor (basic_expr is_end)
                     (last_quote is_end <$> Fun.const Unit)
-                  <$> (fun (name, value) -> Constructor { name; value })
+                    (fun name value _span -> Constructor { name; value })
                   >> last_quote is_end;
                   number ignore_span
                   <$> (fun i -> Integer i)
@@ -517,7 +530,7 @@ let top_level =
   << choice (* TODO: maybe allow mutliple top level term in single quotes *)
        [
          letP;
-         (expr true <$> fun expr -> Bind { name = PWildcard; value = expr });
+         (expr true <$> fun expr -> Expr expr);
          (* TODO: maybe consume new line *)
          type_signature >> junk >> char '\"';
          nominal_type_signature >> junk >> char '\"';

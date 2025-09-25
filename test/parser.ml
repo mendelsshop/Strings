@@ -58,17 +58,20 @@ let junk =
 
 let pattern =
   let unit_ok =
-    Strings.Parser.run Strings.Parser.unit "  ( \n )" |> Result.to_option
+    Strings.Parser.run (Strings.Parser.unit (fun _ _ -> ())) "  ( \n )"
+    |> Result.to_option
   in
   let actual_unit_ok = Some () in
   let quoted_string =
     Strings.Parser.run Strings.Parser.pattern " \"avc\"" |> Result.to_option
   in
-  let actual_quoted_string = Some (PString "avc") in
+  let actual_quoted_string =
+    Some (PString { value = "avc"; span = { start = 0; finish = 0 } })
+  in
   let wildcard =
     Strings.Parser.run Strings.Parser.pattern "_" |> Result.to_option
   in
-  let actual_wildcard = Some PWildcard in
+  let actual_wildcard = Some (PWildcard { start = 0; finish = 0 }) in
   (*   let constructor = *)
   (*   Strings.Parser.run Strings.Parser.pattern "`foobar (5.5, \"baz\")" *)
   (*   |> Result.to_option *)
@@ -85,10 +88,22 @@ let pattern =
   let actual_record =
     Some
       (PRecord
-         [
-           { label = ">>"; value = PInteger 5 };
-           { label = "lag"; value = PString "baz" };
-         ])
+         {
+           fields =
+             [
+               {
+                 label = ">>";
+                 value =
+                   PInteger { value = 5; span = { start = 0; finish = 0 } };
+               };
+               {
+                 label = "lag";
+                 value =
+                   PString { value = "baz"; span = { start = 0; finish = 0 } };
+               };
+             ];
+           span = { start = 0; finish = 0 };
+         })
   in
   ( "patterns",
     [

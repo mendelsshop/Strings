@@ -276,6 +276,7 @@ let check_tl : ty top_level -> _ = function
         loc = ();
       }
       :: check_expr value
+  | TExpr expr -> check_expr expr
   | TPrintString _ -> []
 
 let check tls =

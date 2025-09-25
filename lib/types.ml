@@ -52,9 +52,9 @@ let type_to_string ty =
            let string, used =
              match node.data with
              | TyVar { name; _ } -> (name, [])
-             | TyNominal { name; ty; _ } ->
+             | TyNominal { name; ty; id; _ } ->
                  let ty, used' = inner ((root, sym) :: used) ty in
-                 (name ^ "(" ^ ty ^ ")", used')
+                 (name ^ string_of_int id ^ "(" ^ ty ^ ")", used')
              | TyGenVar v -> (v, [])
              | TyUnit -> ("()", [])
              | TyInteger -> ("integer", [])

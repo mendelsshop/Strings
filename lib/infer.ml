@@ -16,7 +16,7 @@ type env = { types : TypeEnv.t; constructors : ConstructorEnv.t }
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
 let get_type_env = function
-  | Ast.Bind _ | RecBind _ | PrintString _ -> ([], [])
+  | Ast.Bind _ | RecBind _ | PrintString _ | Expr _ -> ([], [])
   | TypeBind { name; ty } ->
       ([ (name, ty) ], [])
       (* for nominal types there "constructor" is also needed at the expression level *)
@@ -94,18 +94,18 @@ let ty_var name = TyVar { name; level = !current_level }
 
 let rec generate_constraints_pattern cs_env ty = function
   (* for var see it its in nominal type env if so turn into ptnominalconstructor *)
-  | PVar ident -> ([ (ident, ty) ], [], PTVar { ident; ty })
-  | PWildcard -> ([], [], PTWildcard ty)
-  | PUnit -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit ty)
-  | PString value ->
+  | PVar { ident; _ } -> ([ (ident, ty) ], [], PTVar { ident; ty })
+  | PWildcard _ -> ([], [], PTWildcard ty)
+  | PUnit _ -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit ty)
+  | PString { value; _ } ->
       ([], [ CEq (ty, Union_find.make TyString) ], PTString { value; ty })
-  | PBoolean value ->
+  | PBoolean { value; _ } ->
       ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean { value; ty })
   | PFloat { value; _ } ->
       ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat { value; ty })
-  | PInteger value ->
+  | PInteger { value; _ } ->
       ([], [ CEq (ty, Union_find.make TyInteger) ], PTInteger { value; ty })
-  | PNominalConstructor { name; value } -> (
+  | PNominalConstructor { name; value; _ } -> (
       let ty' = TypeEnv.find name cs_env.types in
       let _, `root ty_data = Union_find.find_set ty' in
       match ty_data.data with
@@ -115,7 +115,7 @@ let rec generate_constraints_pattern cs_env ty = function
             CEq (ty', ty) :: cs,
             PTNominalConstructor { name; value; id; ty = ty' } )
       | _ -> failwith "unreachable")
-  | PConstructor { name; value } ->
+  | PConstructor { name; value; _ } ->
       let other_variants_var = gensym () in
       let other_variants = Union_find.make (ty_var other_variants_var) in
       let value_var = gensym () in
@@ -131,7 +131,7 @@ let rec generate_constraints_pattern cs_env ty = function
       ( env,
         [ CExist ([ other_variants_var; value_var ], CEq (ty', ty) :: cs) ],
         PTConstructor { name; value; ty } )
-  | PRecord row ->
+  | PRecord { fields; _ } ->
       (* should this open to allow for matching on partial records? *)
       let row_init = ([], [], Union_find.make TyRowEmpty, [], []) in
       let env, cs, pattern_ty, fields, vars =
@@ -150,14 +150,14 @@ let rec generate_constraints_pattern cs_env ty = function
                 (TyRowExtend { label; field = ty; rest_row = row_ty }),
               { label; value } :: row,
               ty_name :: vars ))
-          row row_init
+          fields row_init
       in
       let ty' = Union_find.make (TyRecord pattern_ty) in
       (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord { fields; ty })
-  | PAs { name; value } ->
+  | PAs { name; value; _ } ->
       let env, cs, value = generate_constraints_pattern cs_env ty value in
       ((name, ty) :: env, cs, PTAs { value; name; ty })
-  | POr (pattern :: patterns) ->
+  | POr { patterns = pattern :: patterns; _ } ->
       let env, cs, pattern = generate_constraints_pattern cs_env ty pattern in
       let env_map = StringMap.of_list env in
 
@@ -192,8 +192,8 @@ let rec generate_constraints_pattern cs_env ty = function
           (cs, [ pattern ]) patterns
       in
       (env, cs, PTOr { patterns; ty })
-  | POr [] -> failwith "unreachable"
-  | PAscribe { pattern; ty = ty' } ->
+  | POr { patterns = []; _ } -> failwith "unreachable"
+  | PAscribe { pattern; ty = ty'; _ } ->
       let env, cs, pat' = generate_constraints_pattern cs_env ty' pattern in
       (* TODO: maybe don't remove ascription from typed ast? *)
       (env, CEq (ty', ty) :: cs, pat')
@@ -447,12 +447,12 @@ let rec generate_constraints_top cs_state = function
         ],
         (* TODO: maybe a1 has to be in a forall *)
         TBind { name; value; name_ty = a1_ty } :: program )
-  (* | Expr e :: program' -> *)
-  (*     let cs, e = *)
-  (*       generate_constraints (Union_find.make (ty_var (gensym ()))) e *)
-  (*     in *)
-  (*     let cs', program'' = generate_constraints_top program' in *)
-  (*     (cs @ cs', Expr e :: program'') *)
+  | Expr e :: program' ->
+      let cs, e =
+        generate_constraints cs_state (Union_find.make (ty_var (gensym ()))) e
+      in
+      let cs', program'' = generate_constraints_top cs_state program' in
+      (cs @ cs', TExpr e :: program'')
   | RecBind { name; value } :: program ->
       enter_level ();
       let a1 = gensym () in

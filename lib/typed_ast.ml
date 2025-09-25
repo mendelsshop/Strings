@@ -77,6 +77,7 @@ type 't top_level =
   | TBind of { name : 't tpattern; name_ty : 't; value : 't texpr }
   | TRecBind of { name : 't tpattern; name_ty : 't; value : 't texpr }
   | TPrintString of string
+  | TExpr of 't texpr
 
 let type_of_expr = function
   | TVar { ty; _ }
@@ -118,7 +119,7 @@ let rec tpattern_to_string = function
         |> String.concat "; ")
       ^ " }"
   | PTConstructor { name; value; _ } ->
-      name ^ " (" ^ tpattern_to_string value ^ ")"
+      "`" ^ name ^ " (" ^ tpattern_to_string value ^ ")"
   | PTNominalConstructor { name; value; _ } ->
       name ^ " (" ^ tpattern_to_string value ^ ")"
   | PTAs { name; value; _ } -> name ^ " as " ^ tpattern_to_string value
@@ -175,7 +176,7 @@ let rec texpr_to_string indent =
   | TRecordAccess { record; projector; _ } ->
       texpr_to_string indent record ^ "." ^ projector
   | TConstructor { name; value; _ } ->
-      name ^ " (" ^ texpr_to_string indent value ^ ")"
+      "`" ^ name ^ " (" ^ texpr_to_string indent value ^ ")"
   | TNominalConstructor { name; value; _ } ->
       name ^ " (" ^ texpr_to_string indent value ^ ")"
   | TMatch { value; cases; _ } ->
@@ -203,6 +204,7 @@ let texpr_to_string = texpr_to_string 0
 
 let top_level_to_string exp =
   match exp with
+  | TExpr expr -> texpr_to_string expr
   | TRecBind { name; value; _ } ->
       "let rec " ^ tpattern_to_string name ^ " = " ^ texpr_to_string value
   | TBind { name; value; _ } ->

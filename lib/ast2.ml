@@ -22,6 +22,7 @@ type expr =
 
 type top_level =
   | Bind of { name : pattern; value : expr }
+  | Expr of expr
   | RecBind of { name : pattern; value : expr }
   | PrintString of string
 
@@ -29,7 +30,14 @@ type program = top_level list
 
 let rec curry_ify ps body =
   match ps with
-  | [] -> Lambda { parameter = PUnit; body }
+  | [] ->
+      Lambda
+        {
+          parameter =
+            PUnit { start = 0; finish = 0 }
+            (* TODO: use body span once thats done *);
+          body;
+        }
   | parameter :: [] -> Lambda { parameter; body }
   | parameter :: ps -> Lambda { parameter; body = curry_ify ps body }
 
@@ -100,6 +108,7 @@ let ast_to_ast2 =
           Bind { name; value = ast_to_ast2 value } |> Option.some
       | TypeBind _ -> None
       | NominalTypeBind _ -> None
+      | Expr e -> Expr (ast_to_ast2 e) |> Option.some
       | RecBind { name; value } ->
           RecBind { name; value = ast_to_ast2 value } |> Option.some
       | PrintString s -> PrintString s |> Option.some)
@@ -178,6 +187,7 @@ let expr_to_string = expr_to_string 0
 
 let top_level_to_string tl =
   match tl with
+  | Expr e -> expr_to_string e
   | Bind { name; value } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | RecBind { name; value } ->
