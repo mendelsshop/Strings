@@ -1,23 +1,29 @@
 open Types
 
 type 't tpattern =
-  | PTVar of { ident : string; ty : 't }
-  | PTString of { value : string; ty : 't }
-  | PTWildcard of 't
-  | PTInteger of { value : int; ty : 't }
-  | PTFloat of { value : float; ty : 't }
-  | PTBoolean of { value : bool; ty : 't }
-  | PTRecord of { fields : 't tpattern Ast.row; ty : 't }
-  | PTConstructor of { name : string; value : 't tpattern; ty : 't }
+  | PTVar of { ident : string; ty : 't; span : AMPCL.span }
+  | PTString of { value : string; ty : 't; span : AMPCL.span }
+  | PTWildcard of { ty : 't; span : AMPCL.span }
+  | PTInteger of { value : int; ty : 't; span : AMPCL.span }
+  | PTFloat of { value : float; ty : 't; span : AMPCL.span }
+  | PTBoolean of { value : bool; ty : 't; span : AMPCL.span }
+  | PTRecord of { fields : 't tpattern Ast.row; ty : 't; span : AMPCL.span }
+  | PTConstructor of {
+      name : string;
+      value : 't tpattern;
+      ty : 't;
+      span : AMPCL.span;
+    }
   | PTNominalConstructor of {
       name : string;
       value : 't tpattern;
       ty : 't;
       id : int;
+      span : AMPCL.span;
     }
-  | PTUnit of 't
-  | PTOr of { patterns : 't tpattern list; ty : 't }
-  | PTAs of { name : string; value : 't tpattern; ty : 't }
+  | PTUnit of { ty : 't; span : AMPCL.span }
+  | PTOr of { patterns : 't tpattern list; ty : 't; span : AMPCL.span }
+  | PTAs of { name : string; value : 't tpattern; ty : 't; span : AMPCL.span }
 
 type 't texpr =
   | TVar of { ident : string; ty : ty }
@@ -104,7 +110,7 @@ type 't program = 't top_level list
 (* we can make this non recursive if we make poly ast node store their type *)
 
 let rec tpattern_to_string = function
-  | PTVar { ident; ty } -> ident ^ " : " ^ type_to_string ty
+  | PTVar { ident; ty; _ } -> ident ^ " : " ^ type_to_string ty
   | PTString { value; _ } -> value
   | PTUnit _ -> "()"
   | PTBoolean { value; _ } -> string_of_bool value

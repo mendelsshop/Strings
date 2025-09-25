@@ -30,7 +30,14 @@ let get_type_env = function
               ( name,
                 TLambda
                   {
-                    parameter = PTVar { ident = sym; ty = ty' };
+                    parameter =
+                      PTVar
+                        {
+                          ident = sym;
+                          ty = ty';
+                          (* TODO: use body span once thats done *)
+                          span = { start = 0; finish = 0 };
+                        };
                     parameter_ty = ty';
                     body =
                       TNominalConstructor
@@ -94,18 +101,22 @@ let ty_var name = TyVar { name; level = !current_level }
 
 let rec generate_constraints_pattern cs_env ty = function
   (* for var see it its in nominal type env if so turn into ptnominalconstructor *)
-  | PVar { ident; _ } -> ([ (ident, ty) ], [], PTVar { ident; ty })
-  | PWildcard _ -> ([], [], PTWildcard ty)
-  | PUnit _ -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit ty)
-  | PString { value; _ } ->
-      ([], [ CEq (ty, Union_find.make TyString) ], PTString { value; ty })
-  | PBoolean { value; _ } ->
-      ([], [ CEq (ty, Union_find.make TyBoolean) ], PTBoolean { value; ty })
-  | PFloat { value; _ } ->
-      ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat { value; ty })
-  | PInteger { value; _ } ->
-      ([], [ CEq (ty, Union_find.make TyInteger) ], PTInteger { value; ty })
-  | PNominalConstructor { name; value; _ } -> (
+  | PVar { ident; span } -> ([ (ident, ty) ], [], PTVar { ident; ty; span })
+  | PWildcard span -> ([], [], PTWildcard { ty; span })
+  | PUnit span -> ([], [ CEq (ty, Union_find.make TyUnit) ], PTUnit { ty; span })
+  | PString { value; span } ->
+      ([], [ CEq (ty, Union_find.make TyString) ], PTString { value; ty; span })
+  | PBoolean { value; span } ->
+      ( [],
+        [ CEq (ty, Union_find.make TyBoolean) ],
+        PTBoolean { value; ty; span } )
+  | PFloat { value; span } ->
+      ([], [ CEq (ty, Union_find.make TyFloat) ], PTFloat { value; ty; span })
+  | PInteger { value; span } ->
+      ( [],
+        [ CEq (ty, Union_find.make TyInteger) ],
+        PTInteger { value; ty; span } )
+  | PNominalConstructor { name; value; span } -> (
       let ty' = TypeEnv.find name cs_env.types in
       let _, `root ty_data = Union_find.find_set ty' in
       match ty_data.data with
@@ -113,9 +124,9 @@ let rec generate_constraints_pattern cs_env ty = function
           let env, cs, value = generate_constraints_pattern cs_env ty'' value in
           ( env,
             CEq (ty', ty) :: cs,
-            PTNominalConstructor { name; value; id; ty = ty' } )
+            PTNominalConstructor { name; value; id; ty = ty'; span } )
       | _ -> failwith "unreachable")
-  | PConstructor { name; value; _ } ->
+  | PConstructor { name; value; span } ->
       let other_variants_var = gensym () in
       let other_variants = Union_find.make (ty_var other_variants_var) in
       let value_var = gensym () in
@@ -130,8 +141,8 @@ let rec generate_constraints_pattern cs_env ty = function
       in
       ( env,
         [ CExist ([ other_variants_var; value_var ], CEq (ty', ty) :: cs) ],
-        PTConstructor { name; value; ty } )
-  | PRecord { fields; _ } ->
+        PTConstructor { name; value; ty; span } )
+  | PRecord { fields; span } ->
       (* should this open to allow for matching on partial records? *)
       let row_init = ([], [], Union_find.make TyRowEmpty, [], []) in
       let env, cs, pattern_ty, fields, vars =
@@ -153,11 +164,13 @@ let rec generate_constraints_pattern cs_env ty = function
           fields row_init
       in
       let ty' = Union_find.make (TyRecord pattern_ty) in
-      (env, [ CExist (vars, CEq (ty, ty') :: cs) ], PTRecord { fields; ty })
-  | PAs { name; value; _ } ->
+      ( env,
+        [ CExist (vars, CEq (ty, ty') :: cs) ],
+        PTRecord { fields; ty; span } )
+  | PAs { name; value; span } ->
       let env, cs, value = generate_constraints_pattern cs_env ty value in
-      ((name, ty) :: env, cs, PTAs { value; name; ty })
-  | POr { patterns = pattern :: patterns; _ } ->
+      ((name, ty) :: env, cs, PTAs { value; name; ty; span })
+  | POr { patterns = pattern :: patterns; span } ->
       let env, cs, pattern = generate_constraints_pattern cs_env ty pattern in
       let env_map = StringMap.of_list env in
 
@@ -191,7 +204,7 @@ let rec generate_constraints_pattern cs_env ty = function
             (cs @ cs' @ cs'', pattern :: patterns))
           (cs, [ pattern ]) patterns
       in
-      (env, cs, PTOr { patterns; ty })
+      (env, cs, PTOr { patterns; ty; span })
   | POr { patterns = []; _ } -> failwith "unreachable"
   | PAscribe { pattern; ty = ty'; _ } ->
       let env, cs, pat' = generate_constraints_pattern cs_env ty' pattern in
