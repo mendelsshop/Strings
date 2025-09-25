@@ -26,62 +26,94 @@ type 't tpattern =
   | PTAs of { name : string; value : 't tpattern; ty : 't; span : AMPCL.span }
 
 type 't texpr =
-  | TVar of { ident : string; ty : ty }
-  | TFloat of { value : float; ty : ty }
-  | TString of { value : string; ty : ty }
-  | TInteger of { value : int; ty : ty }
-  | TBoolean of { value : bool; ty : ty }
+  | TVar of { ident : string; ty : 't; span : AMPCL.span }
+  | TFloat of { value : float; ty : 't; span : AMPCL.span }
+  | TString of { value : string; ty : 't; span : AMPCL.span }
+  | TInteger of { value : int; ty : 't; span : AMPCL.span }
+  | TBoolean of { value : bool; ty : 't; span : AMPCL.span }
   | TLambda of {
       parameter : 't tpattern;
       parameter_ty : 't;
       body : 't texpr;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
     }
-  | TApplication of { lambda : 't texpr; arguement : 't texpr; ty : ty }
-  | TUnit of 't
+  | TApplication of {
+      lambda : 't texpr;
+      arguement : 't texpr;
+      ty : 't;
+      span : AMPCL.span;
+    }
+  | TUnit of { ty : 't; span : AMPCL.span }
   | TLet of {
       name : 't tpattern;
       name_ty : 't;
       e1 : 't texpr;
       e2 : 't texpr;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
     }
   | TLetRec of {
       name : 't tpattern;
       name_ty : 't;
       e1 : 't texpr;
       e2 : 't texpr;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
     }
   | TIf of {
       condition : 't texpr;
       consequent : 't texpr;
       alternative : 't texpr;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
     }
-  | TRecordAccess of { record : 't texpr; projector : string; ty : ty }
+  | TRecordAccess of {
+      record : 't texpr;
+      projector : string;
+      ty : 't;
+      span : AMPCL.span;
+    }
   | TRecordExtend of {
       record : 't texpr;
       new_fields : 't texpr Ast.row;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
     }
-  | TRecord of { fields : 't texpr Ast.row; ty : ty }
+  | TRecord of { fields : 't texpr Ast.row; ty : 't; span : AMPCL.span }
   | TMatch of {
       value : 't texpr;
       cases : ('t tpattern, 't texpr) Ast.case list;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
     }
-  | TConstructor of { name : string; value : 't texpr; ty : ty }
+  | TConstructor of {
+      name : string;
+      value : 't texpr;
+      ty : 't;
+      span : AMPCL.span;
+    }
   | TNominalConstructor of {
       name : string;
       value : 't texpr;
-      ty : ty;
+      ty : 't;
+      span : AMPCL.span;
       id : int;
     }
 
 type 't top_level =
-  | TBind of { name : 't tpattern; name_ty : 't; value : 't texpr }
-  | TRecBind of { name : 't tpattern; name_ty : 't; value : 't texpr }
+  | TBind of {
+      name : 't tpattern;
+      name_ty : 't;
+      value : 't texpr;
+      span : AMPCL.span;
+    }
+  | TRecBind of {
+      name : 't tpattern;
+      name_ty : 't;
+      value : 't texpr;
+      span : AMPCL.span;
+    }
   | TPrintString of string
   | TExpr of 't texpr
 
@@ -93,7 +125,7 @@ let type_of_expr = function
   | TBoolean { ty; _ }
   | TLambda { ty; _ }
   | TApplication { ty; _ }
-  | TUnit ty
+  | TUnit { ty; _ }
   | TLet { ty; _ }
   | TLetRec { ty; _ }
   | TIf { ty; _ }
