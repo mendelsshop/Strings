@@ -133,8 +133,17 @@ let expression =
     Some
       (Application
          {
-           lambda = Application { lambda = Var "foo"; arguement = String "abc" };
-           arguement = Float 4.4;
+           lambda =
+             Application
+               {
+                 lambda =
+                   Var { ident = "foo"; span = { start = 0; finish = 0 } };
+                 arguement =
+                   String { value = "abc"; span = { start = 0; finish = 0 } };
+                 span = { start = 0; finish = 0 };
+               };
+           arguement = Float { value = 4.4; span = { start = 0; finish = 0 } };
+           span = { start = 0; finish = 0 };
          })
   in
   ( "expressions",

@@ -166,7 +166,7 @@ let unit w =
 
 let paren p = between (junk << char '(') (junk << char ')') p <?> "paren"
 
-let record p identifier_short_hand assign =
+let record p identifier_short_hand assign w =
   let field =
     seq (identifier ignore_span) (junk << char assign << p)
     <$> fun (label, value) -> { label; value }
@@ -174,14 +174,16 @@ let record p identifier_short_hand assign =
   let field =
     match identifier_short_hand with
     | Some f ->
-        field
-        <|> (identifier ignore_span <$> fun label -> { label; value = f label })
+        field <|> identifier (fun label span -> { label; value = f label span })
     | None -> field
   in
-  between
-    (junk << char '{')
-    (junk << char '}')
-    (seq (p >> string "with" |> opt) (sepby field (junk << char ';')))
+  junk
+  << spanned'
+       (between (char '{')
+          (junk << char '}')
+          (return w
+          <*> (p >> string "with" |> opt)
+          <*> sepby field (junk << char ';')))
   <?> "record"
 
 (* variant parser is only used for types so it won't be ambiguous with application parser *)
@@ -221,11 +223,10 @@ let rec typeP =
                 junk << string "string" <$> Fun.const (Union_find.make TyString);
                 junk << string "boolean"
                 <$> Fun.const (Union_find.make TyBoolean);
-                record typeP None ':'
-                <$> (fun (base, row) ->
-                list_to_row ~base
-                  ~k:(fun row -> Union_find.make (TyRecord row))
-                  row)
+                record typeP None ':' (fun base row _ ->
+                    list_to_row ~base
+                      ~k:(fun row -> Union_find.make (TyRecord row))
+                      row)
                 <?> "record";
               ]
           in
@@ -260,17 +261,24 @@ let rec typeP =
 let ascription p = seq p (junk << char ':' << typeP)
 
 let type_signature =
-  seq (string "type" << basic_identifier) (junk << char '=' << typeP)
-  <$> fun (name, ty) -> TypeBind { name; ty }
+  spanned'
+    (return (fun name ty span -> TypeBind { name; ty; span })
+    <*> (string "type" << basic_identifier)
+    <*> (junk << char '=' << typeP))
 
 let nominal_type_signature =
-  seq (string "data" << basic_identifier) (junk << char '=' << typeP)
-  <$> fun (name, ty) ->
-  NominalTypeBind
-    {
-      name;
-      ty = Union_find.make (TyNominal { name; ty; id = Utils.gensym_int () });
-    }
+  spanned'
+    (return (fun name ty span ->
+         NominalTypeBind
+           {
+             name;
+             ty =
+               Union_find.make
+                 (TyNominal { name; ty; id = Utils.gensym_int () });
+             span;
+           })
+    <*> (string "data" << basic_identifier)
+    <*> (junk << char '=' << typeP))
 
 let pattern =
   let record p =
@@ -348,14 +356,19 @@ let fun_params1 = many1 pattern
 let let_head is_rec expr =
   let expr = junk << char '=' << expr in
   let function_signature =
-    return (fun name parameters e -> (name, Lambda { parameters; body = e }))
-    <*> identifier (fun ident span -> PVar { ident; span })
-    <*> fun_params1 <*> expr
+    seq
+      (identifier (fun ident span -> PVar { ident; span }))
+      (spanned'
+         (return (fun parameters e span ->
+              Lambda { parameters; body = e; span })
+         <*> fun_params1 <*> expr))
   in
   let plain_let = seq pattern expr in
-  junk << string "let"
+  string "let"
   << whenP is_rec (junk << string "rec")
   << (function_signature <|> plain_let)
+
+let let_head_no_junk is_rec expr = junk << let_head is_rec expr
 
 let rec expr is_end =
   let last_quote is_end =
@@ -370,33 +383,38 @@ let rec expr is_end =
               choice
                 [
                   paren (expr false) >> last_quote is_end;
-                  ( junk << char '\"' <?> "start of string"
-                  << check
-                       (* make sure that last expression is not string starting with newline *)
-                       (*TODO: maybe only do this if in application*)
-                       !->(String.starts_with ~prefix:"\n")
-                       stringP
-                  >> unless is_end (char '\"' <?> "end of expression")
-                  <$> fun s -> String s );
-                  float (fun value _span -> Ast.Float value)
+                  junk << char '\"' <?> "start of string"
+                  << spanned'
+                       (return (fun value span -> String { value; span })
+                       <*> check
+                             (* make sure that last expression is not string starting with newline *)
+                             (*TODO: maybe only do this if in application*)
+                             !->(String.starts_with ~prefix:"\n")
+                             stringP)
+                  >> unless is_end (char '\"' <?> "end of expression");
+                  float (fun value span -> Ast.Float { value; span })
                   >> last_quote is_end;
                   (* TODO: for construction should a "constructor" be no different than an application, meaning that each constructor is a n-ary function, that can be destructed into its values, would also have to update type parsing to handle this *)
                   constructor (basic_expr is_end)
-                    (last_quote is_end <$> Fun.const Unit)
-                    (fun name value _span -> Constructor { name; value })
+                    (spanned' (return (fun span -> Unit span))
+                    >> last_quote is_end)
+                    (fun name value span -> Constructor { name; value; span })
                   >> last_quote is_end;
-                  number ignore_span
-                  <$> (fun i -> Integer i)
+                  number (fun value span -> Ast.Integer { value; span })
                   >> last_quote is_end;
-                  identifier ignore_span
-                  <$> (fun i -> Var i)
+                  identifier (fun ident span -> Var { ident; span })
                   >> last_quote is_end;
-                  unit ignore_span <$> Fun.const Unit >> last_quote is_end;
-                  record (expr false) (Some (fun i -> Var i)) '='
-                  <$> (fun (record, new_fields) ->
-                  Option.fold
-                    ~some:(fun record -> RecordExtend { record; new_fields })
-                    ~none:(Ast.Record new_fields) record)
+                  unit (fun _ span -> Unit span) >> last_quote is_end;
+                  record (expr false)
+                    (Some (fun ident span -> Var { ident; span }))
+                    '='
+                    (fun record new_fields ->
+                      Option.fold
+                        ~some:(fun record span ->
+                          RecordExtend { record; new_fields; span })
+                        ~none:(fun span ->
+                          Ast.Record { fields = new_fields; span })
+                        record)
                   >> last_quote is_end;
                 ]
             in
@@ -409,8 +427,10 @@ let rec expr is_end =
     >>= (fun value ->
     many
       (junk << char '.'
-      << ( identifier ignore_span <$> fun projector record ->
-           RecordAccess { record; projector } ))
+      << identifier (fun projector span record ->
+             let span' = span_of_expr record in
+             RecordAccess
+               { record; projector; span = Utils.combine_spans span' span }))
     <$> List.fold_left ( |> ) value
     >> last_quote is_end)
     <|> basic_expr is_end
@@ -420,7 +440,11 @@ let rec expr is_end =
       let rec go func =
         let get_func func arguement =
           Option.fold ~none:arguement
-            ~some:(fun lambda -> Application { lambda; arguement })
+            ~some:(fun lambda ->
+              let span = span_of_expr lambda in
+              let span' = span_of_expr arguement in
+              Application
+                { lambda; arguement; span = Utils.combine_spans span span' })
             func
         in
         project false ()
@@ -432,7 +456,11 @@ let rec expr is_end =
       many1 (project false ()) <$> function
       | single :: list ->
           List.fold_left
-            (fun lambda arguement -> Application { lambda; arguement })
+            (fun lambda arguement ->
+              let span = span_of_expr lambda in
+              let span' = span_of_expr arguement in
+              Application
+                { lambda; arguement; span = Utils.combine_spans span span' })
             single list
       | [] -> failwith "unreachable"
   in
@@ -445,29 +473,33 @@ let rec expr is_end =
         unParse =
           (fun s ok err ->
             let (Parser { unParse }) =
-              seq
-                (junk << string "if" << expr false)
-                (seq
-                   (junk << string "then" << expr false)
-                   (junk << string "else" << expr is_end))
-              <$> fun (condition, (consequent, alternative)) ->
-              If { condition; consequent; alternative }
+              spanned'
+                ( seq
+                    (junk << string "if" << expr false)
+                    (seq
+                       (junk << string "then" << expr false)
+                       (junk << string "else" << expr is_end))
+                <$> fun (condition, (consequent, alternative)) span ->
+                  If { condition; consequent; alternative; span } )
             in
             unParse s ok err);
       }
   in
   let funP expr =
-    seq (junk << string "fun" << fun_params >> (junk << string "->")) expr
-    <$> fun (parameters, body) -> Lambda { parameters; body }
+    spanned'
+      ( seq (junk << string "fun" << fun_params >> (junk << string "->")) expr
+      <$> fun (parameters, body) span -> Lambda { parameters; body; span } )
   in
   let letP expr is_end =
     let endP = junk << string "in" << expr is_end in
-    return (fun (name, e1) e2 -> LetRec { name; e1; e2 })
-    <*> let_head true (expr false)
-    <*> endP
-    <|> (return (fun (name, e1) e2 -> Let { name; e1; e2 })
-        <*> let_head false (expr false)
-        <*> endP)
+    junk
+    << spanned'
+         (return (fun (name, e1) e2 span -> LetRec { name; e1; e2; span })
+         <*> let_head_no_junk true (expr false)
+         <*> endP
+         <|> (return (fun (name, e1) e2 span -> Let { name; e1; e2; span })
+             <*> let_head false (expr false)
+             <*> endP))
   in
 
   let case expr is_end =
@@ -476,28 +508,32 @@ let rec expr is_end =
       seq (junk << pattern) (junk << string "->" << expr is_end)
       <$> fun (pattern, result) -> { pattern; result }
     in
-    junk << string "match" << junk << expr false >> junk >> string "with"
-    >>= fun value ->
-    (if is_end then
-       let end_cases =
-         makeRecParser (fun parser ->
-             choice
-               [
-                 return List.cons
-                 <*> (junk << char '|' << case false)
-                 <*> parser;
-                 (junk << char '|' << case true <$> fun end_case -> [ end_case ]);
-               ])
-       in
-       seq (junk << char '|' |> opt << case false) end_cases
-       <$> (fun (c, cases) -> c :: cases)
-       <|> (junk << char '|' |> opt << case is_end <$> fun case -> [ case ])
-     else
-       seq
-         (junk << char '|' |> opt << case false)
-         (junk << char '|' << case false |> many)
-       <$> fun (c, cs) -> c :: cs)
-    <$> fun cases -> Match { value; cases }
+    junk
+    << spanned'
+         ( string "match" << junk << expr false >> junk >> string "with"
+         >>= fun value ->
+           (if is_end then
+              let end_cases =
+                makeRecParser (fun parser ->
+                    choice
+                      [
+                        return List.cons
+                        <*> (junk << char '|' << case false)
+                        <*> parser;
+                        ( junk << char '|' << case true <$> fun end_case ->
+                          [ end_case ] );
+                      ])
+              in
+              seq (junk << char '|' |> opt << case false) end_cases
+              <$> (fun (c, cases) -> c :: cases)
+              <|> ( junk << char '|' |> opt << case is_end <$> fun case ->
+                    [ case ] )
+            else
+              seq
+                (junk << char '|' |> opt << case false)
+                (junk << char '|' << case false |> many)
+              <$> fun (c, cs) -> c :: cs)
+           <$> fun cases span -> Match { value; cases; span } )
   in
   let expr' is_end = ifP is_end <|> application is_end in
 
@@ -521,9 +557,11 @@ let rec expr is_end =
   expr is_end
 
 let letP =
-  let_head true (expr true)
-  <$> (fun (name, value) -> RecBind { name; value })
-  <|> (let_head false (expr true) <$> fun (name, value) -> Bind { name; value })
+  spanned'
+    (let_head true (expr true)
+    <$> (fun (name, value) span -> RecBind { name; value; span })
+    <|> ( let_head false (expr true) <$> fun (name, value) span ->
+          Bind { name; value; span } ))
 
 let top_level =
   char '\"'

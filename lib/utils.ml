@@ -1,9 +1,14 @@
 (* open Monad *)
 (* open Monad.ResultReaderOps *)
 include Gensym
+open AMPCL
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
 module StringMap = Map.Make (String)
+
+let combine_spans : span -> span -> span =
+ fun { start; finish } { start = start'; finish = finish' } ->
+  { start = min start start'; finish = max finish finish' }
 
 module type T = sig
   type t
