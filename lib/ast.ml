@@ -63,10 +63,20 @@ type top_level =
   | PrintString of string
 
 let span_of_pattern : pattern -> AMPCL.span = function
-  | PVar _ | PNominalConstructor _ | PUnit _ | PWildcard _ | PFloat _
-  | PInteger _ | PBoolean _ | PRecord _ | PConstructor _ | PAscribe _
-  | PString _ | POr _ | PAs _ ->
-      failwith ""
+  | PVar { span; _ }
+  | PNominalConstructor { span; _ }
+  | PUnit span
+  | PWildcard span
+  | PFloat { span; _ }
+  | PInteger { span; _ }
+  | PBoolean { span; _ }
+  | PRecord { span; _ }
+  | PConstructor { span; _ }
+  | PAscribe { span; _ }
+  | PString { span; _ }
+  | POr { span; _ }
+  | PAs { span; _ } ->
+      span
 
 let span_of_expr = function
   | Var { span; _ }

@@ -6,9 +6,67 @@ module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
 module StringMap = Map.Make (String)
 
+(* TODO: highlight the whole span *)
+let reach_offset ({ start; finish = _ } : span) i =
+  let n = start in
+  let len = String.length i in
+  let line_number =
+    let rec inner line start =
+      try
+        let newline = String.index_from i start '\n' in
+        if newline >= n then line else inner (line + 1) (start + newline + 1)
+      with Not_found | Invalid_argument _ -> line
+    in
+    inner 1 0
+  in
+
+  let start =
+    try
+      String.rindex_from_opt i (n - 1) '\n'
+      |> Option.fold ~some:(( + ) 1) ~none:0
+    with Invalid_argument _ -> 0
+  in
+  let end_index =
+    String.index_from_opt i n '\n' |> Option.fold ~some:Fun.id ~none:len
+  in
+  let colum_index = n - start in
+  let substr = String.sub i start (end_index - start) in
+  let substr = substr |> explode in
+  let substr = substr |> List.mapi (fun a b -> (a, b)) in
+  let colum_index, substr =
+    substr
+    |> List.fold_left
+         (fun (c : int * char list) (i : int * char) ->
+           ( (if fst i >= colum_index then fst c
+              else if snd i = '\t' then fst c + 4
+              else fst c + 1),
+             if snd i = '\t' then snd c @ (' ' :: ' ' :: ' ' :: ' ' :: [ ' ' ])
+             else snd c @ [ snd i ] ))
+         (0, [])
+  in
+  let substr = substr |> implode in
+  ( { line = line_number; column = colum_index + 1 },
+    Some (if substr = "" then "<empty line>" else substr) )
+
 let combine_spans : span -> span -> span =
  fun { start; finish } { start = start'; finish = finish' } ->
   { start = min start start'; finish = max finish finish' }
+
+let span_to_line_highlight : span -> string -> string =
+ fun span file ->
+  let pos = reach_offset span file in
+  string_of_int (fst pos).line
+  ^ ":"
+  ^ string_of_int (fst pos).column
+  ^ ":\n"
+  ^ Option.fold
+      ~some:(fun s ->
+        "  |\n"
+        ^ string_of_int (fst pos).line
+        ^ " | " ^ s ^ "\n  |"
+        ^ String.make (fst pos).column ' '
+        ^ "^\n")
+      ~none:"" (snd pos)
 
 module type T = sig
   type t

@@ -26,7 +26,7 @@ let () =
       let exprs' = infer exprs { types; constructors } in
       Typed_ast.program_to_string exprs' |> print_endline;
       let errors = Pattern_checking.check exprs' in
-      print_endline (Pattern_checking.errors_to_string errors);
+      print_endline (Pattern_checking.errors_to_string input errors);
       (* TODO: non fail fast letrec checking *)
       Letrec_checking.check_program exprs';
       if not (List.is_empty errors) then

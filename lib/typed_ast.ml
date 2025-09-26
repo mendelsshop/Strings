@@ -139,6 +139,20 @@ let type_of_expr = function
 
 type 't program = 't top_level list
 
+let span_of_pattern : 't tpattern -> AMPCL.span = function
+  | PTVar { span; _ }
+  | PTNominalConstructor { span; _ }
+  | PTUnit { span; _ }
+  | PTWildcard { span; _ }
+  | PTFloat { span; _ }
+  | PTInteger { span; _ }
+  | PTBoolean { span; _ }
+  | PTRecord { span; _ }
+  | PTConstructor { span; _ }
+  | PTString { span; _ }
+  | PTOr { span; _ }
+  | PTAs { span; _ } ->
+      span
 (* we can make this non recursive if we make poly ast node store their type *)
 
 let rec tpattern_to_string = function

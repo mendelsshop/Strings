@@ -195,10 +195,12 @@ type pattern_error = {
   loc : unit;
 }
 
-let error_to_string { redudedant; exhaustive; loc = (); _ } =
+let error_to_string file { redudedant; exhaustive; loc = (); _ } =
   let redudedant =
     redudedant
-    |> List.map tpattern_to_string
+    |> List.map (fun p ->
+           span_to_line_highlight (span_of_pattern p) file
+           ^ "redudedant pattern: " ^ tpattern_to_string p)
     |> List.map (( ^ ) "redudedant pattern: ")
   in
   let errors =
@@ -206,8 +208,8 @@ let error_to_string { redudedant; exhaustive; loc = (); _ } =
   in
   String.concat "\n" errors
 
-let errors_to_string errors =
-  errors |> List.map error_to_string |> String.concat "\n\n"
+let errors_to_string file errors =
+  errors |> List.map (error_to_string file) |> String.concat "\n\n"
 
 let rec check_expr = function
   | TVar _ | TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _ -> []
