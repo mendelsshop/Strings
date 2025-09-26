@@ -191,7 +191,7 @@ and combine_space s p =
 
 type pattern_error = {
   redudedant : ty tpattern list;
-  exhaustive : bool;
+  exhaustive : AMPCL.span Option.t;
   loc : unit;
 }
 
@@ -204,7 +204,10 @@ let error_to_string file { redudedant; exhaustive; loc = (); _ } =
     |> List.map (( ^ ) "redudedant pattern: ")
   in
   let errors =
-    if not exhaustive then "non exhaustive match" :: redudedant else redudedant
+    Option.fold exhaustive
+      ~some:(fun span ->
+        (span_to_line_highlight span file ^ "inexhaustive match") :: redudedant)
+      ~none:redudedant
   in
   String.concat "\n" errors
 
@@ -215,7 +218,7 @@ let rec check_expr = function
   | TVar _ | TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _ -> []
   (* its possible that were matching against is a single value like 1, or `Foo 1 ... *)
   (* but right now we just go by the type *)
-  | TMatch { cases = case :: cases; value; _ } ->
+  | TMatch { cases = case :: cases; value; span; _ } ->
       let ty = type_of_expr value in
       let space = pattern_to_space case.pattern in
       let patterns = List.map (fun { Ast.pattern; _ } -> pattern) cases in
@@ -224,7 +227,7 @@ let rec check_expr = function
       reset duplicate_patterns;
       {
         redudedant = redudedant_patterns;
-        exhaustive = type_subset ty space;
+        exhaustive = (if type_subset ty space then None else Some span);
         loc = ();
       }
       :: check_expr value
@@ -232,14 +235,16 @@ let rec check_expr = function
           (fun { Ast.result; _ } -> check_expr result)
           (case :: cases)
   | TMatch { ty = _ty; _ } ->
-      [ { redudedant = []; exhaustive = false; loc = () } ]
+      [ { redudedant = []; exhaustive = None; loc = () } ]
   | TLambda { parameter; parameter_ty; body; _ } ->
       let space = pattern_to_space parameter in
       let redudedant_patterns = !duplicate_patterns in
       reset duplicate_patterns;
       {
         redudedant = redudedant_patterns;
-        exhaustive = type_subset parameter_ty space;
+        exhaustive =
+          (if type_subset parameter_ty space then None
+           else Some (span_of_pattern parameter));
         loc = ();
       }
       :: check_expr body
@@ -249,7 +254,9 @@ let rec check_expr = function
       reset duplicate_patterns;
       {
         redudedant = redudedant_patterns;
-        exhaustive = type_subset name_ty space;
+        exhaustive =
+          (if type_subset name_ty space then None
+           else Some (span_of_pattern name));
         loc = ();
       }
       :: check_expr e1
@@ -274,7 +281,9 @@ let check_tl : ty top_level -> _ = function
       reset duplicate_patterns;
       {
         redudedant = redudedant_patterns;
-        exhaustive = type_subset name_ty space;
+        exhaustive =
+          (if type_subset name_ty space then None
+           else Some (span_of_pattern name));
         loc = ();
       }
       :: check_expr value
@@ -286,4 +295,4 @@ let check tls =
   List.concat_map check_tl tls
   (* maybe do this filtering at error construction time *)
   |> List.filter (fun { redudedant; exhaustive; loc = (); _ } ->
-         (not exhaustive) || not (List.is_empty redudedant))
+         Option.is_some exhaustive || not (List.is_empty redudedant))
