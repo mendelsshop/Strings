@@ -1,4 +1,5 @@
 open Types
+open Utils
 
 type 'a field = { label : string; value : 'a }
 type 'a row = 'a field list
@@ -56,8 +57,18 @@ type expr =
 
 type top_level =
   | Expr of expr
-  | TypeBind of { name : string; ty : ty; span : AMPCL.span }
-  | NominalTypeBind of { name : string; ty : ty; span : AMPCL.span }
+  | TypeBind of {
+      name : string;
+      ty_variables : StringSet.t;
+      ty : ty;
+      span : AMPCL.span;
+    }
+  | NominalTypeBind of {
+      name : string;
+      ty_variables : StringSet.t;
+      ty : ty;
+      span : AMPCL.span;
+    }
   | Bind of { name : pattern; value : expr; span : AMPCL.span }
   | RecBind of { name : pattern; value : expr; span : AMPCL.span }
   | PrintString of string
@@ -206,9 +217,14 @@ let top_level_to_string = function
   | Expr e -> expr_to_string e
   | Bind { name; value; _ } ->
       "let " ^ pattern_to_string name ^ " = " ^ expr_to_string value
-  | TypeBind { name; ty; _ } -> "type " ^ name ^ " = " ^ type_to_string ty
-  | NominalTypeBind { name; ty; _ } ->
-      "data " ^ name ^ " = " ^ type_to_string ty
+  | TypeBind { name; ty; ty_variables; _ } ->
+      "type ("
+      ^ (ty_variables |> StringSet.to_list |> String.concat ", ")
+      ^ ") " ^ name ^ " = " ^ type_to_string ty
+  | NominalTypeBind { name; ty; ty_variables; _ } ->
+      "data ("
+      ^ (ty_variables |> StringSet.to_list |> String.concat ", ")
+      ^ ") " ^ name ^ " = " ^ type_to_string ty
   | RecBind { name; value; _ } ->
       "let rec " ^ pattern_to_string name ^ " = " ^ expr_to_string value
   | PrintString s -> s

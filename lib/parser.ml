@@ -1,4 +1,5 @@
 open Types
+open Utils
 open Ast
 
 module Unit = struct
@@ -260,24 +261,33 @@ let rec typeP =
 
 let ascription p = seq p (junk << char ':' << typeP)
 
+let type_variables =
+  opt (between (junk << char '(') (junk << char ')') (many1 basic_identifier))
+  <$> Option.map StringSet.of_list
+  <$> Option.value ~default:StringSet.empty
+
 let type_signature =
   spanned'
-    (return (fun name ty span -> TypeBind { name; ty; span })
-    <*> (string "type" << basic_identifier)
+    (return (fun ty_variables name ty span ->
+         TypeBind { name; ty_variables; ty; span })
+    <*> (string "type" << type_variables)
+    <*> basic_identifier
     <*> (junk << char '=' << typeP))
 
 let nominal_type_signature =
   spanned'
-    (return (fun name ty span ->
+    (return (fun ty_variables name ty span ->
          NominalTypeBind
            {
              name;
+             ty_variables;
              ty =
                Union_find.make
                  (TyNominal { name; ty; id = Utils.gensym_int () });
              span;
            })
-    <*> (string "data" << basic_identifier)
+    <*> (string "data" << type_variables)
+    <*> basic_identifier
     <*> (junk << char '=' << typeP))
 
 let pattern =
