@@ -214,22 +214,32 @@ let rec typeP =
       unParse =
         (fun s ok err ->
           let basic_type =
-            choice
-              [
-                unit ignore_span <$> Fun.const (Union_find.make TyUnit);
-                paren typeP;
-                junk << string "integer"
-                <$> Fun.const (Union_find.make TyInteger);
-                junk << string "float" <$> Fun.const (Union_find.make TyFloat);
-                junk << string "string" <$> Fun.const (Union_find.make TyString);
-                junk << string "boolean"
-                <$> Fun.const (Union_find.make TyBoolean);
-                record typeP None ':' (fun base row _ ->
-                    list_to_row ~base
-                      ~k:(fun row -> Union_find.make (TyRecord row))
-                      row)
-                <?> "record";
-              ]
+            makeRecParser (fun basic_type ->
+                choice
+                  [
+                    unit ignore_span <$> Fun.const (Union_find.make TyUnit);
+                    paren typeP;
+                    junk << string "integer"
+                    <$> Fun.const (Union_find.make TyInteger);
+                    junk << string "float"
+                    <$> Fun.const (Union_find.make TyFloat);
+                    junk << string "string"
+                    <$> Fun.const (Union_find.make TyString);
+                    junk << string "boolean"
+                    <$> Fun.const (Union_find.make TyBoolean);
+                    record typeP None ':' (fun base row _ ->
+                        list_to_row ~base
+                          ~k:(fun row -> Union_find.make (TyRecord row))
+                          row)
+                    <?> "record";
+                    (* type variables/constructors *)
+                    return (fun _ty_p _ty -> failwith "")
+                    <*> basic_type <*> identifier ignore_span;
+                    return (fun _ty_p _ty -> failwith "")
+                    <*> paren (sepby1 (junk << char ',') basic_type)
+                    <*> identifier ignore_span;
+                    identifier (failwith "");
+                  ])
           in
           let variant =
             between
