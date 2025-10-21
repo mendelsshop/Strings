@@ -1,4 +1,4 @@
-open Types
+open Types.Parsed
 open Utils
 open Ast
 
@@ -201,14 +201,6 @@ let nominal_constructor p w =
        (return w <*> identifier_without_junk ignore_span <*> p <?> "constructor")
 
 let rec typeP =
-  let list_to_row ~k ~base list =
-    (List.fold_right (fun { label; value } rest_row ->
-         Union_find.make (TyRowExtend { label; field = value; rest_row })))
-      list
-      (Option.value ~default:(Union_find.make TyRowEmpty) base)
-    |> k
-  in
-
   Parser
     {
       unParse =
@@ -217,28 +209,24 @@ let rec typeP =
             makeRecParser (fun basic_type ->
                 choice
                   [
-                    unit ignore_span <$> Fun.const (Union_find.make TyUnit);
+                    unit ignore_span <$> Fun.const TyUnit;
                     paren typeP;
-                    junk << string "integer"
-                    <$> Fun.const (Union_find.make TyInteger);
-                    junk << string "float"
-                    <$> Fun.const (Union_find.make TyFloat);
-                    junk << string "string"
-                    <$> Fun.const (Union_find.make TyString);
-                    junk << string "boolean"
-                    <$> Fun.const (Union_find.make TyBoolean);
+                    junk << string "integer" <$> Fun.const TyInteger;
+                    junk << string "float" <$> Fun.const TyFloat;
+                    junk << string "string" <$> Fun.const TyString;
+                    junk << string "boolean" <$> Fun.const TyBoolean;
                     record typeP None ':' (fun base row _ ->
-                        list_to_row ~base
-                          ~k:(fun row -> Union_find.make (TyRecord row))
-                          row)
+                        TyRecord { fields = row; extends_record = base })
                     <?> "record";
                     (* type variables/constructors *)
-                    return (fun _ty_p _ty -> failwith "")
+                    return (fun _ty_p _ty ->
+                        failwith "ident type type variable")
                     <*> basic_type <*> identifier ignore_span;
-                    return (fun _ty_p _ty -> failwith "")
+                    return (fun _ty_p _ty ->
+                        failwith "ident type type variables")
                     <*> paren (sepby1 (junk << char ',') basic_type)
                     <*> identifier ignore_span;
-                    identifier (failwith "");
+                    identifier (failwith "ident type");
                   ])
           in
           let variant =
@@ -248,20 +236,16 @@ let rec typeP =
               (sepby1
                  (seq
                     (variant_identifier ignore_span)
-                    (opt basic_type
-                    <$> Option.value ~default:(Union_find.make TyUnit)))
+                    (opt basic_type <$> Option.value ~default:TyUnit))
                  (junk << char '|'))
             <$> List.map (fun (label, value) -> { label; value })
-            <$> list_to_row
-                  ~k:(fun row -> Union_find.make (TyVariant row))
-                  ~base:None
+            <$> fun variants -> TyVariant { variants }
           in
           let functionP =
             variant <|> basic_type >>= fun domain ->
             opt (junk << string "->" << typeP)
             <$> Option.fold
-                  ~some:(fun range ->
-                    Union_find.make (TyArrow { domain; range }))
+                  ~some:(fun range -> TyArrow { domain; range })
                   ~none:domain
           in
 
@@ -287,15 +271,7 @@ let type_signature =
 let nominal_type_signature =
   spanned'
     (return (fun ty_variables name ty span ->
-         NominalTypeBind
-           {
-             name;
-             ty_variables;
-             ty =
-               Union_find.make
-                 (TyNominal { name; ty; id = Utils.gensym_int () });
-             span;
-           })
+         NominalTypeBind { name; ty_variables; ty; span })
     <*> (string "data" << type_variables)
     <*> basic_identifier
     <*> (junk << char '=' << typeP))

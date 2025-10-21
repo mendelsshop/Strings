@@ -1,5 +1,6 @@
 include Ast
-open Types
+open Types.Parsed
+open Utils
 
 type expr =
   | Var of { ident : string; span : AMPCL.span }

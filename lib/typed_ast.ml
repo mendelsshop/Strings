@@ -1,4 +1,5 @@
 open Types
+open Utils
 
 type 't tpattern =
   | PTVar of { ident : string; ty : 't; span : AMPCL.span }
@@ -7,7 +8,7 @@ type 't tpattern =
   | PTInteger of { value : int; ty : 't; span : AMPCL.span }
   | PTFloat of { value : float; ty : 't; span : AMPCL.span }
   | PTBoolean of { value : bool; ty : 't; span : AMPCL.span }
-  | PTRecord of { fields : 't tpattern Ast.row; ty : 't; span : AMPCL.span }
+  | PTRecord of { fields : 't tpattern row; ty : 't; span : AMPCL.span }
   | PTConstructor of {
       name : string;
       value : 't tpattern;
@@ -76,11 +77,11 @@ type 't texpr =
     }
   | TRecordExtend of {
       record : 't texpr;
-      new_fields : 't texpr Ast.row;
+      new_fields : 't texpr row;
       ty : 't;
       span : AMPCL.span;
     }
-  | TRecord of { fields : 't texpr Ast.row; ty : 't; span : AMPCL.span }
+  | TRecord of { fields : 't texpr row; ty : 't; span : AMPCL.span }
   | TMatch of {
       value : 't texpr;
       cases : ('t tpattern, 't texpr) Ast.case list;
@@ -166,7 +167,7 @@ let rec tpattern_to_string = function
   | PTRecord { fields; _ } ->
       "{ "
       ^ (fields
-        |> List.map (fun { Ast.label; value } ->
+        |> List.map (fun { label; value } ->
                label ^ " = " ^ tpattern_to_string value)
         |> String.concat "; ")
       ^ " }"
@@ -221,7 +222,7 @@ let rec texpr_to_string indent =
   | TRecord { fields; _ } ->
       "{\n"
       ^ (fields
-        |> List.map (fun { Ast.label; value } ->
+        |> List.map (fun { label; value } ->
                indent_string ^ label ^ " = " ^ texpr_to_string next_level value)
         |> String.concat ";\n")
       ^ "\n}"
@@ -247,7 +248,7 @@ let rec texpr_to_string indent =
       ^ texpr_to_string indent record
       ^ " with "
       ^ (new_fields
-        |> List.map (fun { Ast.label; value } ->
+        |> List.map (fun { label; value } ->
                indent_string ^ label ^ " = " ^ texpr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"

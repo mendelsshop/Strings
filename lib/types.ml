@@ -1,5 +1,32 @@
 open Utils
 
+module Parsed = struct
+  type ty =
+    | TyCon of { name : string; params : ty }
+    | TyUnit
+    | TyInteger
+    | TyString
+    | TyFloat
+    | TyBoolean
+    | TyArrow of { domain : ty; range : ty }
+    | TyRecord of { fields : ty row; extends_record : ty Option.t }
+    | TyVariant of { variants : ty row }
+
+  let rec type_to_string = function
+    | TyCon _ -> failwith ""
+    | TyUnit -> "()"
+    | TyInteger -> "integer"
+    | TyString -> "string"
+    | TyFloat -> "float"
+    | TyBoolean -> "boolean"
+    | TyRecord _ -> failwith ""
+    | TyVariant _ -> failwith ""
+    | TyArrow { domain; range } ->
+        let x_string = type_to_string domain in
+        let y_string = type_to_string range in
+        x_string ^ " -> " ^ y_string
+end
+
 type 't ty_f =
   | TyVar of { name : string; level : int }
   | TyUnit
@@ -90,5 +117,4 @@ let type_to_string ty =
            (recursive_prefix ^ string, used)))
       ()
   in
-
   inner [] ty |> fst

@@ -106,8 +106,7 @@ let rec pattern_to_space = function
   | PTRecord { fields; _ } ->
       SRecord
         (fields
-        |> List.map (fun { Ast.label; value } ->
-               (label, pattern_to_space value))
+        |> List.map (fun { label; value } -> (label, pattern_to_space value))
         |> StringMap.of_list)
   | PTConstructor { name; value; _ } ->
       SVariant (StringMap.singleton name (pattern_to_space value))
@@ -156,7 +155,7 @@ and combine_space s p =
   | SRecord s1, PTRecord { fields; _ } ->
       let s2 =
         fields
-        |> List.map (fun { Ast.label; value } -> (label, value))
+        |> List.map (fun { label; value } -> (label, value))
         |> StringMap.of_list
       in
       let fields =
@@ -268,9 +267,9 @@ let rec check_expr = function
   | TRecordAccess { record; _ } -> check_expr record
   | TRecordExtend { record; new_fields; _ } ->
       check_expr record
-      @ List.concat_map (fun { Ast.value; _ } -> check_expr value) new_fields
+      @ List.concat_map (fun { value; _ } -> check_expr value) new_fields
   | TRecord { fields; _ } ->
-      List.concat_map (fun { Ast.value; _ } -> check_expr value) fields
+      List.concat_map (fun { value; _ } -> check_expr value) fields
   | TConstructor { value; _ } | TNominalConstructor { value; _ } ->
       check_expr value
 

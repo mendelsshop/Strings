@@ -1,8 +1,6 @@
-open Types
+open Types.Parsed
 open Utils
 
-type 'a field = { label : string; value : 'a }
-type 'a row = 'a field list
 type ('a, 'b) case = { pattern : 'a; result : 'b }
 
 type pattern =

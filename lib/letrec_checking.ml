@@ -16,7 +16,7 @@ let rec get_binders = function
   | PTFloat _ -> []
   | PTBoolean _ -> []
   | PTRecord { fields; _ } ->
-      List.concat_map (fun { Ast.value; _ } -> get_binders value) fields
+      List.concat_map (fun { value; _ } -> get_binders value) fields
   | PTConstructor { value; _ } -> get_binders value
   | PTNominalConstructor { value; _ } -> get_binders value
   | PTAs { name; value; _ } -> name :: get_binders value
@@ -60,9 +60,9 @@ let rec check_expr rec_env = function
   | TRecordAccess { record; _ } -> check_expr rec_env record
   | TRecordExtend { new_fields; record; _ } ->
       check_expr rec_env record;
-      List.iter (fun { Ast.value; _ } -> check_expr rec_env value) new_fields
+      List.iter (fun { value; _ } -> check_expr rec_env value) new_fields
   | TRecord { fields; _ } ->
-      List.iter (fun { Ast.value; _ } -> check_expr rec_env value) fields
+      List.iter (fun { value; _ } -> check_expr rec_env value) fields
   | TMatch { value; cases; _ } ->
       check_expr rec_env value;
       List.iter

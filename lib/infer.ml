@@ -13,52 +13,55 @@ end)
 
 type env = { types : TypeEnv.t; constructors : ConstructorEnv.t }
 
+(* converts parsed type into types for inference *)
+let to_inference_type _ = failwith ""
+
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
 let get_type_env = function
   | Ast.Bind _ | RecBind _ | PrintString _ | Expr _ -> ([], [])
   | TypeBind { name; ty; _ } ->
-      ([ (name, ty) ], [])
+      ([ (name, to_inference_type ty) ], [])
       (* for nominal types there "constructor" is also needed at the expression level *)
-  | NominalTypeBind { name; ty; _ } -> (
-      let _, `root ty_data = Union_find.find_set ty in
+  | NominalTypeBind { name; ty; _ } ->
+      let ty' = to_inference_type ty in
+      let id = gensym_int () in
+      let ty = Union_find.make (TyNominal { name; ty = ty'; id }) in
+
       let sym = gensym () in
-      match ty_data.data with
-      | TyNominal { ty = ty'; id; _ } ->
-          ( [ (name, ty) ],
-            [
-              ( name,
-                TLambda
-                  {
-                    span = { start = 0; finish = 0 };
-                    parameter =
-                      PTVar
-                        {
-                          ident = sym;
-                          ty = ty';
-                          (* TODO: use body span once thats done *)
-                          span = { start = 0; finish = 0 };
-                        };
-                    parameter_ty = ty';
-                    body =
-                      TNominalConstructor
-                        {
-                          name;
-                          value =
-                            TVar
-                              {
-                                ident = sym;
-                                ty = ty';
-                                span = { start = 0; finish = 0 };
-                              };
-                          ty;
-                          id;
-                          span = { start = 0; finish = 0 };
-                        };
-                    ty = Union_find.make (TyArrow { domain = ty'; range = ty });
-                  } );
-            ] )
-      | _ -> failwith "unreachable")
+      ( [ (name, ty) ],
+        [
+          ( name,
+            TLambda
+              {
+                span = { start = 0; finish = 0 };
+                parameter =
+                  PTVar
+                    {
+                      ident = sym;
+                      ty = ty';
+                      (* TODO: use body span once thats done *)
+                      span = { start = 0; finish = 0 };
+                    };
+                parameter_ty = ty';
+                body =
+                  TNominalConstructor
+                    {
+                      name;
+                      value =
+                        TVar
+                          {
+                            ident = sym;
+                            ty = ty';
+                            span = { start = 0; finish = 0 };
+                          };
+                      ty;
+                      id;
+                      span = { start = 0; finish = 0 };
+                    };
+                ty = Union_find.make (TyArrow { domain = ty'; range = ty });
+              } );
+        ] )
 
 let get_type_env program =
   let envs = List.map get_type_env program in
@@ -220,6 +223,7 @@ let rec generate_constraints_pattern cs_env ty = function
       (env, cs, PTOr { patterns; ty; span })
   | POr { patterns = []; _ } -> failwith "unreachable"
   | PAscribe { pattern; ty = ty'; _ } ->
+      let ty' = to_inference_type ty' in
       let env, cs, pat' = generate_constraints_pattern cs_env ty' pattern in
       (* TODO: maybe don't remove ascription from typed ast? *)
       (env, CEq (ty', ty) :: cs, pat')
@@ -453,6 +457,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
         TIf { condition; consequent; alternative; ty; span } )
   | Ascribe { value; ty = ty'; _ } ->
+      let ty' = to_inference_type ty' in
       let cs, expr' = generate_constraints cs_state ty' value in
       (CEq (ty', ty) :: cs, expr')
 

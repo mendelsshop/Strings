@@ -2,6 +2,10 @@
 (* open Monad.ResultReaderOps *)
 include Gensym
 open AMPCL
+
+type 'a field = { label : string; value : 'a }
+type 'a row = 'a field list
+
 module Subst = Map.Make (String)
 module StringSet = Set.Make (String)
 module StringMap = Map.Make (String)
