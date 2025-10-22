@@ -210,14 +210,14 @@ let rec typeP =
                 return (fun _ty_p cons ->
                     List.fold_left
                       (fun ty con_name ->
-                        TyCon { name = con_name; params = [ ty ] })
+                        TyCon { name = con_name; arguements = [ ty ] })
                       _ty_p cons)
                 <*> choice
                       [
                         unit ignore_span <$> Fun.const TyUnit;
                         paren typeP;
                         return (fun _ty_p _ty ->
-                            TyCon { name = _ty; params = _ty_p })
+                            TyCon { name = _ty; arguements = _ty_p })
                         <*> paren (sepby1 basic_type (junk << char ','))
                         <*> identifier ignore_span;
                         junk << string "integer" <$> Fun.const TyInteger;
@@ -229,7 +229,7 @@ let rec typeP =
                         <?> "record";
                         (* type variables/constructors *)
                         identifier (fun _ty _ ->
-                            TyCon { name = _ty; params = [] });
+                            TyCon { name = _ty; arguements = [] });
                       ]
                 <*> many (identifier ignore_span))
           in

@@ -2,7 +2,7 @@ open Utils
 
 module Parsed = struct
   type ty =
-    | TyCon of { name : string; params : ty list }
+    | TyCon of { name : string; arguements : ty list }
     | TyUnit
     | TyInteger
     | TyString
@@ -13,10 +13,12 @@ module Parsed = struct
     | TyVariant of { variants : ty row }
 
   let rec type_to_string = function
-    | TyCon { name; params } ->
-        (if List.is_empty params then ""
+    | TyCon { name; arguements } ->
+        (if List.is_empty arguements then ""
          else
-           "(" ^ (List.map type_to_string params |> String.concat ", ") ^ ") ")
+           "("
+           ^ (List.map type_to_string arguements |> String.concat ", ")
+           ^ ") ")
         ^ name
     | TyUnit -> "()"
     | TyInteger -> "integer"

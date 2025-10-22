@@ -18,7 +18,36 @@ end)
 type env = { types : TypeEnv.t; constructors : ConstructorEnv.t }
 
 (* converts parsed type into types for inference *)
-let to_inference_type _ _ = failwith ""
+let to_inference_type env =
+  let rec inner = function
+    | Parsed.TyFloat -> Union_find.make TyFloat
+    | Parsed.TyInteger -> Union_find.make TyInteger
+    | Parsed.TyString -> Union_find.make TyString
+    | Parsed.TyUnit -> Union_find.make TyUnit
+    | Parsed.TyBoolean -> Union_find.make TyBoolean
+    | Parsed.TyCon { name; arguements } ->
+        let ty_params, ty = TypeEnv.find name env in
+        let ty_arguements = List.map inner arguements in
+        if List.length ty_arguements <> StringSet.cardinal ty_params then
+          failwith "type constructor arrity mismatch"
+        else if List.length ty_arguements = 0 then ty
+        else failwith "todo: type operators"
+    | Parsed.TyArrow { domain; range } ->
+        Union_find.make (TyArrow { domain = inner domain; range = inner range })
+    | Parsed.TyRecord { fields; extends_record } ->
+        let extends_record = Option.map inner extends_record in
+        Union_find.make (TyRecord (list_to_row extends_record fields))
+    | Parsed.TyVariant { variants } ->
+        Union_find.make (TyRecord (list_to_row None variants))
+  and list_to_row base row =
+    List.fold_right
+      (fun { label; value } row ->
+        Union_find.make
+          (TyRowExtend { label; field = inner value; rest_row = row }))
+      row
+      (Option.value base ~default:(Union_find.make TyRowEmpty))
+  in
+  inner
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
