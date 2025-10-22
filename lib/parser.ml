@@ -207,27 +207,31 @@ let rec typeP =
         (fun s ok err ->
           let basic_type =
             makeRecParser (fun basic_type ->
-                choice
-                  [
-                    unit ignore_span <$> Fun.const TyUnit;
-                    paren typeP;
-                    junk << string "integer" <$> Fun.const TyInteger;
-                    junk << string "float" <$> Fun.const TyFloat;
-                    junk << string "string" <$> Fun.const TyString;
-                    junk << string "boolean" <$> Fun.const TyBoolean;
-                    record typeP None ':' (fun base row _ ->
-                        TyRecord { fields = row; extends_record = base })
-                    <?> "record";
-                    (* type variables/constructors *)
-                    return (fun _ty_p _ty ->
-                        failwith "ident type type variable")
-                    <*> basic_type <*> identifier ignore_span;
-                    return (fun _ty_p _ty ->
-                        failwith "ident type type variables")
-                    <*> paren (sepby1 (junk << char ',') basic_type)
-                    <*> identifier ignore_span;
-                    identifier (failwith "ident type");
-                  ])
+                return (fun _ty_p cons ->
+                    List.fold_left
+                      (fun ty con_name ->
+                        TyCon { name = con_name; params = [ ty ] })
+                      _ty_p cons)
+                <*> choice
+                      [
+                        unit ignore_span <$> Fun.const TyUnit;
+                        paren typeP;
+                        return (fun _ty_p _ty ->
+                            TyCon { name = _ty; params = _ty_p })
+                        <*> paren (sepby1 basic_type (junk << char ','))
+                        <*> identifier ignore_span;
+                        junk << string "integer" <$> Fun.const TyInteger;
+                        junk << string "float" <$> Fun.const TyFloat;
+                        junk << string "string" <$> Fun.const TyString;
+                        junk << string "boolean" <$> Fun.const TyBoolean;
+                        record typeP None ':' (fun base row _ ->
+                            TyRecord { fields = row; extends_record = base })
+                        <?> "record";
+                        (* type variables/constructors *)
+                        identifier (fun _ty _ ->
+                            TyCon { name = _ty; params = [] });
+                      ]
+                <*> many (identifier ignore_span))
           in
           let variant =
             between
@@ -271,7 +275,7 @@ let type_signature =
 let nominal_type_signature =
   spanned'
     (return (fun ty_variables name ty span ->
-         NominalTypeBind { name; ty_variables; ty; span })
+         NominalTypeBind { name; ty_variables; ty; span; id = gensym_int () })
     <*> (string "data" << type_variables)
     <*> basic_identifier
     <*> (junk << char '=' << typeP))

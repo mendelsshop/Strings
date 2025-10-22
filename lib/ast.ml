@@ -63,6 +63,7 @@ type top_level =
     }
   | NominalTypeBind of {
       name : string;
+      id : int;
       ty_variables : StringSet.t;
       ty : ty;
       span : AMPCL.span;
