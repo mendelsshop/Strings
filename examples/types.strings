@@ -1,1 +1,4 @@
-"type foo = boolean t"
+"type foo = (boolean, string) t"
+"type foo = boolean t t"
+"type foo = t"
+"type foo = boolean"

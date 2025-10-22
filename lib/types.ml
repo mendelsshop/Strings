@@ -46,6 +46,17 @@ type 't ty_f =
   | TyGenVar of string
   | TyNominal of { name : string; id : int; ty : 't }
 
+type 't type_decl = {
+  name : string;
+  kind : 't type_decl_kind;
+  ty_variables : StringSet.t;
+  span : AMPCL.span;
+}
+
+and 't type_decl_kind =
+  | TypeDecl of 't
+  | NominalTypeDecl of { ty : 't; id : int }
+
 type ty = 'a ty_f Union_find.elem as 'a
 
 let ftv_ty (ty : ty) =

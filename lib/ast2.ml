@@ -167,16 +167,26 @@ let rec ast_to_ast2 (ast : Ast.expr) =
         }
 
 let ast_to_ast2 =
-  List.filter_map (fun (tl : Ast.top_level) ->
+  List.partition_map (fun (tl : Ast.top_level) ->
       match tl with
       | Bind { name; value; span } ->
-          Bind { name; value = ast_to_ast2 value; span } |> Option.some
-      | TypeBind _ -> None
-      | NominalTypeBind _ -> None
-      | Expr e -> Expr (ast_to_ast2 e) |> Option.some
+          Bind { name; value = ast_to_ast2 value; span } |> Either.left
+      | TypeBind { name; ty_variables; ty; span } ->
+          Either.right
+            (name, { Types.name; ty_variables; span; kind = Types.TypeDecl ty })
+      | NominalTypeBind { name; id; ty_variables; ty; span } ->
+          Either.right
+            ( name,
+              {
+                Types.name;
+                ty_variables;
+                span;
+                kind = Types.NominalTypeDecl { ty; id };
+              } )
+      | Expr e -> Expr (ast_to_ast2 e) |> Either.left
       | RecBind { name; value; span } ->
-          RecBind { name; value = ast_to_ast2 value; span } |> Option.some
-      | PrintString s -> PrintString s |> Option.some)
+          RecBind { name; value = ast_to_ast2 value; span } |> Either.left
+      | PrintString s -> PrintString s |> Either.left)
 
 let rec expr_to_string indent =
   let next_level = indent + 1 in

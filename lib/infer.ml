@@ -3,8 +3,12 @@ open Utils
 open Ast2
 open Typed_ast
 
+module ParsedTypeEnv = Env.Make (struct
+  type t = Parsed.ty type_decl
+end)
+
 module TypeEnv = Env.Make (struct
-  type t = ty
+  type t = StringSet.t * ty
 end)
 
 module ConstructorEnv = Env.Make (struct
@@ -14,22 +18,20 @@ end)
 type env = { types : TypeEnv.t; constructors : ConstructorEnv.t }
 
 (* converts parsed type into types for inference *)
-let to_inference_type _ = failwith ""
+let to_inference_type _ _ = failwith ""
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
-let get_type_env = function
-  | Ast.Bind _ | RecBind _ | PrintString _ | Expr _ -> ([], [])
-  | TypeBind { name; ty; _ } ->
-      ([ (name, to_inference_type ty) ], [])
+let get_type_env env = function
+  | { name; kind = TypeDecl ty; ty_variables; _ } ->
+      ([ (name, (ty_variables, to_inference_type env ty)) ], [])
       (* for nominal types there "constructor" is also needed at the expression level *)
-  | NominalTypeBind { name; ty; _ } ->
-      let ty' = to_inference_type ty in
-      let id = gensym_int () in
+  | { name; kind = NominalTypeDecl { ty; id }; ty_variables; _ } ->
+      let ty' = to_inference_type env ty in
       let ty = Union_find.make (TyNominal { name; ty = ty'; id }) in
 
       let sym = gensym () in
-      ( [ (name, ty) ],
+      ( [ (name, (ty_variables, ty)) ],
         [
           ( name,
             TLambda
@@ -63,12 +65,33 @@ let get_type_env = function
               } );
         ] )
 
-let get_type_env program =
-  let envs = List.map get_type_env program in
-  List.fold_right
-    (fun (types, constructors) (types', constructors') ->
-      (types' @ types, constructors' @ constructors))
-    envs ([], [])
+type level = int
+
+let current_level = ref 1
+let enter_level () = incr current_level
+let leave_level () = decr current_level
+let ty_var name = TyVar { name; level = !current_level }
+
+let get_type_env decls =
+  let dummy_env =
+    List.map
+      (fun (name, decl) ->
+        (name, (decl.ty_variables, Union_find.make (ty_var (gensym ())))))
+      decls
+  in
+  let _, decls = List.split decls in
+  let envs = List.map (get_type_env (dummy_env |> TypeEnv.of_list)) decls in
+  let env, constructors =
+    List.fold_right
+      (fun (types, constructors) (types', constructors') ->
+        (types' @ types, constructors' @ constructors))
+      envs ([], [])
+  in
+  (* TODO: unify dummy_env and env *)
+  {
+    types = env |> TypeEnv.of_list;
+    constructors = constructors |> ConstructorEnv.of_list;
+  }
 
 type 't co =
   | CExist of string list * 't co list
@@ -108,13 +131,6 @@ and constraints_to_string ts =
 let constraints_to_string ts =
   "[\n" ^ (ts |> List.map constraint_to_string |> String.concat "\n") ^ "\n]"
 
-type level = int
-
-let current_level = ref 1
-let enter_level () = incr current_level
-let leave_level () = decr current_level
-let ty_var name = TyVar { name; level = !current_level }
-
 let rec generate_constraints_pattern cs_env ty = function
   (* for var see it its in nominal type env if so turn into ptnominalconstructor *)
   | PVar { ident; span } -> ([ (ident, ty) ], [], PTVar { ident; ty; span })
@@ -133,7 +149,7 @@ let rec generate_constraints_pattern cs_env ty = function
         [ CEq (ty, Union_find.make TyInteger) ],
         PTInteger { value; ty; span } )
   | PNominalConstructor { name; value; span } -> (
-      let ty' = TypeEnv.find name cs_env.types in
+      let _, ty' = TypeEnv.find name cs_env.types in
       let _, `root ty_data = Union_find.find_set ty' in
       match ty_data.data with
       | TyNominal { ty = ty''; id; _ } ->
@@ -223,7 +239,7 @@ let rec generate_constraints_pattern cs_env ty = function
       (env, cs, PTOr { patterns; ty; span })
   | POr { patterns = []; _ } -> failwith "unreachable"
   | PAscribe { pattern; ty = ty'; _ } ->
-      let ty' = to_inference_type ty' in
+      let ty' = to_inference_type cs_env.types ty' in
       let env, cs, pat' = generate_constraints_pattern cs_env ty' pattern in
       (* TODO: maybe don't remove ascription from typed ast? *)
       (env, CEq (ty', ty) :: cs, pat')
@@ -457,7 +473,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
         TIf { condition; consequent; alternative; ty; span } )
   | Ascribe { value; ty = ty'; _ } ->
-      let ty' = to_inference_type ty' in
+      let ty' = to_inference_type cs_state.types ty' in
       let cs, expr' = generate_constraints cs_state ty' value in
       (CEq (ty', ty) :: cs, expr')
 
