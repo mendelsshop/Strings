@@ -620,9 +620,10 @@ let unify (s : ty) (t : ty) =
                  (TyRowExtend { label = l'; field = t'; rest_row = beta }))
               r used
         | _ -> inner_row used l t r ty root.data)
-    | TyString | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
-    | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger | TyGenVar _
-    | TyVar _ | TyBoolean | TyUnit | TyNominal _ ->
+    | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
+    (* TODO: for TyVariant and TyRecord maybe should expand past those (because if someone does { x with y = 10 }, then x will presumembly have type TyRecord and it will be the rest row of some TyRowExtend) *)
+    | TyString | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger
+    | TyGenVar _ | TyVar _ | TyBoolean | TyUnit | TyNominal _ ->
         failwith
           (type_to_string ty
          ^ " is not a row, so it cannot be extended with label `" ^ l ^ "`.")
