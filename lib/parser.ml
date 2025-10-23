@@ -257,7 +257,11 @@ let rec typeP =
           unParse s ok err);
     }
 
-let ascription p = seq p (junk << char ':' << typeP)
+let ascription p f =
+  spanned'
+    (return (fun span expr -> Option.fold ~none:expr ~some:(f span expr)))
+  <*> p
+  <*> opt (junk << char ':' << typeP)
 
 let type_variables =
   opt (between (junk << char '(') (junk << char ')') (many1 basic_identifier))
@@ -317,7 +321,9 @@ let pattern =
                 identifier (fun ident span -> PVar { ident; span });
                 unit (fun _ span -> PUnit span);
                 wildcard;
-                paren pattern;
+                paren
+                  (ascription pattern (fun span pattern ty ->
+                       PAscribe { span; pattern; ty }));
                 stringP;
                 float (fun value span -> Ast.PFloat { value; span });
                 number (fun value span -> Ast.PInteger { value; span });
@@ -382,7 +388,10 @@ let rec expr is_end =
             let (Parser { unParse }) =
               choice
                 [
-                  paren (expr false) >> last_quote is_end;
+                  paren
+                    (ascription (expr false) (fun span value ty ->
+                         Ascribe { span; value; ty }))
+                  >> last_quote is_end;
                   junk << char '\"' <?> "start of string"
                   << spanned'
                        (return (fun value span -> String { value; span })
