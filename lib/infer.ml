@@ -567,7 +567,7 @@ let rec generate_constraints_top cs_state = function
 let unit_ify _ = ()
 
 let unify (s : ty) (t : ty) =
-  let rec inner (s : ty) (t : ty) used =
+  let rec inner used (s : ty) (t : ty) =
     let s, `root s_data = Union_find.find_set s in
     let t, `root t_data = Union_find.find_set t in
     if
@@ -580,37 +580,39 @@ let unify (s : ty) (t : ty) =
       match ((s_data.data, s), (t_data.data, t)) with
       | ( (TyArrow { domain; range }, _),
           (TyArrow { domain = domain1; range = range1 }, _) ) ->
-          inner domain domain1 ((s, t) :: used);
-          inner range range1 ((s, t) :: used)
+          inner ((s, t) :: used) domain domain1;
+          inner ((s, t) :: used) range range1
       (* could these be replaced with an structural eqaulity test *)
       | (TyUnit, _), (TyUnit, _) -> ()
-      | ( (TyNominal { id; name; _ }, _),
-          (TyNominal { id = id'; name = name'; _ }, _) )
+      | ( (TyNominal { id; name; type_arguements; _ }, _),
+          ( TyNominal
+              { id = id'; name = name'; type_arguements = type_arguements'; _ },
+            _ ) )
         when id = id' && name = name' ->
-          ()
       | (TyFloat, _), (TyFloat, _) -> ()
       | (TyString, _), (TyString, _) -> ()
       | (TyInteger, _), (TyInteger, _) -> ()
       | (TyBoolean, _), (TyBoolean, _) -> ()
       | (TyRowEmpty, _), (TyRowEmpty, _) -> ()
-      | (TyRecord r, _), (TyRecord r', _) -> inner r r' ((s, t) :: used)
-      | (TyVariant v, _), (TyVariant v', _) -> inner v v' ((s, t) :: used)
-      | ( (TyRowExtend { label; field; rest_row }, _),
+      | (TyRecord r, _), (TyRecord r', _) -> inner ((s, t) :: used) r r'
+      | (TyVariant v, _), (TyVariant v', _) -> inner ((s, t) :: used) v v'
+      | ( (TyRowExtend { label; field; rest_row : ty }, _),
           ((TyRowExtend _ as ty_data), ty) ) ->
           (* | ((TyRowExtend _ as  ty_data, ty), (TyRowExtend (l, t, r), _)) -> *)
-          inner_row ((s, field) :: used) label field rest_row ty ty_data
+          inner used rest_row
+            (inner_row ((s, field) :: used) label field ty ty_data)
       | (TyVar _, _), (v, _) | (v, _), (TyVar _, _) ->
           Union_find.union_with (fun _ _ -> v) s t
       | _ ->
           failwith
             ("Unification Error (Symbol Clash): " ^ type_to_string s ^ " =/= "
            ^ type_to_string t)
-  and inner_row used l t r ty = function
+  and inner_row used l t ty : _ -> ty = function
     (* ty and the arguement to function are the same *)
     (* TODO: might need cyclic checking here *)
     | TyRowExtend { label = l'; field = t'; rest_row = r' } when l = l' ->
-        inner t t' used;
-        inner r r' used
+        inner used t t';
+        r'
     | TyRowExtend { label = l'; field = t'; rest_row = r' } -> (
         let ty, `root root = Union_find.find_set r' in
         match root.data with
@@ -619,12 +621,18 @@ let unify (s : ty) (t : ty) =
             let gamma = Union_find.make (ty_var (gensym ())) in
             root.data <-
               TyRowExtend { label = l; field = gamma; rest_row = beta };
-            inner gamma t used;
-            inner
-              (Union_find.make
-                 (TyRowExtend { label = l'; field = t'; rest_row = beta }))
-              r used
-        | _ -> inner_row used l t r ty root.data)
+            inner used gamma t;
+
+            Union_find.make
+              (TyRowExtend { label = l'; field = t'; rest_row = beta })
+        | _ ->
+            Union_find.make
+              (TyRowExtend
+                 {
+                   label = l';
+                   field = t';
+                   rest_row = inner_row used l t ty root.data;
+                 }))
     | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
     (* TODO: for TyVariant and TyRecord maybe should expand past those (because if someone does { x with y = 10 }, then x will presumembly have type TyRecord and it will be the rest row of some TyRowExtend) *)
     | TyString | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger
@@ -633,7 +641,7 @@ let unify (s : ty) (t : ty) =
           (type_to_string ty
          ^ " is not a row, so it cannot be extended with label `" ^ l ^ "`.")
   in
-  inner s t []
+  inner [] s t
 
 let generalize (`for_all (_, ty)) =
   let rec inner ty used =
