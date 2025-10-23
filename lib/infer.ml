@@ -60,6 +60,7 @@ let get_type_env env (_, (_, dummy_type)) = function
   | { name; kind = NominalTypeDecl { ty; id }; ty_variables; _ } ->
       let ty' = to_inference_type env ty in
       let ty = Union_find.make (TyNominal { name; ty = ty'; id }) in
+      Union_find.union_with (fun x _ -> x) ty dummy_type;
 
       let sym = gensym () in
       ( [ (name, (ty_variables, ty)) ],
