@@ -595,7 +595,7 @@ let unify (s : ty) (t : ty) =
           (* | ((TyRowExtend _ as  ty_data, ty), (TyRowExtend (l, t, r), _)) -> *)
           inner_row ((s, field) :: used) label field rest_row ty ty_data
       | (TyVar _, _), (v, _) | (v, _), (TyVar _, _) ->
-          Union_find.union_with (fun _ _ -> v) s t |> unit_ify (* () *)
+          Union_find.union_with (fun _ _ -> v) s t
       | _ ->
           failwith
             ("Unification Error (Symbol Clash): " ^ type_to_string s ^ " =/= "
@@ -649,31 +649,23 @@ let generalize (`for_all (_, ty)) =
                let range, generalized' =
                  inner range ((root, replacement_root) :: used)
                in
-               let r =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyArrow { domain; range }))
-               in
-               (r, StringSet.union generalized generalized')
+               Union_find.union replacement_root
+                 (Union_find.make (TyArrow { domain; range }));
+               (replacement_root, StringSet.union generalized generalized')
            | TyRecord r ->
                (* dont recostruct if anything under doesn't get generalized *)
                let r, generalized' =
                  inner r ((root, replacement_root) :: used)
                in
-               let r =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyRecord r))
-               in
-               (r, generalized')
+               Union_find.union replacement_root (Union_find.make (TyRecord r));
+               (replacement_root, generalized')
            | TyVariant v ->
                (* dont recostruct if anything under doesn't get generalized *)
                let v, generalized =
                  inner v ((root, replacement_root) :: used)
                in
-               let v =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyVariant v))
-               in
-               (v, generalized)
+               Union_find.union replacement_root (Union_find.make (TyVariant v));
+               (replacement_root, generalized)
            | TyRowExtend { label; field; rest_row } ->
                (* dont recostruct if anything under doesn't get generalized *)
                let field, generalized =
@@ -682,11 +674,10 @@ let generalize (`for_all (_, ty)) =
                let rest_row, generalized' =
                  inner rest_row ((root, replacement_root) :: used)
                in
-               let r =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyRowExtend { label; field; rest_row }))
-               in
-               (r, StringSet.union generalized generalized')
+               Union_find.union replacement_root
+                 (Union_find.make (TyRowExtend { label; field; rest_row }));
+
+               (replacement_root, StringSet.union generalized generalized')
            | TyString | TyRowEmpty | TyFloat | TyInteger | TyGenVar _ | TyUnit
            (*nominal types even though they contain other types are considered complete - inference should not change their contents *)
            | TyNominal _ | TyVar _ | TyBoolean ->
@@ -717,38 +708,28 @@ let instantiate (`for_all (vars, ty)) =
                (* dont recostruct if anything under doesn't get instantiated *)
                let domain = inner domain ((root, replacement_root) :: used) in
                let range = inner range ((root, replacement_root) :: used) in
-               let r =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyArrow { domain; range }))
-               in
-               r
+               Union_find.union replacement_root
+                 (Union_find.make (TyArrow { domain; range }));
+               replacement_root
            | TyRecord r ->
                (* dont recostruct if anything under doesn't get generalized *)
                let r = inner r ((root, replacement_root) :: used) in
-               let r =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyRecord r))
-               in
-               r
+               Union_find.union replacement_root (Union_find.make (TyRecord r));
+               replacement_root
            | TyVariant v ->
                (* dont recostruct if anything under doesn't get generalized *)
                let v = inner v ((root, replacement_root) :: used) in
-               let v =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyVariant v))
-               in
-               v
+               Union_find.union replacement_root (Union_find.make (TyVariant v));
+               replacement_root
            | TyRowExtend { label; field; rest_row } ->
                (* dont recostruct if anything under doesn't get generalized *)
                let field = inner field ((root, replacement_root) :: used) in
                let rest_row =
                  inner rest_row ((root, replacement_root) :: used)
                in
-               let r =
-                 Union_find.union replacement_root
-                   (Union_find.make (TyRowExtend { label; field; rest_row }))
-               in
-               r
+               Union_find.union replacement_root
+                 (Union_find.make (TyRowExtend { label; field; rest_row }));
+               replacement_root
            | TyString | TyBoolean | TyRowEmpty | TyFloat | TyInteger | TyVar _
            (*nominal types even though they contain other types are considered complete - inference should not change their contents *)
            | TyNominal _ | TyUnit ->

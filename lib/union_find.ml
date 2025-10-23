@@ -19,32 +19,24 @@ let rec find_set (x : 'a elem) : 'a elem * [< `root of 'a root ] =
 let union x y =
   let x_ref, `root x = find_set x in
   let y_ref, `root y = find_set y in
-  if x_ref == y_ref then x_ref
-  else if x.rank > y.rank then (
-    y_ref := `node x_ref;
-    x_ref)
-  else if x.rank < y.rank then (
-    x_ref := `node y_ref;
-    y_ref)
+  if x_ref == y_ref then ()
+  else if x.rank > y.rank then y_ref := `node x_ref
+  else if x.rank < y.rank then x_ref := `node y_ref
   else (
     x_ref := `node y_ref;
-    y.rank <- y.rank + 1;
-    y_ref)
+    y.rank <- y.rank + 1)
 
 let union_with data x y =
   let x_ref, `root x = find_set x in
   let y_ref, `root y = find_set y in
-  if x_ref == y_ref then x_ref
+  if x_ref == y_ref then ()
   else if x.rank > y.rank then (
     x.data <- data x.data y.data;
-    y_ref := `node x_ref;
-    x_ref)
+    y_ref := `node x_ref)
   else if x.rank < y.rank then (
     y.data <- data x.data y.data;
-    x_ref := `node y_ref;
-    y_ref)
+    x_ref := `node y_ref)
   else (
     y.data <- data x.data y.data;
     x_ref := `node y_ref;
-    y.rank <- y.rank + 1;
-    y_ref)
+    y.rank <- y.rank + 1)
