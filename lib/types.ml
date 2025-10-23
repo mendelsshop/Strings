@@ -25,7 +25,13 @@ module Parsed = struct
     | TyString -> "string"
     | TyFloat -> "float"
     | TyBoolean -> "boolean"
-    | TyRecord _ -> failwith ""
+    | TyRecord { fields; _ } ->
+        "{"
+        ^ (fields
+          |> List.map (fun { label; value } ->
+                 label ^ ": " ^ type_to_string value)
+          |> String.concat ", ")
+        ^ "}"
     | TyVariant { variants } ->
         "["
         ^ (variants
