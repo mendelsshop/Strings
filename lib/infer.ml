@@ -38,7 +38,7 @@ let to_inference_type env =
         let extends_record = Option.map inner extends_record in
         Union_find.make (TyRecord (list_to_row extends_record fields))
     | Parsed.TyVariant { variants } ->
-        Union_find.make (TyRecord (list_to_row None variants))
+        Union_find.make (TyVariant (list_to_row None variants))
   and list_to_row base row =
     List.fold_right
       (fun { label; value } row ->

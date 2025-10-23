@@ -26,7 +26,13 @@ module Parsed = struct
     | TyFloat -> "float"
     | TyBoolean -> "boolean"
     | TyRecord _ -> failwith ""
-    | TyVariant _ -> failwith ""
+    | TyVariant { variants } ->
+        "["
+        ^ (variants
+          |> List.map (fun { label; value } ->
+                 "`" ^ label ^ " of " ^ type_to_string value)
+          |> String.concat ", ")
+        ^ "]"
     | TyArrow { domain; range } ->
         let x_string = type_to_string domain in
         let y_string = type_to_string range in

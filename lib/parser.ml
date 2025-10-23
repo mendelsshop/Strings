@@ -240,7 +240,8 @@ let rec typeP =
               (sepby1
                  (seq
                     (variant_identifier ignore_span)
-                    (opt basic_type <$> Option.value ~default:TyUnit))
+                    (opt (junk << string "of" << basic_type)
+                    <$> Option.value ~default:TyUnit))
                  (junk << char '|'))
             <$> List.map (fun (label, value) -> { label; value })
             <$> fun variants -> TyVariant { variants }
