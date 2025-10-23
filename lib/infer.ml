@@ -51,9 +51,11 @@ let to_inference_type env =
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
-let get_type_env env = function
+let get_type_env env (_, (_, dummy_type)) = function
   | { name; kind = TypeDecl ty; ty_variables; _ } ->
-      ([ (name, (ty_variables, to_inference_type env ty)) ], [])
+      let ty = to_inference_type env ty in
+      Union_find.union_with (fun x _ -> x) ty dummy_type;
+      ([ (name, (ty_variables, ty)) ], [])
       (* for nominal types there "constructor" is also needed at the expression level *)
   | { name; kind = NominalTypeDecl { ty; id }; ty_variables; _ } ->
       let ty' = to_inference_type env ty in
@@ -109,7 +111,9 @@ let get_type_env decls =
       decls
   in
   let _, decls = List.split decls in
-  let envs = List.map (get_type_env (dummy_env |> TypeEnv.of_list)) decls in
+  let envs =
+    List.map2 (get_type_env (dummy_env |> TypeEnv.of_list)) dummy_env decls
+  in
   let env, constructors =
     List.fold_right
       (fun (types, constructors) (types', constructors') ->
