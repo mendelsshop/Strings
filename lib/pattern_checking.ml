@@ -36,6 +36,7 @@ let space_to_string = function
 let rec flattern_row (ty : ty) =
   let _, `root { Union_find.data = ty'; _ } = Union_find.find_set ty in
   match ty' with
+  | TyConstructor { ty; _ } -> flattern_row ty
   | TyVar _ -> (StringMap.empty, false)
   | TyNominal _ | TyRecord _ | TyVariant _ | TyInteger | TyString | TyFloat
   | TyGenVar _ | TyBoolean | TyArrow _ | TyUnit ->
@@ -85,7 +86,7 @@ let rec type_subset ty s =
          |> StringMap.for_all (fun _ b -> b)
   | _, SVar -> true
   | TyVar _, _ -> false
-  | ( TyNominal { id; name; ty : _ },
+  | ( TyNominal { id; name; ty; _ },
       SNominal { id = id'; name = name'; value : _ } )
     when id = id' && name = name' ->
       type_subset ty value

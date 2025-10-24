@@ -58,7 +58,8 @@ type 't ty_f =
   | TyRecord of 't
   | TyVariant of 't
   | TyGenVar of string
-  | TyNominal of { name : string; id : int; ty : 't }
+  | TyNominal of { name : string; id : int; ty : 't; type_arguements : 't list }
+  | TyConstructor of { ty : 't; type_arguements : 't list }
 
 type 't type_decl = {
   name : string;
@@ -92,6 +93,7 @@ let ftv_ty (ty : ty) =
           StringSet.union
             (inner field (root :: used))
             (inner rest_row (root :: used))
+      | TyConstructor { ty; _ } -> inner ty (root :: used)
       | TyString | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyFloat ->
           StringSet.empty
   in
@@ -111,13 +113,22 @@ let type_to_string ty =
              | TyNominal { name; ty; id; _ } ->
                  let ty, used' = inner ((root, sym) :: used) ty in
                  (name ^ string_of_int id ^ "(" ^ ty ^ ")", used')
-             | TyGenVar v -> (v, [])
+             | TyGenVar v -> ("V(" ^ v ^ ")", [])
              | TyUnit -> ("()", [])
              | TyInteger -> ("integer", [])
              | TyString -> ("string", [])
              | TyFloat -> ("float", [])
              | TyBoolean -> ("boolean", [])
              | TyRowEmpty -> (unit, [])
+             | TyConstructor { ty; type_arguements } ->
+                 let type_arguements, used' =
+                   List.map (inner used) type_arguements |> List.split
+                 in
+                 let type_arguements = String.concat ", " type_arguements in
+                 let ty', used'' = inner ((root, sym) :: used) ty in
+
+                 ( "tycon(" ^ type_arguements ^ ")" ^ ty',
+                   (used' |> List.concat) @ used'' )
              | TyRecord t ->
                  let t, used' = inner ((root, sym) :: used) ~unit:"" t in
                  ("{ " ^ t ^ " }", used')
