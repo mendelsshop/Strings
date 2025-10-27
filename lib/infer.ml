@@ -110,8 +110,9 @@ let inline_type_alias env (ty : ty) =
       match node.data with
       | TyVar { name; _ } ->
           SimpleTypeEnv.find_opt name env |> Option.value ~default:ty
-      | TyGenVar _ -> failwith "should be unreachable"
-      | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyString | TyFloat -> ty
+      | TyGenVar _ | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyString
+      | TyFloat | TyNominal _ ->
+          ty
       | TyArrow { domain; range } ->
           (* dont recostruct if anything under doesn't get instantiated *)
           let domain = inner env (root :: used) domain in
@@ -140,17 +141,8 @@ let inline_type_alias env (ty : ty) =
           let field = inner env (root :: used) field in
           let rest_row = inner env (root :: used) rest_row in
           union (TyRowExtend { label; field; rest_row })
-      | TyNominal _ -> ty
   in
   inner env [] ty
-
-let un_type_constructor ty =
-  let _, `root data = Union_find.find_set ty in
-  match data.data with
-  | TyConstructor { ty; _ } -> ty
-  | _ ->
-      print_endline (type_to_string ty);
-      ty
 
 (* converts parsed type into types for inference *)
 let to_inference_type inline (env : TypeEnv.t) inner_env =
@@ -184,7 +176,6 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
           } =
             TypeEnv.find name env
           in
-          let ty = un_type_constructor ty in
           let ty_arguements =
             List.map
               (inner' (StringSet.union ty_variables inner_env))
@@ -223,12 +214,7 @@ let get_type_env env
     ) = function
   | { name; kind = TypeDecl ty; _ } as type_decl ->
       let ty = to_inference_type false env type_decl.ty_variables ty in
-
-      print_endline
-        (type_to_string ty ^ " type alias " ^ name ^ " "
-       ^ type_to_string dummy_type);
       Union_find.union_with (fun x _ -> x) ty dummy_type;
-
       ([ (name, { type_decl with kind = TypeDecl ty }) ], [])
       (* for nominal types there "constructor" is also needed at the expression level *)
   | { name; kind = NominalTypeDecl { ty; id }; _ } as type_decl ->
@@ -246,9 +232,6 @@ let get_type_env env
           instantiate
             (`for_all (type_decl.ty_variables |> StringSet.to_list, ty'))
         in
-
-        let ty = un_type_constructor ty in
-        print_endline (type_to_string ty ^ " - " ^ name);
         let ty =
           Union_find.make
             (TyConstructor
@@ -760,7 +743,6 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
         TIf { condition; consequent; alternative; ty; span } )
   | Ascribe { value; ty = ty'; _ } ->
       let ty' = to_inference_type true cs_state.types StringSet.empty ty' in
-      print_endline (type_to_string ty');
       let cs, expr' = generate_constraints cs_state ty' value in
       (CEq (ty', ty) :: cs, expr')
 
@@ -821,7 +803,6 @@ let unit_ify _ = ()
 
 let unify (s : ty) (t : ty) =
   let rec inner used (s : ty) (t : ty) =
-    print_endline ("unifiying " ^ type_to_string s ^ " and " ^ type_to_string t);
     let s, `root s_data = Union_find.find_set s in
     let t, `root t_data = Union_find.find_set t in
     if
@@ -1026,8 +1007,5 @@ and solve_constraints env = function
 
 let infer program env =
   let cos, program' = generate_constraints_top env program in
-
-  Typed_ast.program_to_string program' |> print_endline;
-  print_endline (constraints_to_string cos);
   solve_constraints [] cos;
   program'
