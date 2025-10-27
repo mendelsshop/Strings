@@ -12,6 +12,7 @@ module TypeEnv = Env.Make (struct
 end)
 
 module ConstructorEnv = Env.Make (struct
+  (* we thunk each type constructor so that the instantiation is unique for each time we look it up *)
   type t = unit -> ty texpr
 end)
 
@@ -85,11 +86,6 @@ let instantiate (`for_all (vars, ty)) =
                  (Union_find.make (TyRowExtend { label; field; rest_row }));
                replacement_root
            (*nominal types even though they contain other types are considered complete - inference should not change their contents *)
-           (* | TyNominal { name; id; ty; type_arguements } -> *)
-           (*     let ty = inner ty ((root, replacement_root) :: used) in *)
-           (*     Union_find.union replacement_root *)
-           (*       (Union_find.make (TyNominal { name; id; ty; type_arguements })); *)
-           (*     replacement_root *)
            | TyNominal _ | TyString | TyBoolean | TyRowEmpty | TyFloat
            | TyInteger | TyVar _ | TyUnit ->
                ty))
@@ -97,6 +93,10 @@ let instantiate (`for_all (vars, ty)) =
   in
   inner ty []
 
+(* difference between this and instiatiation: *)
+(* instatiation creates new types, this replaces new types *)
+(* this elimnates type constructors if they lead to a type alias *)
+(* this uses normal type variables as opposed to generalized type variables *)
 let inline_type_alias env (ty : ty) =
   let rec inner env used (ty : ty) : ty =
     let root, `root node = Union_find.find_set ty in
@@ -114,16 +114,13 @@ let inline_type_alias env (ty : ty) =
       | TyFloat | TyNominal _ ->
           ty
       | TyArrow { domain; range } ->
-          (* dont recostruct if anything under doesn't get instantiated *)
           let domain = inner env (root :: used) domain in
           let range = inner env (root :: used) range in
           union (TyArrow { domain; range })
       | TyRecord r ->
-          (* dont recostruct if anything under doesn't get generalized *)
           let r = inner env (root :: used) r in
           union (TyRecord r)
       | TyConstructor { ty; type_arguements } -> (
-          (* dont recostruct if anything under doesn't get generalized *)
           let type_arguements =
             StringMap.map (fun t -> inner env (root :: used) t) type_arguements
           in
@@ -133,11 +130,9 @@ let inline_type_alias env (ty : ty) =
           | _ ->
               inner (SimpleTypeEnv.union type_arguements env) (root :: used) ty)
       | TyVariant v ->
-          (* dont recostruct if anything under doesn't get generalized *)
           let v = inner env (root :: used) v in
           union (TyVariant v)
       | TyRowExtend { label; field; rest_row } ->
-          (* dont recostruct if anything under doesn't get generalized *)
           let field = inner env (root :: used) field in
           let rest_row = inner env (root :: used) rest_row in
           union (TyRowExtend { label; field; rest_row })
@@ -145,6 +140,7 @@ let inline_type_alias env (ty : ty) =
   inner env [] ty
 
 (* converts parsed type into types for inference *)
+(* the inline flag says whether to inline type constructors that are aliases, it should be only used after the type envoirnemnt (nominal and type aliases) are fully resolved *)
 let to_inference_type inline (env : TypeEnv.t) inner_env =
   let rec inner' inner_env ty =
     let inner = inner' inner_env in
@@ -193,7 +189,6 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
               List.combine (ty_variables |> StringSet.to_list) ty_arguements
               |> StringMap.of_list
             in
-
             if inline then inline_type_alias type_arguements ty
             else Union_find.make (TyConstructor { ty; type_arguements })
     | Parsed.TyArrow { domain; range } ->
@@ -206,8 +201,8 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
   in
   inner' inner_env
 
-(* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
-(* intend the onstraint solver to choose some appropriate value for them" *)
+(* adds the actual type of each type declaration, and "unifies" it with the coresponding dummy type *)
+(* TODO: maybe to be more "clean" (i.e. go completely with a constraint based approach) we could turn the type envoirment into constraints ... maybe thats overkill for solving the type envoirment *)
 let get_type_env env
     ( _,
       { kind = NominalTypeDecl { ty = dummy_type; _ } | TypeDecl dummy_type; _ }
@@ -216,7 +211,6 @@ let get_type_env env
       let ty = to_inference_type false env type_decl.ty_variables ty in
       Union_find.union_with (fun x _ -> x) ty dummy_type;
       ([ (name, { type_decl with kind = TypeDecl ty }) ], [])
-      (* for nominal types there "constructor" is also needed at the expression level *)
   | { name; kind = NominalTypeDecl { ty; id }; _ } as type_decl ->
       let get_type () =
         let ty' = to_inference_type false env type_decl.ty_variables ty in
@@ -274,26 +268,11 @@ let get_type_env env
             ty = Union_find.make (TyArrow { domain = ty'; range = ty });
           }
       in
-      (* if StringSet.cardinal type_decl.ty_variables > 0 then *)
-      (*   (* TODO: how to tie the knot for recursive type with type params (it depends on the type arguements) *) *)
-      (*   ( [ *)
-      (*       ( name, *)
-      (*         fun () -> *)
-      (*           { *)
-      (*             type_decl with *)
-      (*             kind = NominalTypeDecl { ty = fst (get_type ()); id }; *)
-      (*           } ); *)
-      (*     ], *)
-      (*     [ *)
-      (*       ( name, *)
-      (*         fun () -> *)
-      (*           let ty, ty' = get_type () in *)
-      (*           get_constructor ty ty' ); *)
-      (*     ] ) *)
-      (* else *)
       let ty, ty' = get_type () in
       Union_find.union_with (fun x _ -> x) ty dummy_type;
       ( [ (name, { type_decl with kind = NominalTypeDecl { ty; id } }) ],
+        (* for nominal types there "constructor" is also needed at the expression level *)
+        (* we thunk each type constructor so that the instantiation is unique for each time we look it up *)
         [ (name, fun () -> get_constructor ty ty') ] )
 
 let get_type_env decls =
@@ -316,22 +295,8 @@ let get_type_env decls =
     List.map
       (fun (name, decl) ->
         ( name,
-          {
-            decl with
-            kind =
-              TypeDecl
-                (Union_find.make
-                   (* hack to make sure nothing gets wrapped in a double type constructor *)
-                   (TyConstructor
-                      {
-                        ty = Union_find.make (ty_var (gensym ()));
-                        type_arguements =
-                          decl.ty_variables |> StringSet.to_list
-                          |> List.map (fun v ->
-                                 (v, Union_find.make (ty_var (gensym ()))))
-                          |> StringMap.of_list;
-                      }));
-          } ))
+          { decl with kind = TypeDecl (Union_find.make (ty_var (gensym ()))) }
+        ))
       decls
   in
   let _, decls = List.split decls in
@@ -349,12 +314,13 @@ let get_type_env decls =
         (types' @ types, constructors' @ constructors))
       envs ([], [])
   in
-  (* TODO: unify dummy_env and env *)
   {
     types = env |> TypeEnv.of_list |> TypeEnv.map inline_aliases_in_decl;
     constructors = constructors |> ConstructorEnv.of_list;
   }
 
+(* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
+(* intend the onstraint solver to choose some appropriate value for them" *)
 type 't co =
   | CExist of string list * 't co list
   | CEq of 't * 't
