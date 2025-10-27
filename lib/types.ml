@@ -59,7 +59,7 @@ type 't ty_f =
   | TyVariant of 't
   | TyGenVar of string
   | TyNominal of { name : string; id : int; ty : 't; type_arguements : 't list }
-  | TyConstructor of { ty : 't; type_arguements : 't list }
+  | TyConstructor of { ty : 't; type_arguements : 't StringMap.t }
 
 type 't type_decl = {
   name : string;
@@ -122,7 +122,9 @@ let type_to_string ty =
              | TyRowEmpty -> (unit, [])
              | TyConstructor { ty; type_arguements } ->
                  let type_arguements, used' =
-                   List.map (inner used) type_arguements |> List.split
+                   type_arguements |> StringMap.to_list |> List.split |> snd
+                   |> List.map (inner used)
+                   |> List.split
                  in
                  let type_arguements = String.concat ", " type_arguements in
                  let ty', used'' = inner ((root, sym) :: used) ty in

@@ -15,6 +15,10 @@ module ConstructorEnv = Env.Make (struct
   type t = unit -> ty texpr
 end)
 
+module SimpleTypeEnv = Env.Make (struct
+  type t = unit -> ty
+end)
+
 type env = { types : TypeEnv.t; constructors : ConstructorEnv.t }
 type level = int
 
@@ -60,7 +64,7 @@ let instantiate (`for_all (vars, ty)) =
                        {
                          ty;
                          type_arguements =
-                           List.map
+                           StringMap.map
                              (fun t ->
                                inner t ((root, replacement_root) :: used))
                              type_arguements;
@@ -141,10 +145,22 @@ let to_inference_type (env : TypeEnv.t) inner_env =
           in
 
           if List.length ty_arguements <> StringSet.cardinal ty_variables then
-            failwith "type constructor arrity mismatch"
+            failwith
+              ("type constructor arrity mismatch for " ^ name ^ ", expected "
+              ^ (ty_variables |> StringSet.cardinal |> string_of_int)
+              ^ ", got "
+              ^ (arguements |> List.length |> string_of_int))
           else
             Union_find.make
-              (TyConstructor { ty; type_arguements = ty_arguements })
+              (TyConstructor
+                 {
+                   ty;
+                   type_arguements =
+                     List.combine
+                       (ty_variables |> StringSet.to_list)
+                       ty_arguements
+                     |> StringMap.of_list;
+                 })
     | Parsed.TyArrow { domain; range } ->
         Union_find.make (TyArrow { domain = inner domain; range = inner range })
     | Parsed.TyRecord { fields; extends_record } ->
@@ -154,6 +170,79 @@ let to_inference_type (env : TypeEnv.t) inner_env =
         Union_find.make (TyVariant (list_to_row None variants))
   in
   inner' inner_env
+
+let rec inline_aliases env used (ty : ty) =
+  let root, `root node = Union_find.find_set ty in
+  ()
+  |> (List.assq_opt root used
+     |> Option.fold
+          ~some:(fun t () -> t)
+          ~none:(fun () ->
+            let replacement_root = Union_find.make (ty_var (gensym ())) in
+            match node.data with
+            | TyVar { name; _ } ->
+                SimpleTypeEnv.find_opt name env |> Option.value ~default:ty
+            | TyGenVar _ -> failwith "should be unreachable"
+            | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyString | TyFloat
+              ->
+                ty
+            | TyArrow { domain; range } ->
+                (* dont recostruct if anything under doesn't get instantiated *)
+                let domain =
+                  inline_aliases env ((root, replacement_root) :: used) domain
+                in
+                let range =
+                  inline_aliases env ((root, replacement_root) :: used) range
+                in
+                Union_find.union replacement_root
+                  (Union_find.make (TyArrow { domain; range }));
+                replacement_root
+            | TyRecord r ->
+                (* dont recostruct if anything under doesn't get generalized *)
+                let r =
+                  inline_aliases env ((root, replacement_root) :: used) r
+                in
+                Union_find.union replacement_root (Union_find.make (TyRecord r));
+                replacement_root
+            | TyConstructor { ty; type_arguements } -> (
+                (* dont recostruct if anything under doesn't get generalized *)
+                let type_arguements =
+                  StringMap.map
+                    (fun t ->
+                      inline_aliases env ((root, replacement_root) :: used) t)
+                    type_arguements
+                in
+                let _, `root node = Union_find.find_set ty in
+                match node.data with
+                | TyNominal _ ->
+                    Union_find.union replacement_root
+                      (Union_find.make (TyConstructor { ty; type_arguements }));
+                    replacement_root
+                | _ ->
+                    inline_aliases
+                      (SimpleTypeEnv.union type_arguements env)
+                      ((root, replacement_root) :: used)
+                      ty)
+            | TyVariant v ->
+                (* dont recostruct if anything under doesn't get generalized *)
+                let v =
+                  inline_aliases env ((root, replacement_root) :: used) v
+                in
+                Union_find.union replacement_root
+                  (Union_find.make (TyVariant v));
+                replacement_root
+            | TyRowExtend { label; field; rest_row } ->
+                (* dont recostruct if anything under doesn't get generalized *)
+                let field =
+                  inline_aliases env ((root, replacement_root) :: used) field
+                in
+                let rest_row =
+                  inline_aliases env ((root, replacement_root) :: used) rest_row
+                in
+                Union_find.union replacement_root
+                  (Union_find.make (TyRowExtend { label; field; rest_row }));
+                replacement_root
+            | TyNominal _ -> ty))
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
@@ -168,6 +257,7 @@ let get_type_env env
         (type_to_string ty ^ " type alias " ^ name ^ " "
        ^ type_to_string dummy_type);
       Union_find.union_with (fun x _ -> x) ty dummy_type;
+
       ([ (name, fun () -> { type_decl with kind = TypeDecl ty }) ], [])
       (* for nominal types there "constructor" is also needed at the expression level *)
   | { name; kind = NominalTypeDecl { ty; id }; _ } as type_decl ->
@@ -195,7 +285,9 @@ let get_type_env env
                  ty;
                  type_arguements =
                    type_decl.ty_variables |> StringSet.to_list
-                   |> List.map (fun _v -> Union_find.make (ty_var (gensym ())));
+                   |> List.map (fun v ->
+                          (v, Union_find.make (ty_var (gensym ()))))
+                   |> StringMap.of_list;
                })
         in
         TLambda
@@ -268,8 +360,9 @@ let get_type_env decls =
                         ty = Union_find.make (ty_var (gensym ()));
                         type_arguements =
                           decl.ty_variables |> StringSet.to_list
-                          |> List.map (fun _ ->
-                                 Union_find.make (ty_var (gensym ())));
+                          |> List.map (fun v ->
+                                 (v, Union_find.make (ty_var (gensym ()))))
+                          |> StringMap.of_list;
                       }));
           } ))
       decls
@@ -764,6 +857,12 @@ let unify (s : ty) (t : ty) =
       | ( (TyConstructor { type_arguements; ty }, _),
           (TyConstructor { type_arguements = type_arguements'; ty = ty' }, _) )
         ->
+          let type_arguements =
+            StringMap.to_list type_arguements |> List.split |> snd
+          in
+          let type_arguements' =
+            StringMap.to_list type_arguements' |> List.split |> snd
+          in
           inner used ty ty';
           List.iter2 (inner used) type_arguements type_arguements'
       | ( (TyNominal { id; name; _ }, _),
@@ -857,17 +956,20 @@ let generalize (`for_all (_, ty)) =
                (replacement_root, generalized')
            | TyConstructor { ty; type_arguements } ->
                (* dont recostruct if anything under doesn't get generalized *)
-               let type_arguements, generalized =
-                 List.map
-                   (fun t -> inner t ((root, replacement_root) :: used))
+               let generalized = ref StringSet.empty in
+               let type_arguements =
+                 StringMap.map
+                   (fun t ->
+                     let t, generalize =
+                       inner t ((root, replacement_root) :: used)
+                     in
+                     generalized := StringSet.union generalize !generalized;
+                     t)
                    type_arguements
-                 |> List.split
                in
                Union_find.union replacement_root
                  (Union_find.make (TyConstructor { ty; type_arguements }));
-               ( replacement_root,
-                 generalized |> List.fold_left StringSet.union StringSet.empty
-               )
+               (replacement_root, !generalized)
            | TyVariant v ->
                (* dont recostruct if anything under doesn't get generalized *)
                let v, generalized =

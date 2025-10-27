@@ -132,7 +132,8 @@ let rec pattern_to_string = function
       "`" ^ name ^ " (" ^ pattern_to_string value ^ ")"
   | PNominalConstructor { name; value; _ } ->
       name ^ "nominal (" ^ pattern_to_string value ^ ")"
-  | PAscribe _ -> failwith ""
+  | PAscribe { pattern; ty; _ } ->
+      "(" ^ pattern_to_string pattern ^ ": " ^ Types.Parsed.type_to_string ty
   | PAs { name; value; _ } -> name ^ " as " ^ pattern_to_string value
   | POr { patterns; _ } ->
       List.map pattern_to_string patterns |> String.concat " | "
