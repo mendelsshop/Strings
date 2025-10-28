@@ -183,7 +183,7 @@ let record p identifier_short_hand assign w =
        (between (char '{')
           (junk << char '}')
           (return w
-          <*> (p >> string "with" |> opt)
+          <*> (p >> junk >> string "with" |> opt)
           <*> sepby field (junk << char ';')))
   <?> "record"
 
