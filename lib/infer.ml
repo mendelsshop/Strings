@@ -131,7 +131,15 @@ let inline_type_alias env (ty : ty) =
           match node.data with
           | TyNominal _ -> union (TyConstructor { ty; type_arguements })
           | _ ->
-              inner (SimpleTypeEnv.union type_arguements env) (root :: used) ty)
+              (* if we reach this without recursion, when the type is something like `a foo` and foo is a type alias *)
+              (* if we didn't update root, because this function also is used for its effect, the type passed into this function would not get updated *)
+              (* but maybe there is a better way to do this *)
+              root :=
+                `node
+                  (inner
+                     (SimpleTypeEnv.union type_arguements env)
+                     (root :: used) ty);
+              ty)
       | TyVariant v ->
           let v = inner env (root :: used) v in
           union (TyVariant v)
