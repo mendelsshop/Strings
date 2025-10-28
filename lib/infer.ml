@@ -99,8 +99,7 @@ let instantiate (`for_all (vars, ty)) =
 (* difference between this and instiatiation: *)
 (* instatiation creates new types, this replaces new types *)
 (* this elimnates type constructors if they lead to a type alias *)
-(* this uses normal type variables as opposed to generalized type variables *)
-let inline_type_alias env (ty : ty) =
+let inline_type_alias instantiate env (ty : ty) =
   let rec inner env used (ty : ty) : ty =
     let root, `root node = Union_find.find_set ty in
 
@@ -111,10 +110,10 @@ let inline_type_alias env (ty : ty) =
         root
       in
       match node.data with
-      | TyVar { name; _ } ->
+      | TyGenVar name when instantiate ->
           SimpleTypeEnv.find_opt name env |> Option.value ~default:ty
-      | TyGenVar _ | TyBoolean | TyRowEmpty | TyUnit | TyInteger | TyString
-      | TyFloat | TyNominal _ ->
+      | TyGenVar _ | TyVar _ | TyBoolean | TyRowEmpty | TyUnit | TyInteger
+      | TyString | TyFloat | TyNominal _ ->
           ty
       | TyArrow { domain; range } ->
           let domain = inner env (root :: used) domain in
@@ -123,13 +122,13 @@ let inline_type_alias env (ty : ty) =
       | TyRecord r ->
           let r = inner env (root :: used) r in
           union (TyRecord r)
-      | TyConstructor { ty; type_arguements } -> (
+      | TyConstructor { ty = ty'; type_arguements } -> (
           let type_arguements =
             StringMap.map (fun t -> inner env (root :: used) t) type_arguements
           in
-          let _, `root node = Union_find.find_set ty in
+          let _, `root node = Union_find.find_set ty' in
           match node.data with
-          | TyNominal _ -> union (TyConstructor { ty; type_arguements })
+          | TyNominal _ -> union (TyConstructor { ty = ty'; type_arguements })
           | _ ->
               (* if we reach this without recursion, when the type is something like `a foo` and foo is a type alias *)
               (* if we didn't update root, because this function also is used for its effect, the type passed into this function would not get updated *)
@@ -138,7 +137,7 @@ let inline_type_alias env (ty : ty) =
                 `node
                   (inner
                      (SimpleTypeEnv.union type_arguements env)
-                     (root :: used) ty);
+                     (root :: used) ty');
               ty)
       | TyVariant v ->
           let v = inner env (root :: used) v in
@@ -153,8 +152,16 @@ let inline_type_alias env (ty : ty) =
 (* converts parsed type into types for inference *)
 (* the inline flag says whether to inline type constructors that are aliases, it should be only used after the type envoirnemnt (nominal and type aliases) are fully resolved *)
 let to_inference_type inline (env : TypeEnv.t) inner_env =
-  let rec inner' inner_env ty =
-    let inner = inner' inner_env in
+  let inner_env =
+    inner_env |> StringSet.to_list
+    |> List.map (fun v ->
+           ( v,
+             if inline then Union_find.make (ty_var (gensym ()))
+             else Union_find.make (TyGenVar v) ))
+    |> SimpleTypeEnv.of_list
+  in
+  let rec inner' ty =
+    let inner = inner' in
     let list_to_row base row =
       List.fold_right
         (fun { label; value } row ->
@@ -171,37 +178,41 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
     | Parsed.TyUnit -> Union_find.make TyUnit
     | Parsed.TyBoolean -> Union_find.make TyBoolean
     | Parsed.TyCon { name; arguements } ->
-        if
-          (* using tyvar is not good as its not generic *)
-          StringSet.mem name inner_env
-        then Union_find.make (TyGenVar name)
-        else
-          let {
-            ty_variables;
-            kind = NominalTypeDecl { ty; _ } | TypeDecl ty;
-            _;
-          } =
-            TypeEnv.find name env
-          in
-          let ty_arguements =
-            List.map
-              (inner' (StringSet.union ty_variables inner_env))
-              arguements
-          in
+        (* using tyvar is not good as its not generic *)
+        (SimpleTypeEnv.find_opt name inner_env
+        |> Option.fold
+             ~some:(fun t () -> t)
+             ~none:(fun () ->
+               let {
+                 ty_variables;
+                 kind = NominalTypeDecl { ty; _ } | TypeDecl ty;
+                 _;
+               } =
+                 TypeEnv.find name env
+               in
+               let ty_arguements = List.map inner' arguements in
 
-          if List.length ty_arguements <> StringSet.cardinal ty_variables then
-            failwith
-              ("type constructor arrity mismatch for " ^ name ^ ", expected "
-              ^ (ty_variables |> StringSet.cardinal |> string_of_int)
-              ^ ", got "
-              ^ (arguements |> List.length |> string_of_int))
-          else
-            let type_arguements =
-              List.combine (ty_variables |> StringSet.to_list) ty_arguements
-              |> StringMap.of_list
-            in
-            let ty = Union_find.make (TyConstructor { ty; type_arguements }) in
-            if inline then inline_type_alias SimpleTypeEnv.empty ty else ty
+               if List.length ty_arguements <> StringSet.cardinal ty_variables
+               then
+                 failwith
+                   ("type constructor arrity mismatch for " ^ name
+                  ^ ", expected "
+                   ^ (ty_variables |> StringSet.cardinal |> string_of_int)
+                   ^ ", got "
+                   ^ (arguements |> List.length |> string_of_int))
+               else
+                 let type_arguements =
+                   List.combine
+                     (ty_variables |> StringSet.to_list)
+                     ty_arguements
+                   |> StringMap.of_list
+                 in
+                 let ty =
+                   Union_find.make (TyConstructor { ty; type_arguements })
+                 in
+                 if inline then inline_type_alias true SimpleTypeEnv.empty ty
+                 else ty))
+          ()
     | Parsed.TyArrow { domain; range } ->
         Union_find.make (TyArrow { domain = inner domain; range = inner range })
     | Parsed.TyRecord { fields; extends_record } ->
@@ -210,7 +221,7 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
     | Parsed.TyVariant { variants } ->
         Union_find.make (TyVariant (list_to_row None variants))
   in
-  inner' inner_env
+  inner'
 
 (* adds the actual type of each type declaration, and "unifies" it with the coresponding dummy type *)
 (* TODO: maybe to be more "clean" (i.e. go completely with a constraint based approach) we could turn the type envoirment into constraints ... maybe thats overkill for solving the type envoirment *)
@@ -290,10 +301,11 @@ let get_type_env decls =
             let _, `root data = Union_find.find_set ty in
             match data.data with
             | TyNominal { ty = ty'; _ } ->
-                let _ = inline_type_alias SimpleTypeEnv.empty ty' in
+                let _ = inline_type_alias false SimpleTypeEnv.empty ty' in
                 NominalTypeDecl { ty; id }
             | _ -> failwith "unreachable")
-        | TypeDecl ty -> TypeDecl (inline_type_alias SimpleTypeEnv.empty ty));
+        | TypeDecl ty ->
+            TypeDecl (inline_type_alias false SimpleTypeEnv.empty ty));
     }
   in
   let dummy_env =
