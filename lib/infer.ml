@@ -192,8 +192,8 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
               List.combine (ty_variables |> StringSet.to_list) ty_arguements
               |> StringMap.of_list
             in
-            if inline then inline_type_alias type_arguements ty
-            else Union_find.make (TyConstructor { ty; type_arguements })
+            let ty = Union_find.make (TyConstructor { ty; type_arguements }) in
+            if inline then inline_type_alias SimpleTypeEnv.empty ty else ty
     | Parsed.TyArrow { domain; range } ->
         Union_find.make (TyArrow { domain = inner domain; range = inner range })
     | Parsed.TyRecord { fields; extends_record } ->
@@ -281,9 +281,9 @@ let get_type_env decls =
         | NominalTypeDecl { ty; id; _ } -> (
             let _, `root data = Union_find.find_set ty in
             match data.data with
-            | TyNominal { ty; _ } ->
-                NominalTypeDecl
-                  { ty = inline_type_alias SimpleTypeEnv.empty ty; id }
+            | TyNominal { ty = ty'; _ } ->
+                let _ = inline_type_alias SimpleTypeEnv.empty ty' in
+                NominalTypeDecl { ty; id }
             | _ -> failwith "unreachable")
         | TypeDecl ty -> TypeDecl (inline_type_alias SimpleTypeEnv.empty ty));
     }
@@ -704,8 +704,8 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       let cs'', alternative = generate_constraints cs_state ty alternative in
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
         TIf { condition; consequent; alternative; ty; span } )
-  | Ascribe { value; ty = ty'; _ } ->
-      let ty' = to_inference_type true cs_state.types StringSet.empty ty' in
+  | Ascribe { value; ty = ty''; _ } ->
+      let ty' = to_inference_type true cs_state.types StringSet.empty ty'' in
       let cs, expr' = generate_constraints cs_state ty value in
       (CEq (ty', ty) :: cs, expr')
 
