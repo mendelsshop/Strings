@@ -28,11 +28,7 @@ let enter_level () = incr current_level
 let leave_level () = decr current_level
 let ty_var name = TyVar { name; level = !current_level }
 
-let instantiate (`for_all (vars, ty)) =
-  let subst =
-    List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
-    |> Subst.of_list
-  in
+let instantiate_with_subst ty subst =
   let rec inner ty used =
     let root, `root node = Union_find.find_set ty in
     (List.assq_opt root used
@@ -92,6 +88,13 @@ let instantiate (`for_all (vars, ty)) =
       ()
   in
   inner ty []
+
+let instantiate (`for_all (vars, ty)) =
+  let subst =
+    List.map (fun v -> (v, Union_find.make (ty_var (gensym ())))) vars
+    |> Subst.of_list
+  in
+  instantiate_with_subst ty subst
 
 (* difference between this and instiatiation: *)
 (* instatiation creates new types, this replaces new types *)
@@ -220,23 +223,17 @@ let get_type_env env
         in
         (ty, ty')
       in
-      let sym = gensym () in
       let get_constructor ty ty' =
-        let ty' =
-          instantiate
-            (`for_all (type_decl.ty_variables |> StringSet.to_list, ty'))
+        let sym = gensym () in
+        let vars =
+          type_decl.ty_variables |> StringSet.to_list
+          |> List.map (fun v -> (v, Union_find.make (ty_var (gensym ()))))
+          |> StringMap.of_list
         in
+        let ty' = instantiate_with_subst ty' vars in
+
         let ty =
-          Union_find.make
-            (TyConstructor
-               {
-                 ty;
-                 type_arguements =
-                   type_decl.ty_variables |> StringSet.to_list
-                   |> List.map (fun v ->
-                          (v, Union_find.make (ty_var (gensym ()))))
-                   |> StringMap.of_list;
-               })
+          Union_find.make (TyConstructor { ty; type_arguements = vars })
         in
         TLambda
           {
@@ -709,7 +706,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
         TIf { condition; consequent; alternative; ty; span } )
   | Ascribe { value; ty = ty'; _ } ->
       let ty' = to_inference_type true cs_state.types StringSet.empty ty' in
-      let cs, expr' = generate_constraints cs_state ty' value in
+      let cs, expr' = generate_constraints cs_state ty value in
       (CEq (ty', ty) :: cs, expr')
 
 let rec generate_constraints_top cs_state = function
