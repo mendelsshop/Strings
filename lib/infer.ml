@@ -165,13 +165,22 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
   in
   let rec inner' ty =
     let inner = inner' in
-    let list_to_row base row =
-      List.fold_right
-        (fun { label; value } row ->
+    let list_to_row base row f =
+      List.fold_right f row
+        (Option.value base ~default:(Union_find.make TyRowEmpty))
+    in
+    let list_to_row_record base row =
+      list_to_row base row (fun { label; value } row ->
           Union_find.make
             (TyRowExtend { label; field = inner value; rest_row = row }))
-        row
-        (Option.value base ~default:(Union_find.make TyRowEmpty))
+    in
+    let list_to_row_variant row =
+      list_to_row None row (function
+        | Parsed.Tag { label; value } ->
+            fun rest_row ->
+              Union_find.make
+                (TyRowExtend { label; field = inner value; rest_row })
+        | Parsed.Type _ -> failwith "")
     in
 
     match ty with
@@ -220,9 +229,9 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
         Union_find.make (TyArrow { domain = inner domain; range = inner range })
     | Parsed.TyRecord { fields; extends_record } ->
         let extends_record = Option.map inner extends_record in
-        Union_find.make (TyRecord (list_to_row extends_record fields))
+        Union_find.make (TyRecord (list_to_row_record extends_record fields))
     | Parsed.TyVariant { variants } ->
-        Union_find.make (TyVariant (list_to_row None variants))
+        Union_find.make (TyVariant (list_to_row_variant variants))
   in
   inner'
 

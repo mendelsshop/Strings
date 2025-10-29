@@ -167,6 +167,11 @@ let unit w =
 
 let paren p = between (junk << char '(') (junk << char ')') p <?> "paren"
 
+let inspect p to_string =
+  p <$> fun x ->
+  to_string x |> print_endline;
+  x
+
 let record p identifier_short_hand assign w =
   let field =
     seq (identifier ignore_span) (junk << char assign << p)
@@ -238,12 +243,12 @@ let rec typeP =
               (junk << char '[')
               (junk << char ']')
               (sepby1
-                 (seq
-                    (variant_identifier ignore_span)
-                    (opt (junk << string "of" << basic_type)
-                    <$> Option.value ~default:TyUnit))
+                 (return (fun label value -> Tag { label; value })
+                 <*> variant_identifier ignore_span
+                 <*> (opt (junk << string "of" << basic_type)
+                     <$> Option.value ~default:TyUnit)
+                 <|> (typeP <$> fun t -> Type t))
                  (junk << char '|'))
-            <$> List.map (fun (label, value) -> { label; value })
             <$> fun variants -> TyVariant { variants }
           in
           let functionP =

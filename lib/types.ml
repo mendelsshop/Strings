@@ -10,7 +10,9 @@ module Parsed = struct
     | TyBoolean
     | TyArrow of { domain : ty; range : ty }
     | TyRecord of { fields : ty row; extends_record : ty Option.t }
-    | TyVariant of { variants : ty row }
+    | TyVariant of { variants : variant_row list }
+
+  and variant_row = Tag of ty field | Type of ty
 
   let rec type_to_string = function
     | TyCon { name; arguements } ->
@@ -35,8 +37,10 @@ module Parsed = struct
     | TyVariant { variants } ->
         "["
         ^ (variants
-          |> List.map (fun { label; value } ->
-                 "`" ^ label ^ " of " ^ type_to_string value)
+          |> List.map (function
+               | Tag { label; value } ->
+                   "`" ^ label ^ " of " ^ type_to_string value
+               | Type t -> type_to_string t)
           |> String.concat ", ")
         ^ "]"
     | TyArrow { domain; range } ->
