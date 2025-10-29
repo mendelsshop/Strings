@@ -99,14 +99,17 @@ let instantiate (`for_all (vars, ty)) =
 (* difference between this and instiatiation: *)
 (* instatiation creates new types, this replaces new types *)
 (* this elimnates type constructors if they lead to a type alias *)
-let inline_type_alias instantiate env (ty : ty) =
-  let rec inner env used (ty : ty) : ty =
+(* also inline flattens out rows with extensions that are records or variants if neccessary *)
+(* should be run for each (used inputted) type, but only after type all type declarations have an actual type *)
+
+let inline_type_alias instantiate env ty =
+  let rec inner ?node' ?context env used ty : ty =
     let root, `root node = Union_find.find_set ty in
 
     if List.memq root used then root
     else
       let union ty =
-        node.data <- ty;
+        (Option.value ~default:node node').data <- ty;
         root
       in
       match node.data with
@@ -120,8 +123,8 @@ let inline_type_alias instantiate env (ty : ty) =
           let range = inner env (root :: used) range in
           union (TyArrow { domain; range })
       | TyRecord r ->
-          let r = inner env (root :: used) r in
-          union (TyRecord r)
+          let r = inner ~context:`Record ~node':node env (root :: used) r in
+          if context = Some `Record then r else union (TyRecord r)
       | TyConstructor { ty = ty'; type_arguements } -> (
           let type_arguements =
             StringMap.map (fun t -> inner env (root :: used) t) type_arguements
@@ -133,15 +136,15 @@ let inline_type_alias instantiate env (ty : ty) =
               (* if we reach this without recursion, when the type is something like `a foo` and foo is a type alias *)
               (* if we didn't update root, because this function also is used for its effect, the type passed into this function would not get updated *)
               (* but maybe there is a better way to do this *)
-              root :=
-                `node
-                  (inner
-                     (SimpleTypeEnv.union type_arguements env)
-                     (root :: used) ty');
+              let _ =
+                inner ~node':node
+                  (SimpleTypeEnv.union type_arguements env)
+                  (root :: used) ty'
+              in
               ty)
       | TyVariant v ->
-          let v = inner env (root :: used) v in
-          union (TyVariant v)
+          let v = inner ~context:`Variant ~node':node env (root :: used) v in
+          if context = Some `Variant then v else union (TyVariant v)
       | TyRowExtend { label; field; rest_row } ->
           let field = inner env (root :: used) field in
           let rest_row = inner env (root :: used) rest_row in
@@ -580,7 +583,9 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
   | RecordExtend { record; new_fields; span; _ } ->
       let r_var = gensym () in
       let r_ty = Union_find.make (ty_var r_var) in
-      let cos, record = generate_constraints cs_state r_ty record in
+      let cos, record =
+        generate_constraints cs_state (Union_find.make (TyRecord r_ty)) record
+      in
       let new_field_tys_and_constraints =
         List.map
           (fun { label; value } ->
