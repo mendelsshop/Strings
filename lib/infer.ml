@@ -180,7 +180,15 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
             fun rest_row ->
               Union_find.make
                 (TyRowExtend { label; field = inner value; rest_row })
-        | Parsed.Type _ -> failwith "")
+        | Parsed.Type ty ->
+            fun rest_row ->
+              let _field = inner ty in
+              let field' = Union_find.make (TyVariant rest_row) in
+              (* when doing unification with field at some later point also unify it with field *)
+              (* partiall problem is that we may not want to mutate field as it might modify other type defintions *)
+              (* also its not real unification because its only if there closed rows and with unification of normal different closed rows it fails, but here were just flattening out any variant row *)
+
+              field')
     in
 
     match ty with
