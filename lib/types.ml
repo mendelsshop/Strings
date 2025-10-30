@@ -60,7 +60,7 @@ type 't ty_f =
   | TyRowEmpty
   | TyRowExtend of { label : string; field : 't; rest_row : 't }
   | TyRecord of 't
-  | TyVariant of 't
+  | TyVariant of 't * 't list
   | TyGenVar of string
   | TyNominal of { name : string; id : int; ty : 't; type_arguements : 't list }
   | TyConstructor of { ty : 't; type_arguements : 't StringMap.t }
@@ -75,6 +75,15 @@ type 't type_decl = {
 and 't type_decl_kind =
   | TypeDecl of 't
   | NominalTypeDecl of { ty : 't; id : int }
+
+let decl_to_string type_to_string
+    { name; kind = TypeDecl ty | NominalTypeDecl { ty; _ }; _ } =
+  "type " ^ name ^ " = " ^ type_to_string ty
+
+let decls_to_string type_to_string decls =
+  decls |> StringMap.to_list |> List.split |> snd
+  |> List.map (decl_to_string type_to_string)
+  |> String.concat "\n"
 
 type ty = 'a ty_f Union_find.elem as 'a
 
@@ -91,7 +100,7 @@ let ftv_ty (ty : ty) =
             (inner domain (root :: used))
             (inner range (root :: used))
       | TyRecord r -> inner r (root :: used)
-      | TyVariant v -> inner v (root :: used)
+      | TyVariant (v, _) -> inner v (root :: used)
       | TyNominal { ty; _ } -> inner ty (root :: used)
       | TyRowExtend { field; rest_row; _ } ->
           StringSet.union
@@ -145,11 +154,13 @@ let type_to_string ty =
                  in
                  ( label ^ type_delim ^ field ^ delim ^ row_extension,
                    used' @ used'' )
-             | TyVariant row ->
+             | TyVariant (row, others) ->
+                 let _count = List.length others in
                  let t, used' =
                    inner ((root, sym) :: used) ~unit:"" ~delim:"| "
                      ~type_delim:" " row
                  in
+                 (* ("(" ^ t ^ "others " ^ string_of_int count ^ ")", used') *)
                  ("(" ^ t ^ ")", used')
              | TyArrow { domain; range } ->
                  let x_string, used' = inner ((root, sym) :: used) domain in

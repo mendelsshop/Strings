@@ -67,10 +67,11 @@ let instantiate_with_subst ty subst =
                              type_arguements;
                        }));
                replacement_root
-           | TyVariant v ->
+           | TyVariant (v, other_rows) ->
                (* dont recostruct if anything under doesn't get generalized *)
                let v = inner v ((root, replacement_root) :: used) in
-               Union_find.union replacement_root (Union_find.make (TyVariant v));
+               Union_find.union replacement_root
+                 (Union_find.make (TyVariant (v, other_rows)));
                replacement_root
            | TyRowExtend { label; field; rest_row } ->
                (* dont recostruct if anything under doesn't get generalized *)
@@ -103,7 +104,7 @@ let instantiate (`for_all (vars, ty)) =
 (* should be run for each (used inputted) type, but only after type all type declarations have an actual type *)
 
 let inline_type_alias instantiate env ty =
-  let rec inner ?node' ?context env used ty : ty =
+  let rec inner' ?node' ?context env used k ty : ty =
     let root, `root node = Union_find.find_set ty in
 
     if List.memq root used then root
@@ -114,41 +115,66 @@ let inline_type_alias instantiate env ty =
       in
       match node.data with
       | TyGenVar name when instantiate ->
-          SimpleTypeEnv.find_opt name env |> Option.value ~default:ty
+          SimpleTypeEnv.find_opt name env |> Option.value ~default:ty |> k
       | TyGenVar _ | TyVar _ | TyBoolean | TyRowEmpty | TyUnit | TyInteger
       | TyString | TyFloat | TyNominal _ ->
-          ty
+          ty |> k
       | TyArrow { domain; range } ->
           let domain = inner env (root :: used) domain in
           let range = inner env (root :: used) range in
-          union (TyArrow { domain; range })
+          union (TyArrow { domain; range }) |> k
       | TyRecord r ->
-          let r = inner ~context:`Record ~node':node env (root :: used) r in
+          let node'' =
+            if context = Some `Record && Option.is_none node' then Some node
+            else node'
+          in
+          let r = inner ~context:`Record ?node':node'' env (root :: used) r in
           if context = Some `Record then r else union (TyRecord r)
       | TyConstructor { ty = ty'; type_arguements } -> (
           let type_arguements =
             StringMap.map (fun t -> inner env (root :: used) t) type_arguements
           in
-          let _, `root node = Union_find.find_set ty' in
-          match node.data with
+          let _, `root node'' = Union_find.find_set ty' in
+          match node''.data with
           | TyNominal _ -> union (TyConstructor { ty = ty'; type_arguements })
           | _ ->
               (* if we reach this without recursion, when the type is something like `a foo` and foo is a type alias *)
               (* if we didn't update root, because this function also is used for its effect, the type passed into this function would not get updated *)
               (* but maybe there is a better way to do this *)
-              let _ =
-                inner ~node':node
+              let ty =
+                inner'
+                  ~node':(Option.value ~default:node node')
+                  ?context
                   (SimpleTypeEnv.union type_arguements env)
-                  (root :: used) ty'
+                  (root :: used) k ty'
               in
               ty)
-      | TyVariant v ->
-          let v = inner ~context:`Variant ~node':node env (root :: used) v in
-          if context = Some `Variant then v else union (TyVariant v)
+      | TyVariant (v, other_rows) ->
+          let context' = Some `Variant in
+          let node'' =
+            if context = Some `Variant && Option.is_none node' then Some node
+            else node'
+          in
+          let rec map node' = function
+            | x :: xs ->
+                inner' ?node' ?context:context' env (root :: used)
+                  (fun t ->
+                    let _, `root data = Union_find.find_set t in
+                    match data.data with
+                    | TyRowEmpty -> map (Some data) xs
+                    | _ -> failwith "expected fully expanded variant")
+                  x
+            | [] -> Union_find.make TyRowEmpty
+          in
+          let v = map node'' (v :: other_rows) in
+          if context = Some `Variant then v
+          else union (TyVariant (v, other_rows))
       | TyRowExtend { label; field; rest_row } ->
           let field = inner env (root :: used) field in
-          let rest_row = inner env (root :: used) rest_row in
+          let rest_row = inner' ?context env (root :: used) k rest_row in
           union (TyRowExtend { label; field; rest_row })
+  and inner ?node' ?context env used ty : ty =
+    inner' ?node' ?context env used Fun.id ty
   in
   inner env [] ty
 
@@ -183,7 +209,7 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
         | Parsed.Type ty ->
             fun rest_row ->
               let _field = inner ty in
-              let field' = Union_find.make (TyVariant rest_row) in
+              let field' = Union_find.make (TyVariant (rest_row, [ _field ])) in
               (* when doing unification with field at some later point also unify it with field *)
               (* partiall problem is that we may not want to mutate field as it might modify other type defintions *)
               (* also its not real unification because its only if there closed rows and with unification of normal different closed rows it fails, but here were just flattening out any variant row *)
@@ -239,7 +265,7 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
         let extends_record = Option.map inner extends_record in
         Union_find.make (TyRecord (list_to_row_record extends_record fields))
     | Parsed.TyVariant { variants } ->
-        Union_find.make (TyVariant (list_to_row_variant variants))
+        Union_find.make (TyVariant (list_to_row_variant variants, []))
   in
   inner'
 
@@ -351,10 +377,9 @@ let get_type_env decls =
         (types' @ types, constructors' @ constructors))
       envs ([], [])
   in
-  {
-    types = env |> TypeEnv.of_list |> TypeEnv.map inline_aliases_in_decl;
-    constructors = constructors |> ConstructorEnv.of_list;
-  }
+  let types = env |> TypeEnv.of_list |> TypeEnv.map inline_aliases_in_decl in
+  print_endline (decls_to_string type_to_string types);
+  { types; constructors = constructors |> ConstructorEnv.of_list }
 
 (* do we need CExist: quote from tapl "Furthermore, we must bind them existentially, because we *)
 (* intend the onstraint solver to choose some appropriate value for them" *)
@@ -438,9 +463,14 @@ let rec generate_constraints_pattern cs_env ty = function
       let ty' =
         Union_find.make
           (TyVariant
-             (Union_find.make
-                (TyRowExtend
-                   { label = name; field = value_ty; rest_row = other_variants })))
+             ( Union_find.make
+                 (TyRowExtend
+                    {
+                      label = name;
+                      field = value_ty;
+                      rest_row = other_variants;
+                    }),
+               [] ))
       in
       ( env,
         [ CExist ([ other_variants_var; value_var ], CEq (ty', ty) :: cs) ],
@@ -712,13 +742,14 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
                 ( ty,
                   Union_find.make
                     (TyVariant
-                       (Union_find.make
-                          (TyRowExtend
-                             {
-                               label = name;
-                               field = r_ty;
-                               rest_row = rest_row_ty;
-                             }))) )
+                       ( Union_find.make
+                           (TyRowExtend
+                              {
+                                label = name;
+                                field = r_ty;
+                                rest_row = rest_row_ty;
+                              }),
+                         [] )) )
               :: cs );
         ],
         TConstructor { name; value; ty; span } )
@@ -845,7 +876,8 @@ let unify (s : ty) (t : ty) =
       | (TyBoolean, _), (TyBoolean, _) -> ()
       | (TyRowEmpty, _), (TyRowEmpty, _) -> ()
       | (TyRecord r, _), (TyRecord r', _) -> inner ((s, t) :: used) r r'
-      | (TyVariant v, _), (TyVariant v', _) -> inner ((s, t) :: used) v v'
+      | (TyVariant (v, _other_rows), _), (TyVariant (v', _other_rows'), _) ->
+          inner ((s, t) :: used) v v'
       | ( (TyRowExtend { label; field; rest_row : ty }, _),
           ((TyRowExtend _ as ty_data), ty) ) ->
           (* | ((TyRowExtend _ as  ty_data, ty), (TyRowExtend (l, t, r), _)) -> *)
@@ -940,12 +972,13 @@ let generalize (`for_all (_, ty)) =
                Union_find.union replacement_root
                  (Union_find.make (TyConstructor { ty; type_arguements }));
                (replacement_root, !generalized)
-           | TyVariant v ->
+           | TyVariant (v, other_rows) ->
                (* dont recostruct if anything under doesn't get generalized *)
                let v, generalized =
                  inner v ((root, replacement_root) :: used)
                in
-               Union_find.union replacement_root (Union_find.make (TyVariant v));
+               Union_find.union replacement_root
+                 (Union_find.make (TyVariant (v, other_rows)));
                (replacement_root, generalized)
            | TyRowExtend { label; field; rest_row } ->
                (* dont recostruct if anything under doesn't get generalized *)

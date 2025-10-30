@@ -71,7 +71,7 @@ let rec type_subset ty s =
             ~none:(Some true))
         s1 s2
       |> StringMap.for_all (fun _ b -> b)
-  | TyVariant s1, SVariant s2 ->
+  | TyVariant (s1, _), SVariant s2 ->
       let s1, closed = flattern_row s1 in
       closed
       && StringMap.merge
