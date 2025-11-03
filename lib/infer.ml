@@ -847,7 +847,7 @@ let unify (s : ty) (t : ty) =
         used
     then ()
     else if s == t then ()
-    else
+    else (* print_endline (type_to_string s ^ " ~=  " ^ type_to_string t); *)
       match ((s_data.data, s), (t_data.data, t)) with
       | ( (TyArrow { domain; range }, _),
           (TyArrow { domain = domain1; range = range1 }, _) ) ->
@@ -1045,5 +1045,7 @@ and solve_constraints env = function
 
 let infer program env =
   let cos, program' = generate_constraints_top env program in
+  print_endline (constraints_to_string cos);
+  print_endline (program_to_string program');
   solve_constraints [] cos;
   program'

@@ -1,17 +1,5 @@
+(include_subdirs qualified)
+
 (library
  (name strings)
- (libraries AMPCL monads)
- (modules
-  Infer
-  Parser
-  Ast
-  Ast2
-  Typed_ast
-  Letrec_checking
-  Eval
-  Eval_ast
-  Types
-  Gensym
-  Pattern_checking
-  Utils
-  Union_find))
+ (libraries AMPCL monads wasm binaryen))

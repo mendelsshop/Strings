@@ -15,6 +15,8 @@ depends: [
   "monads"
   "AMPCL"
   "alcotest" {with-test}
+  "binaryen"
+  "wasm"
   "odoc" {with-doc}
 ]
 build: [
