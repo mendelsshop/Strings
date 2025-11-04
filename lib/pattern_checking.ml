@@ -199,8 +199,8 @@ let error_to_string file { redudedant; exhaustive; loc = (); _ } =
   let redudedant =
     redudedant
     |> List.map (fun p ->
-           span_to_line_highlight (span_of_pattern p) file
-           ^ "redudedant pattern: " ^ tpattern_to_string p)
+        span_to_line_highlight (span_of_pattern p) file
+        ^ "redudedant pattern: " ^ tpattern_to_string p)
     |> List.map (( ^ ) "redudedant pattern: ")
   in
   let errors =
@@ -214,11 +214,12 @@ let error_to_string file { redudedant; exhaustive; loc = (); _ } =
 let errors_to_string file errors =
   errors |> List.map (error_to_string file) |> String.concat "\n\n"
 
-let rec check_expr = function
-  | TVar _ | TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _ -> []
+let rec check_expr : texpr -> _ = function
+  | `TVar _ | `TFloat _ | `TString _ | `TInteger _ | `TBoolean _ | `TUnit _ ->
+      []
   (* its possible that were matching against is a single value like 1, or `Foo 1 ... *)
   (* but right now we just go by the type *)
-  | TMatch { cases = case :: cases; value; span; _ } ->
+  | `TMatch { cases = case :: cases; value; span; _ } ->
       let ty = type_of_expr value in
       let space = pattern_to_space case.pattern in
       let patterns = List.map (fun { Ast.pattern; _ } -> pattern) cases in
@@ -234,9 +235,9 @@ let rec check_expr = function
       @ List.concat_map
           (fun { Ast.result; _ } -> check_expr result)
           (case :: cases)
-  | TMatch { ty = _ty; _ } ->
+  | `TMatch { ty = _ty; _ } ->
       [ { redudedant = []; exhaustive = None; loc = () } ]
-  | TLambda { parameter; parameter_ty; body; _ } ->
+  | `TLambda { parameter; parameter_ty; body; _ } ->
       let space = pattern_to_space parameter in
       let redudedant_patterns = !duplicate_patterns in
       reset duplicate_patterns;
@@ -248,7 +249,8 @@ let rec check_expr = function
         loc = ();
       }
       :: check_expr body
-  | TLet { name; name_ty; e1; e2; _ } | TLetRec { name; name_ty; e1; e2; _ } ->
+  | `TLet { name; name_ty; e1; e2; _ } | `TLetRec { name; name_ty; e1; e2; _ }
+    ->
       let space = pattern_to_space name in
       let redudedant_patterns = !duplicate_patterns in
       reset duplicate_patterns;
@@ -261,17 +263,17 @@ let rec check_expr = function
       }
       :: check_expr e1
       @ check_expr e2
-  | TApplication { lambda; arguement; _ } ->
+  | `TApplication { lambda; arguement; _ } ->
       check_expr lambda @ check_expr arguement
-  | TIf { condition; consequent; alternative; _ } ->
+  | `TIf { condition; consequent; alternative; _ } ->
       check_expr condition @ check_expr consequent @ check_expr alternative
-  | TRecordAccess { record; _ } -> check_expr record
-  | TRecordExtend { record; new_fields; _ } ->
+  | `TRecordAccess { record; _ } -> check_expr record
+  | `TRecordExtend { record; new_fields; _ } ->
       check_expr record
       @ List.concat_map (fun { value; _ } -> check_expr value) new_fields
-  | TRecord { fields; _ } ->
+  | `TRecord { fields; _ } ->
       List.concat_map (fun { value; _ } -> check_expr value) fields
-  | TConstructor { value; _ } | TNominalConstructor { value; _ } ->
+  | `TConstructor { value; _ } | `TNominalConstructor { value; _ } ->
       check_expr value
 
 let check_tl : ty top_level -> _ = function
@@ -295,4 +297,4 @@ let check tls =
   List.concat_map check_tl tls
   (* maybe do this filtering at error construction time *)
   |> List.filter (fun { redudedant; exhaustive; loc = (); _ } ->
-         Option.is_some exhaustive || not (List.is_empty redudedant))
+      Option.is_some exhaustive || not (List.is_empty redudedant))

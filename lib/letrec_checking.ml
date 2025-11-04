@@ -1,9 +1,8 @@
 open Typed_ast
-open Types
 open Utils
 
 module Env = Env.Make (struct
-  type t = ty texpr
+  type t = texpr
 end)
 
 let remove_all vars = Env.filter (fun key _ -> not (List.mem key vars))
@@ -24,27 +23,26 @@ let rec get_binders = function
   | PTUnit _ -> []
 
 (* we dont autimatically turn letrec exprs into string we do it on demand as in most cases letrec are correct *)
-let rec check_expr rec_env = function
-  | TVar { ident; _ } ->
+let rec check_expr rec_env : texpr -> _ = function
+  | `TVar { ident; _ } ->
       Env.find_opt ident rec_env
       |> Option.fold ~none:() ~some:(fun letrec_string_function ->
-             failwith
-               ("recursive variable " ^ ident ^ " of "
-              ^ letrec_string_function ()
-              ^ " used in illegal postion (must be enclosed in a labmda)."))
-  | TFloat _ -> ()
-  | TString _ -> ()
-  | TInteger _ -> ()
-  | TBoolean _ -> ()
-  | TLambda { body; _ } -> check_expr StringMap.empty body
-  | TApplication { lambda; arguement; _ } ->
+          failwith
+            ("recursive variable " ^ ident ^ " of " ^ letrec_string_function ()
+           ^ " used in illegal postion (must be enclosed in a labmda)."))
+  | `TFloat _ -> ()
+  | `TString _ -> ()
+  | `TInteger _ -> ()
+  | `TBoolean _ -> ()
+  | `TLambda { body; _ } -> check_expr StringMap.empty body
+  | `TApplication { lambda; arguement; _ } ->
       check_expr rec_env lambda;
       check_expr rec_env arguement
-  | TUnit _ -> ()
-  | TLet { e1; e2; name; _ } ->
+  | `TUnit _ -> ()
+  | `TLet { e1; e2; name; _ } ->
       check_expr rec_env e1;
       check_expr (remove_all (get_binders name) rec_env) e2
-  | TLetRec { name; e1; e2; _ } as letrec ->
+  | `TLetRec { name; e1; e2; _ } as letrec ->
       check_expr
         (Env.union
            (get_binders name
@@ -53,24 +51,24 @@ let rec check_expr rec_env = function
            rec_env)
         e1;
       check_expr rec_env e2
-  | TIf { condition; consequent; alternative; _ } ->
+  | `TIf { condition; consequent; alternative; _ } ->
       check_expr rec_env condition;
       check_expr rec_env consequent;
       check_expr rec_env alternative
-  | TRecordAccess { record; _ } -> check_expr rec_env record
-  | TRecordExtend { new_fields; record; _ } ->
+  | `TRecordAccess { record; _ } -> check_expr rec_env record
+  | `TRecordExtend { new_fields; record; _ } ->
       check_expr rec_env record;
       List.iter (fun { value; _ } -> check_expr rec_env value) new_fields
-  | TRecord { fields; _ } ->
+  | `TRecord { fields; _ } ->
       List.iter (fun { value; _ } -> check_expr rec_env value) fields
-  | TMatch { value; cases; _ } ->
+  | `TMatch { value; cases; _ } ->
       check_expr rec_env value;
       List.iter
         (fun { Ast.result; pattern } ->
           check_expr (remove_all (get_binders pattern) rec_env) result)
         cases
-  | TConstructor { value; _ } -> check_expr rec_env value
-  | TNominalConstructor { value; _ } -> check_expr rec_env value
+  | `TConstructor { value; _ } -> check_expr rec_env value
+  | `TNominalConstructor { value; _ } -> check_expr rec_env value
 
 let check_top_level = function
   | TBind { value; _ } -> check_expr Env.empty value

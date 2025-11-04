@@ -13,7 +13,7 @@ end)
 
 module ConstructorEnv = Env.Make (struct
   (* we thunk each type constructor so that the instantiation is unique for each time we look it up *)
-  type t = unit -> ty texpr
+  type t = unit -> texpr
 end)
 
 module SimpleTypeEnv = Env.Make (struct
@@ -184,9 +184,9 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
   let inner_env =
     inner_env |> StringSet.to_list
     |> List.map (fun v ->
-           ( v,
-             if inline then Union_find.make (ty_var (gensym ()))
-             else Union_find.make (TyGenVar v) ))
+        ( v,
+          if inline then Union_find.make (ty_var (gensym ()))
+          else Union_find.make (TyGenVar v) ))
     |> SimpleTypeEnv.of_list
   in
   let rec inner' ty =
@@ -288,7 +288,7 @@ let get_type_env env
         in
         (ty, ty')
       in
-      let get_constructor ty ty' =
+      let get_constructor ty ty' : texpr =
         let sym = gensym () in
         let vars =
           type_decl.ty_variables |> StringSet.to_list
@@ -300,7 +300,7 @@ let get_type_env env
         let ty =
           Union_find.make (TyConstructor { ty; type_arguements = vars })
         in
-        TLambda
+        `TLambda
           {
             span = { start = 0; finish = 0 };
             parameter =
@@ -313,11 +313,11 @@ let get_type_env env
                 };
             parameter_ty = ty';
             body =
-              TNominalConstructor
+              `TNominalConstructor
                 {
                   name;
                   value =
-                    TVar
+                    `TVar
                       {
                         ident = sym;
                         ty = ty';
@@ -556,7 +556,7 @@ let shaddow { types; constructors } binders =
         (ConstructorEnv.of_list binders);
   }
 
-let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
+let rec generate_constraints cs_state ty : _ -> ty co list * texpr = function
   | Lambda { parameter; body; span } ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
@@ -575,7 +575,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
                      ty )
               :: cs );
         ],
-        TLambda { parameter; parameter_ty = a1_ty; body; ty; span } )
+        `TLambda { parameter; parameter_ty = a1_ty; body; ty; span } )
   | Record { fields; span } ->
       let field_tys_and_constraints =
         List.map
@@ -599,7 +599,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
             ( variables,
               CEq (ty, Union_find.make (TyRecord record_ty)) :: constraints );
         ],
-        TRecord
+        `TRecord
           {
             fields =
               List.map
@@ -626,7 +626,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
                              { label = projector; field = r_ty; rest_row }))) )
               :: cos );
         ],
-        TRecordAccess { record; projector; ty; span } )
+        `TRecordAccess { record; projector; ty; span } )
   | RecordExtend { record; new_fields; span; _ } ->
       let r_var = gensym () in
       let r_ty = Union_find.make (ty_var r_var) in
@@ -656,7 +656,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
               CEq (ty, Union_find.make (TyRecord new_record_ty)) :: constraints
             );
         ],
-        TRecordExtend
+        `TRecordExtend
           {
             span;
             record;
@@ -666,20 +666,20 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
                 new_field_tys_and_constraints;
             ty;
           } )
-  | Unit span -> ([ CEq (ty, Union_find.make TyUnit) ], TUnit { span; ty })
+  | Unit span -> ([ CEq (ty, Union_find.make TyUnit) ], `TUnit { span; ty })
   | Integer { value; span; _ } ->
-      ([ CEq (ty, Union_find.make TyInteger) ], TInteger { value; ty; span })
+      ([ CEq (ty, Union_find.make TyInteger) ], `TInteger { value; ty; span })
   | Float { value; span; _ } ->
-      ([ CEq (ty, Union_find.make TyFloat) ], TFloat { value; ty; span })
+      ([ CEq (ty, Union_find.make TyFloat) ], `TFloat { value; ty; span })
   | String { value; span; _ } ->
-      ([ CEq (ty, Union_find.make TyString) ], TString { value; ty; span })
+      ([ CEq (ty, Union_find.make TyString) ], `TString { value; ty; span })
   | Boolean { value; span; _ } ->
-      ([ CEq (ty, Union_find.make TyBoolean) ], TBoolean { value; ty; span })
+      ([ CEq (ty, Union_find.make TyBoolean) ], `TBoolean { value; ty; span })
   | Var { ident; span; _ } ->
       ConstructorEnv.find_opt ident cs_state.constructors
       |> Option.map (fun f -> f ())
       |> Option.fold
-           ~none:([ CInstance (ident, ty) ], TVar { ident; ty; span })
+           ~none:([ CInstance (ident, ty) ], (`TVar { ident; ty; span } : texpr))
            ~some:(fun constructor ->
              ([ CEq (type_of_expr constructor, ty) ], constructor))
   | Application { lambda; arguement; span; _ } ->
@@ -691,7 +691,8 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
           lambda
       in
       let c', arguement = generate_constraints cs_state a1_ty arguement in
-      ([ CExist ([ a1 ], c @ c') ], TApplication { lambda; arguement; ty; span })
+      ( [ CExist ([ a1 ], c @ c') ],
+        `TApplication { lambda; arguement; ty; span } )
   | Let { name; e1; e2; span; _ } ->
       enter_level ();
       let a1 = gensym () in
@@ -706,8 +707,8 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
               c @ cs,
               c' );
         ],
-        (* TODO: maybe a1 has to be in a forall *)
-        TLet { name; name_ty = a1_ty; e1; e2; ty; span } )
+        (* `TODO: maybe a1 has to be in a forall *)
+        `TLet { name; name_ty = a1_ty; e1; e2; ty; span } )
   | Match { value; cases; span; _ } ->
       let a1 = gensym () in
       let a1_ty = Union_find.make (ty_var a1) in
@@ -728,7 +729,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
         |> List.split
       in
       let cs' = List.concat cs' in
-      ([ CExist ([ a1 ], cs' @ cs) ], TMatch { value; cases; ty; span })
+      ([ CExist ([ a1 ], cs' @ cs) ], `TMatch { value; cases; ty; span })
   | Constructor { name; value; span } ->
       let r = gensym () in
       let r_ty = Union_find.make (ty_var r) in
@@ -752,7 +753,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
                          [] )) )
               :: cs );
         ],
-        TConstructor { name; value; ty; span } )
+        `TConstructor { name; value; ty; span } )
   | LetRec { name; e1; e2; span } ->
       enter_level ();
       let a1 = gensym () in
@@ -767,8 +768,8 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
               CDef (env |> List.map (fun (v, t) -> (v, `ty t)), cs') :: cs,
               cs'' );
         ],
-        (* TODO: maybe a1 has to be in a forall *)
-        TLetRec { name; name_ty = a1_ty; e1; e2; ty; span } )
+        (* `TODO: maybe a1 has to be in a forall *)
+        `TLetRec { name; name_ty = a1_ty; e1; e2; ty; span } )
   | If { condition; consequent; alternative; span; _ } ->
       let cond_var = gensym () in
       let cond_ty = Union_find.make (ty_var cond_var) in
@@ -776,7 +777,7 @@ let rec generate_constraints cs_state ty : _ -> ty co list * _ = function
       let cs', consequent = generate_constraints cs_state ty consequent in
       let cs'', alternative = generate_constraints cs_state ty alternative in
       ( (CExist ([ cond_var ], cs) :: cs') @ cs'',
-        TIf { condition; consequent; alternative; ty; span } )
+        `TIf { condition; consequent; alternative; ty; span } )
   | Ascribe { value; ty = ty''; _ } ->
       let ty' = to_inference_type true cs_state.types StringSet.empty ty'' in
       let cs, expr' = generate_constraints cs_state ty value in
@@ -800,7 +801,7 @@ let rec generate_constraints_top cs_state = function
               c @ cs,
               cs' );
         ],
-        (* TODO: maybe a1 has to be in a forall *)
+        (* `TODO: maybe a1 has to be in a forall *)
         TBind { name; value; name_ty = a1_ty; span } :: program )
   | Expr e :: program' ->
       let cs, e =
@@ -915,7 +916,7 @@ let unify (s : ty) (t : ty) =
                    field = t';
                    rest_row = inner_row used l t ty root.data;
                  }))
-    | TyRowEmpty -> failwith ("Cannot add label `" ^ l ^ "` to row.")
+    | TyRowEmpty -> failwith ("Cannot add label " ^ l ^ " to row.")
     (* TODO: for TyVariant and TyRecord maybe should expand past those (because if someone does { x with y = 10 }, then x will presumembly have type TyRecord and it will be the rest row of some TyRowExtend) *)
     | TyString | TyArrow _ | TyRecord _ | TyVariant _ | TyFloat | TyInteger
     | TyGenVar _ | TyVar _ | TyBoolean | TyUnit | TyNominal _
@@ -923,7 +924,7 @@ let unify (s : ty) (t : ty) =
     | TyConstructor _ ->
         failwith
           (type_to_string ty
-         ^ " is not a row, so it cannot be extended with label `" ^ l ^ "`.")
+         ^ " is not a row, so it cannot be extended with label " ^ l ^ ".")
   in
   inner [] s t
 
@@ -1005,7 +1006,7 @@ let rec solve_constraint =
  fun env -> function
   | CEq (s, t) -> unify s t
   | CInstance (var, ty) ->
-      (* TODO: better handling if not in env *)
+      (* `TODO: better handling if not in env *)
       let ty' =
         match List.assoc var env with
         | `for_all (vars, _) as scheme ->
@@ -1015,8 +1016,8 @@ let rec solve_constraint =
               failwith "in ftv"
             (* we need to actualy instatinate the variables *)
               else
-              (*then σ < T′ (read: T′ is an instance of σ ) *)
-              (*  stands for the constraint ∃¯X.(D ∧ T ≤ T′).  *)
+              (*then σ < `T′ (read: `T′ is an instance of σ ) *)
+              (*  stands for the constraint ∃¯X.(D ∧ `T ≤ `T′).  *)
               (* by applying this "substion" we put the ∃X *)
               instantiate scheme
         | `ty ty -> ty
