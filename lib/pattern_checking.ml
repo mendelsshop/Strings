@@ -199,8 +199,8 @@ let error_to_string file { redudedant; exhaustive; loc = (); _ } =
   let redudedant =
     redudedant
     |> List.map (fun p ->
-           span_to_line_highlight (span_of_pattern p) file
-           ^ "redudedant pattern: " ^ tpattern_to_string p)
+        span_to_line_highlight (span_of_pattern p) file
+        ^ "redudedant pattern: " ^ tpattern_to_string p)
     |> List.map (( ^ ) "redudedant pattern: ")
   in
   let errors =
@@ -295,4 +295,4 @@ let check tls =
   List.concat_map check_tl tls
   (* maybe do this filtering at error construction time *)
   |> List.filter (fun { redudedant; exhaustive; loc = (); _ } ->
-         Option.is_some exhaustive || not (List.is_empty redudedant))
+      Option.is_some exhaustive || not (List.is_empty redudedant))

@@ -105,10 +105,11 @@ type 't top_level =
 
 let rec closure_convert_expr : ty texpr -> _ = function
   | TVar _ -> failwith ""
-  | TFloat _ -> failwith ""
-  | TString _ -> failwith ""
-  | TInteger _ -> failwith ""
-  | TBoolean _ -> failwith ""
+  | TFloat { value; ty; span } -> LFloat { value; ty; span }
+  | TString { value; ty; span } -> LString { value; ty; span }
+  | TInteger { value; ty; span } -> LInteger { value; ty; span }
+  | TBoolean { value; ty; span } -> LBoolean { value; ty; span }
+  | TUnit { ty; span } -> LUnit { ty; span }
   | TLambda _ -> failwith ""
   | TApplication { lambda; arguement; ty; span } ->
       LApplication
@@ -118,13 +119,75 @@ let rec closure_convert_expr : ty texpr -> _ = function
           ty;
           span;
         }
-  | TUnit _ -> failwith ""
-  | TLet _ -> failwith ""
-  | TLetRec _ -> failwith ""
-  | TIf _ -> failwith ""
-  | TRecordAccess _ -> failwith ""
-  | TRecordExtend _ -> failwith ""
-  | TRecord _ -> failwith ""
-  | TMatch _ -> failwith ""
-  | TConstructor _ -> failwith ""
-  | TNominalConstructor _ -> failwith ""
+  | TLet { name; name_ty; e1; e2; ty; span } ->
+      LLet
+        {
+          name;
+          name_ty;
+          e1 = closure_convert_expr e1;
+          e2 = closure_convert_expr e2;
+          ty;
+          span;
+        }
+  | TLetRec { name; name_ty; e1; e2; ty; span } ->
+      LLetRec
+        {
+          name;
+          name_ty;
+          e1 = closure_convert_expr e1;
+          e2 = closure_convert_expr e2;
+          ty;
+          span;
+        }
+  | TIf { condition; consequent; alternative; ty; span } ->
+      LIf
+        {
+          condition = closure_convert_expr condition;
+          consequent = closure_convert_expr consequent;
+          alternative = closure_convert_expr alternative;
+          ty;
+          span;
+        }
+  | TRecordAccess { record; projector; ty; span } ->
+      LRecordAccess
+        { record = closure_convert_expr record; projector; ty; span }
+  | TRecordExtend { record; new_fields; ty; span } ->
+      LRecordExtend
+        {
+          record = closure_convert_expr record;
+          new_fields =
+            List.map
+              (fun { label; value } ->
+                { value = closure_convert_expr value; label })
+              new_fields;
+          ty;
+          span;
+        }
+  | TRecord { fields; ty; span } ->
+      LRecord
+        {
+          fields =
+            List.map
+              (fun { label; value } ->
+                { value = closure_convert_expr value; label })
+              fields;
+          ty;
+          span;
+        }
+  | TMatch { value; cases; ty; span } ->
+      LMatch
+        {
+          value = closure_convert_expr value;
+          cases =
+            List.map
+              (fun { Ast.pattern; result } ->
+                { Ast.pattern; result = closure_convert_expr result })
+              cases;
+          ty;
+          span;
+        }
+  | TConstructor { name; value; ty; span } ->
+      LConstructor { name; value = closure_convert_expr value; ty; span }
+  | TNominalConstructor { name; value; ty; span; id } ->
+      LNominalConstructor
+        { name; value = closure_convert_expr value; ty; span; id }

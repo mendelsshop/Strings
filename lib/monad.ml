@@ -43,7 +43,7 @@ let get x =
     ~none:("Unbound variable " ^ x ^ "." |> ResultReaderOps.fail)
     (env
     |> Stdlib.List.find_map (fun ((name : string), ty) ->
-           if name = x then Some ty else None))
+        if name = x then Some ty else None))
 
 let chars = Stdlib.Seq.init 26 (fun x -> 97 + x |> Char.chr |> String.make 1)
 

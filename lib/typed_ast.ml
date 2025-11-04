@@ -168,7 +168,7 @@ let rec tpattern_to_string = function
       "{ "
       ^ (fields
         |> List.map (fun { label; value } ->
-               label ^ " = " ^ tpattern_to_string value)
+            label ^ " = " ^ tpattern_to_string value)
         |> String.concat "; ")
       ^ " }"
   | PTConstructor { name; value; _ } ->
@@ -223,7 +223,7 @@ let rec texpr_to_string indent =
       "{\n"
       ^ (fields
         |> List.map (fun { label; value } ->
-               indent_string ^ label ^ " = " ^ texpr_to_string next_level value)
+            indent_string ^ label ^ " = " ^ texpr_to_string next_level value)
         |> String.concat ";\n")
       ^ "\n}"
   | TRecordAccess { record; projector; _ } ->
@@ -240,8 +240,8 @@ let rec texpr_to_string indent =
         (* we have an indent before the first case as it does not get indented by concat *)
       ^ (cases
         |> List.map (fun { Ast.pattern; result } ->
-               tpattern_to_string pattern ^ " -> "
-               ^ texpr_to_string next_level result)
+            tpattern_to_string pattern ^ " -> "
+            ^ texpr_to_string next_level result)
         |> String.concat ("\n" ^ indent_string ^ "|"))
   | TRecordExtend { record; new_fields; _ } ->
       "{"
@@ -249,7 +249,7 @@ let rec texpr_to_string indent =
       ^ " with "
       ^ (new_fields
         |> List.map (fun { label; value } ->
-               indent_string ^ label ^ " = " ^ texpr_to_string indent value)
+            indent_string ^ label ^ " = " ^ texpr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
 

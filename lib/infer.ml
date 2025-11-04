@@ -184,9 +184,9 @@ let to_inference_type inline (env : TypeEnv.t) inner_env =
   let inner_env =
     inner_env |> StringSet.to_list
     |> List.map (fun v ->
-           ( v,
-             if inline then Union_find.make (ty_var (gensym ()))
-             else Union_find.make (TyGenVar v) ))
+        ( v,
+          if inline then Union_find.make (ty_var (gensym ()))
+          else Union_find.make (TyGenVar v) ))
     |> SimpleTypeEnv.of_list
   in
   let rec inner' ty =

@@ -31,16 +31,16 @@ module Parsed = struct
         "{"
         ^ (fields
           |> List.map (fun { label; value } ->
-                 label ^ ": " ^ type_to_string value)
+              label ^ ": " ^ type_to_string value)
           |> String.concat ", ")
         ^ "}"
     | TyVariant { variants } ->
         "["
         ^ (variants
           |> List.map (function
-               | Tag { label; value } ->
-                   "`" ^ label ^ " of " ^ type_to_string value
-               | Type t -> type_to_string t)
+            | Tag { label; value } ->
+                "`" ^ label ^ " of " ^ type_to_string value
+            | Type t -> type_to_string t)
           |> String.concat ", ")
         ^ "]"
     | TyArrow { domain; range } ->

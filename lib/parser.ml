@@ -299,7 +299,7 @@ let pattern =
     let field =
       field
       <|> identifier (fun ident span ->
-              { label = ident; value = PVar { ident; span } })
+          { label = ident; value = PVar { ident; span } })
     in
     junk
     << spanned'
@@ -443,9 +443,9 @@ let rec expr is_end =
     many
       (junk << char '.'
       << identifier (fun projector span record ->
-             let span' = span_of_expr record in
-             RecordAccess
-               { record; projector; span = Utils.combine_spans span' span }))
+          let span' = span_of_expr record in
+          RecordAccess
+            { record; projector; span = Utils.combine_spans span' span }))
     <$> List.fold_left ( |> ) value
     >> last_quote is_end)
     <|> basic_expr is_end

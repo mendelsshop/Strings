@@ -125,7 +125,7 @@ let rec pattern_to_string = function
       "{ "
       ^ (fields
         |> List.map (fun { label; value } ->
-               label ^ " = " ^ pattern_to_string value)
+            label ^ " = " ^ pattern_to_string value)
         |> String.concat "; ")
       ^ " }"
   | PConstructor { name; value; _ } ->
@@ -179,7 +179,7 @@ let rec expr_to_string indent =
       "{\n"
       ^ (fields
         |> List.map (fun { label; value } ->
-               indent_string ^ label ^ " = " ^ expr_to_string indent value)
+            indent_string ^ label ^ " = " ^ expr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
   | RecordExtend { record; new_fields; _ } ->
@@ -188,7 +188,7 @@ let rec expr_to_string indent =
       ^ " with "
       ^ (new_fields
         |> List.map (fun { label; value } ->
-               indent_string ^ label ^ " = " ^ expr_to_string indent value)
+            indent_string ^ label ^ " = " ^ expr_to_string indent value)
         |> String.concat "; ")
       ^ "\n" ^ indent_string ^ "}"
   | RecordAccess { record; projector; _ } ->
@@ -203,8 +203,8 @@ let rec expr_to_string indent =
         (* we have an indent before the first case as it does not get indented by concat *)
       ^ (cases
         |> List.map (fun { pattern; result } ->
-               pattern_to_string pattern ^ " -> "
-               ^ expr_to_string next_level result)
+            pattern_to_string pattern ^ " -> "
+            ^ expr_to_string next_level result)
         |> String.concat ("\n" ^ indent_string ^ "|"))
   | InfixApplication { operator; left; right; _ } ->
       expr_to_string indent left ^ " " ^ operator ^ " "

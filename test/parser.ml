@@ -125,8 +125,8 @@ let expression =
   let application =
     Strings.Parser.run (Strings.Parser.expr true) "foo  \"abc\" 4.4\"\n"
     |> Result.map_error (fun e ->
-           print_endline e;
-           e)
+        print_endline e;
+        e)
     |> Result.to_option
   in
   let actual_application =
