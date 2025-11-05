@@ -1,5 +1,6 @@
 open Typed_ast
 open Types
+module TypeEnv = Infer.SimpleTypeEnv
 open Utils
 
 type 't lexpr =
@@ -76,14 +77,13 @@ type 't lexpr =
 type 't func = {
   parameter : 't tpattern;
   parameter_ty : 't;
-  body : 't texpr;
+  free_variables : 't StringMap.t;
+  body : 't lexpr;
   ty : 't;
   span : AMPCL.span;
 }
 
-module FunctionEnv = Env.Make (struct
-  type t = ty func
-end)
+module FunctionEnv = Map.Make (Int)
 
 type 't functions = ty func StringMap.t
 
@@ -91,103 +91,182 @@ type 't top_level =
   | LBind of {
       name : 't tpattern;
       name_ty : 't;
-      value : 't texpr;
+      value : 't lexpr;
       span : AMPCL.span;
     }
   | LRecBind of {
       name : 't tpattern;
       name_ty : 't;
-      value : 't texpr;
+      value : 't lexpr;
       span : AMPCL.span;
     }
   | LPrintString of string
-  | LExpr of 't texpr
+  | LExpr of 't lexpr
 
-let rec closure_convert_expr : ty texpr -> _ = function
-  | TVar _ -> failwith ""
-  | TFloat { value; ty; span } -> LFloat { value; ty; span }
-  | TString { value; ty; span } -> LString { value; ty; span }
-  | TInteger { value; ty; span } -> LInteger { value; ty; span }
-  | TBoolean { value; ty; span } -> LBoolean { value; ty; span }
-  | TUnit { ty; span } -> LUnit { ty; span }
-  | TLambda _ -> failwith ""
+let rec closure_convert_expr immediate_env functions = function
+  | TVar { ident; ty; span } ->
+      ( (if List.mem ident immediate_env then LLocalVar { ident; ty; span }
+         else LVar { ident; ty; span }),
+        TypeEnv.singleton ident ty,
+        FunctionEnv.empty )
+  | TFloat { value; ty; span } ->
+      (LFloat { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+  | TString { value; ty; span } ->
+      (LString { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+  | TInteger { value; ty; span } ->
+      (LInteger { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+  | TBoolean { value; ty; span } ->
+      (LBoolean { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+  | TUnit { ty; span } -> (LUnit { ty; span }, TypeEnv.empty, FunctionEnv.empty)
+  | TLambda { parameter; parameter_ty; body; ty; span } ->
+      let body, ftv, functions =
+        closure_convert_expr (get_binders parameter) functions body
+      in
+      let ftv =
+        List.fold_left (Fun.flip TypeEnv.remove) ftv (get_binders parameter)
+      in
+
+      let name = gensym_int () in
+      let lambda =
+        { parameter; parameter_ty; body; ty; span; free_variables = ftv }
+      in
+      (LLambda { name; ty; span }, ftv, FunctionEnv.add name lambda functions)
   | TApplication { lambda; arguement; ty; span } ->
-      LApplication
-        {
-          lambda = closure_convert_expr lambda;
-          arguement = closure_convert_expr arguement;
-          ty;
-          span;
-        }
+      let lambda, ftv, functions =
+        closure_convert_expr immediate_env functions lambda
+      in
+      let arguement, ftv', functions =
+        closure_convert_expr immediate_env functions arguement
+      in
+
+      ( LApplication { lambda; arguement; ty; span },
+        TypeEnv.union ftv ftv',
+        functions )
   | TLet { name; name_ty; e1; e2; ty; span } ->
-      LLet
-        {
-          name;
-          name_ty;
-          e1 = closure_convert_expr e1;
-          e2 = closure_convert_expr e2;
-          ty;
-          span;
-        }
+      let e1, ftv, functions =
+        closure_convert_expr immediate_env functions e1
+      in
+      let e2, ftv', functions =
+        closure_convert_expr (get_binders name @ immediate_env) functions e2
+      in
+      let ftv' =
+        List.fold_left (Fun.flip TypeEnv.remove) ftv' (get_binders name)
+      in
+      ( LLet { name; name_ty; e1; e2; ty; span },
+        TypeEnv.union ftv ftv',
+        functions )
   | TLetRec { name; name_ty; e1; e2; ty; span } ->
-      LLetRec
-        {
-          name;
-          name_ty;
-          e1 = closure_convert_expr e1;
-          e2 = closure_convert_expr e2;
-          ty;
-          span;
-        }
+      let e1, ftv, functions =
+        closure_convert_expr (get_binders name @ immediate_env) functions e1
+      in
+      let e2, ftv', functions =
+        closure_convert_expr (get_binders name @ immediate_env) functions e2
+      in
+      let ftv =
+        List.fold_left (Fun.flip TypeEnv.remove) (TypeEnv.union ftv ftv')
+          (get_binders name)
+      in
+      ( LLetRec { name; name_ty; e1; e2; ty; span },
+        TypeEnv.union ftv ftv',
+        functions )
   | TIf { condition; consequent; alternative; ty; span } ->
-      LIf
-        {
-          condition = closure_convert_expr condition;
-          consequent = closure_convert_expr consequent;
-          alternative = closure_convert_expr alternative;
-          ty;
-          span;
-        }
+      let condition, ftv, functions =
+        closure_convert_expr immediate_env functions condition
+      in
+      let consequent, ftv', functions =
+        closure_convert_expr immediate_env functions consequent
+      in
+      let alternative, ftv'', functions =
+        closure_convert_expr immediate_env functions alternative
+      in
+      ( LIf { condition; consequent; alternative; ty; span },
+        TypeEnv.union (TypeEnv.union ftv ftv') ftv'',
+        functions )
   | TRecordAccess { record; projector; ty; span } ->
-      LRecordAccess
-        { record = closure_convert_expr record; projector; ty; span }
+      let record, ftv, functions =
+        closure_convert_expr immediate_env functions record
+      in
+      (LRecordAccess { record; projector; ty; span }, ftv, functions)
   | TRecordExtend { record; new_fields; ty; span } ->
-      LRecordExtend
-        {
-          record = closure_convert_expr record;
-          new_fields =
-            List.map
-              (fun { label; value } ->
-                { value = closure_convert_expr value; label })
-              new_fields;
-          ty;
-          span;
-        }
+      let record, ftv, functions =
+        closure_convert_expr immediate_env functions record
+      in
+      let (ftv, functions), new_fields =
+        List.fold_left_map
+          (fun (ftv, functions) { label; value } ->
+            let value, ftv', functions =
+              closure_convert_expr immediate_env functions value
+            in
+
+            ((TypeEnv.union ftv ftv', functions), { value; label }))
+          (ftv, functions) new_fields
+      in
+      (LRecordExtend { record; new_fields; ty; span }, ftv, functions)
   | TRecord { fields; ty; span } ->
-      LRecord
-        {
-          fields =
-            List.map
-              (fun { label; value } ->
-                { value = closure_convert_expr value; label })
-              fields;
-          ty;
-          span;
-        }
+      let (ftv, functions), fields =
+        List.fold_left_map
+          (fun (ftv, functions) { label; value } ->
+            let value, ftv', functions =
+              closure_convert_expr immediate_env functions value
+            in
+
+            ((TypeEnv.union ftv ftv', functions), { value; label }))
+          (TypeEnv.empty, functions) fields
+      in
+      (LRecord { fields; ty; span }, ftv, functions)
   | TMatch { value; cases; ty; span } ->
-      LMatch
-        {
-          value = closure_convert_expr value;
-          cases =
-            List.map
-              (fun { Ast.pattern; result } ->
-                { Ast.pattern; result = closure_convert_expr result })
-              cases;
-          ty;
-          span;
-        }
+      let value, ftv, functions =
+        closure_convert_expr immediate_env functions value
+      in
+      let (ftv, functions), cases =
+        List.fold_left_map
+          (fun (ftv, functions) { Ast.pattern; result } ->
+            let result, ftv', functions =
+              closure_convert_expr immediate_env functions result
+            in
+
+            ((TypeEnv.union ftv ftv', functions), { Ast.pattern; result }))
+          (ftv, functions) cases
+      in
+      (LMatch { value; cases; ty; span }, ftv, functions)
   | TConstructor { name; value; ty; span } ->
-      LConstructor { name; value = closure_convert_expr value; ty; span }
+      let value, ftv, functions =
+        closure_convert_expr immediate_env functions value
+      in
+      (LConstructor { name; value; ty; span }, ftv, functions)
   | TNominalConstructor { name; value; ty; span; id } ->
-      LNominalConstructor
-        { name; value = closure_convert_expr value; ty; span; id }
+      let value, ftv, functions =
+        closure_convert_expr immediate_env functions value
+      in
+      (LNominalConstructor { name; value; ty; span; id }, ftv, functions)
+
+let closure_convert_tl immediate_env functions = function
+  | TBind { name; name_ty; value; span } ->
+      let value, _, functions =
+        closure_convert_expr immediate_env functions value
+      in
+
+      ( (immediate_env @ get_binders name, functions),
+        LBind { name; name_ty; value; span } )
+  | TRecBind { name; name_ty; value; span } ->
+      let value, _, functions =
+        closure_convert_expr (get_binders name @ immediate_env) functions value
+      in
+      ( (immediate_env @ get_binders name, functions),
+        LRecBind { name; name_ty; value; span } )
+  | TExpr expr ->
+      let expr, _, functions =
+        closure_convert_expr immediate_env functions expr
+      in
+      ((immediate_env, functions), LExpr expr)
+  | TPrintString s -> ((immediate_env, functions), LPrintString s)
+
+let closure_convert_tls immediate_env tls =
+  let (functions, _), tls =
+    List.fold_left_map
+      (fun (immediate_env, functions) tl ->
+        closure_convert_tl immediate_env functions tl)
+      (immediate_env, FunctionEnv.empty)
+      tls
+  in
+  (functions, tls)

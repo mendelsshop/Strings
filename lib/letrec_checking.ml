@@ -8,30 +8,14 @@ end)
 
 let remove_all vars = Env.filter (fun key _ -> not (List.mem key vars))
 
-let rec get_binders = function
-  | PTVar { ident; _ } -> [ ident ]
-  | PTString _ -> []
-  | PTWildcard _ -> []
-  | PTInteger _ -> []
-  | PTFloat _ -> []
-  | PTBoolean _ -> []
-  | PTRecord { fields; _ } ->
-      List.concat_map (fun { value; _ } -> get_binders value) fields
-  | PTConstructor { value; _ } -> get_binders value
-  | PTNominalConstructor { value; _ } -> get_binders value
-  | PTAs { name; value; _ } -> name :: get_binders value
-  | PTOr { patterns; _ } -> List.concat_map get_binders patterns
-  | PTUnit _ -> []
-
 (* we dont autimatically turn letrec exprs into string we do it on demand as in most cases letrec are correct *)
 let rec check_expr rec_env = function
   | TVar { ident; _ } ->
       Env.find_opt ident rec_env
       |> Option.fold ~none:() ~some:(fun letrec_string_function ->
-             failwith
-               ("recursive variable " ^ ident ^ " of "
-              ^ letrec_string_function ()
-              ^ " used in illegal postion (must be enclosed in a labmda)."))
+          failwith
+            ("recursive variable " ^ ident ^ " of " ^ letrec_string_function ()
+           ^ " used in illegal postion (must be enclosed in a labmda)."))
   | TFloat _ -> ()
   | TString _ -> ()
   | TInteger _ -> ()
