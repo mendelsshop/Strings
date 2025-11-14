@@ -1,4 +1,6 @@
+open Closure_conversion
 open Typed_ast
+open Types
 open Utils
 
 (* TODO: issues
@@ -25,17 +27,12 @@ module SchemeEnv = Utils.Env.Make (Scheme)
 
 type 't mexpr =
   | MVar of { ident : string; ty : 't; span : AMPCL.span }
+  | MLocalVar of { ident : string; ty : 't; span : AMPCL.span }
   | MFloat of { value : float; ty : 't; span : AMPCL.span }
   | MString of { value : string; ty : 't; span : AMPCL.span }
   | MInteger of { value : int; ty : 't; span : AMPCL.span }
   | MBoolean of { value : bool; ty : 't; span : AMPCL.span }
-  | MLambda of {
-      parameter : 't tpattern;
-      parameter_ty : 't;
-      body : 't mexpr;
-      ty : 't;
-      span : AMPCL.span;
-    }
+  | MLambda of { name : int; ty : 't; span : AMPCL.span }
   | MApplication of {
       lambda : 't mexpr;
       arguement : 't mexpr;
@@ -102,6 +99,19 @@ type 't mexpr =
       id : int;
     }
 
+type 't func = {
+  parameter : 't tpattern;
+  parameter_ty : 't;
+  free_variables : 't StringMap.t;
+  body : 't mexpr;
+  ty : 't;
+  span : AMPCL.span;
+}
+
+module FunctionEnv = Map.Make (Int)
+
+type 't functions = ty func StringMap.t
+
 type 't top_level =
   | MBind of {
       instantiations : SchemeEnv.t;
@@ -121,23 +131,25 @@ type 't top_level =
   | MExpr of 't mexpr
 
 let rec monomorphize_expr env = function
-  | TVar { ident; ty; span } ->
+  | LVar { ident; ty; span } ->
       let scheme = SchemeEnv.find_opt ident env in
       Option.iter (fun scheme -> scheme := TypeEnv.add ident ty !scheme) scheme;
       MVar { ident; ty; span }
-  | TFloat { value; ty; span } -> MFloat { value; ty; span }
-  | TString { value; ty; span } -> MString { value; ty; span }
-  | TInteger { value; ty; span } -> MInteger { value; ty; span }
-  | TBoolean { value; ty; span } -> MBoolean { value; ty; span }
-  | TUnit { ty; span } -> MUnit { ty; span }
-  | TLambda { parameter; parameter_ty; body; ty; span } ->
-      let body = monomorphize_expr env body in
-      MLambda { parameter; parameter_ty; body; ty; span }
-  | TApplication { lambda; arguement; ty; span } ->
+  | LLocalVar { ident; ty; span } ->
+      let scheme = SchemeEnv.find_opt ident env in
+      Option.iter (fun scheme -> scheme := TypeEnv.add ident ty !scheme) scheme;
+      MLocalVar { ident; ty; span }
+  | LFloat { value; ty; span } -> MFloat { value; ty; span }
+  | LString { value; ty; span } -> MString { value; ty; span }
+  | LInteger { value; ty; span } -> MInteger { value; ty; span }
+  | LBoolean { value; ty; span } -> MBoolean { value; ty; span }
+  | LUnit { ty; span } -> MUnit { ty; span }
+  | LLambda { name; ty; span } -> MLambda { name; ty; span }
+  | LApplication { lambda; arguement; ty; span } ->
       let lambda = monomorphize_expr env lambda in
       let arguement = monomorphize_expr env arguement in
       MApplication { lambda; arguement; ty; span }
-  | TLet { name; name_ty; e1; e2; ty; span } ->
+  | LLet { name; name_ty; e1; e2; ty; span } ->
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
@@ -146,7 +158,7 @@ let rec monomorphize_expr env = function
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr (SchemeEnv.union instantiations env) e2 in
       MLet { name; name_ty; e1; e2; ty; span; instantiations }
-  | TLetRec { name; name_ty; e1; e2; ty; span } ->
+  | LLetRec { name; name_ty; e1; e2; ty; span } ->
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
@@ -156,15 +168,15 @@ let rec monomorphize_expr env = function
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr env e2 in
       MLetRec { name; name_ty; e1; e2; ty; span; instantiations }
-  | TIf { condition; consequent; alternative; ty; span } ->
+  | LIf { condition; consequent; alternative; ty; span } ->
       let condition = monomorphize_expr env condition in
       let consequent = monomorphize_expr env consequent in
       let alternative = monomorphize_expr env alternative in
       MIf { condition; consequent; alternative; ty; span }
-  | TRecordAccess { record; projector; ty; span } ->
+  | LRecordAccess { record; projector; ty; span } ->
       let record = monomorphize_expr env record in
       MRecordAccess { record; projector; ty; span }
-  | TRecordExtend { record; new_fields; ty; span } ->
+  | LRecordExtend { record; new_fields; ty; span } ->
       let record = monomorphize_expr env record in
       let new_fields =
         List.map
@@ -175,7 +187,7 @@ let rec monomorphize_expr env = function
           new_fields
       in
       MRecordExtend { record; new_fields; ty; span }
-  | TRecord { fields; ty; span } ->
+  | LRecord { fields; ty; span } ->
       let fields =
         List.map
           (fun { label; value } ->
@@ -185,7 +197,7 @@ let rec monomorphize_expr env = function
           fields
       in
       MRecord { fields; ty; span }
-  | TMatch { value; cases; ty; span } ->
+  | LMatch { value; cases; ty; span } ->
       let value = monomorphize_expr env value in
       let cases =
         List.map
@@ -196,15 +208,15 @@ let rec monomorphize_expr env = function
           cases
       in
       MMatch { value; cases; ty; span }
-  | TConstructor { name; value; ty; span } ->
+  | LConstructor { name; value; ty; span } ->
       let value = monomorphize_expr env value in
       MConstructor { name; value; ty; span }
-  | TNominalConstructor { name; value; ty; span; id } ->
+  | LNominalConstructor { name; value; ty; span; id } ->
       let value = monomorphize_expr env value in
       MNominalConstructor { name; value; ty; span; id }
 
 let monomorphize_tl env = function
-  | TBind { name; name_ty; value; span } ->
+  | LBind { name; name_ty; value; span } ->
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
@@ -214,7 +226,7 @@ let monomorphize_tl env = function
 
       let env = SchemeEnv.union instantiations env in
       (env, MBind { name; name_ty; value; span; instantiations })
-  | TRecBind { name; name_ty; value; span } ->
+  | LRecBind { name; name_ty; value; span } ->
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
@@ -224,9 +236,9 @@ let monomorphize_tl env = function
 
       let value = monomorphize_expr env value in
       (env, MRecBind { name; name_ty; value; span; instantiations })
-  | TExpr expr ->
+  | LExpr expr ->
       let expr = monomorphize_expr env expr in
       (env, MExpr expr)
-  | TPrintString s -> (env, MPrintString s)
+  | LPrintString s -> (env, MPrintString s)
 
 let monomorphize_tls env tls = List.fold_left_map monomorphize_tl env tls |> snd
