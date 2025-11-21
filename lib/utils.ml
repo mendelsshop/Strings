@@ -83,10 +83,8 @@ module Env = struct
     val union : 'a t -> 'a t -> 'a t
   end
 
-  module Make (T : T) = struct
-    include StringMap
-
-    type t = T.t StringMap.t
+  module Make (T : Map.OrderedType) = struct
+    include Map.Make (T)
 
     let union x y = union (fun _ x _ -> Some x) x y
   end

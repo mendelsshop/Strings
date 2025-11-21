@@ -1,10 +1,6 @@
 open Typed_ast
-open Types
 open Utils
-
-module Env = Env.Make (struct
-  type t = ty texpr
-end)
+module Env = Env.Make (String)
 
 let remove_all vars = Env.filter (fun key _ -> not (List.mem key vars))
 

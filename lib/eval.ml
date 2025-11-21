@@ -4,8 +4,8 @@ open Monads.Std
 open Eval_ast
 
 module M = struct
-  include Monad.State.T1 (Env) (Monad.Ident)
-  include Monad.State.Make (Env) (Monad.Ident)
+  include Monad.State.T1 (EvalEnv) (Monad.Ident)
+  include Monad.State.Make (EvalEnv) (Monad.Ident)
 end
 
 open M.Syntax

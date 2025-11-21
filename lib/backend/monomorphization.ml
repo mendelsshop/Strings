@@ -17,13 +17,10 @@ open Utils
    ...
 *)
 
-module TypeEnv = Infer.SimpleTypeEnv
+module Env = Env.Make (String)
 
-module Scheme = struct
-  type t = TypeEnv.t ref
-end
-
-module SchemeEnv = Utils.Env.Make (Scheme)
+type scheme = ty list ref
+type scheme_env = scheme Env.t
 
 type 't mexpr =
   | MVar of { ident : string; ty : 't; span : AMPCL.span }
@@ -33,8 +30,8 @@ type 't mexpr =
   | MInteger of { value : int; ty : 't; span : AMPCL.span }
   | MBoolean of { value : bool; ty : 't; span : AMPCL.span }
   | MLambda of { name : int; ty : 't; span : AMPCL.span }
-  | MMulti of 't mexpr list
-  | MSelect of { value : 't mexpr; selector : int }
+  | MMulti of { types : scheme; value : 't mexpr }
+  | MSelect of { value : 't mexpr; selector : 't }
   | MApplication of {
       lambda : 't mexpr;
       arguement : 't mexpr;
@@ -44,7 +41,6 @@ type 't mexpr =
   | MUnit of { ty : 't; span : AMPCL.span }
   (* the instantiations are for all variables bound by the let *)
   | MLet of {
-      instantiations : SchemeEnv.t;
       name : 't tpattern;
       name_ty : 't;
       e1 : 't mexpr;
@@ -53,7 +49,6 @@ type 't mexpr =
       span : AMPCL.span;
     }
   | MLetRec of {
-      instantiations : SchemeEnv.t;
       name : 't tpattern;
       name_ty : 't;
       e1 : 't mexpr;
@@ -110,20 +105,18 @@ type 't func = {
   span : AMPCL.span;
 }
 
-module FunctionEnv = Map.Make (Int)
+module FunctionEnv = Utils.Env.Make (Int)
 
-type 't functions = ty func StringMap.t
+type 't functions = ty func Env.t
 
 type 't top_level =
   | MBind of {
-      instantiations : SchemeEnv.t;
       name : 't tpattern;
       name_ty : 't;
       value : 't mexpr;
       span : AMPCL.span;
     }
   | MRecBind of {
-      instantiations : SchemeEnv.t;
       name : 't tpattern;
       name_ty : 't;
       value : 't mexpr;
@@ -134,12 +127,12 @@ type 't top_level =
 
 let rec monomorphize_expr env = function
   | LVar { ident; ty; span } ->
-      let scheme = SchemeEnv.find_opt ident env in
-      Option.iter (fun scheme -> scheme := TypeEnv.add ident ty !scheme) scheme;
+      let scheme = Env.find ident env in
+      scheme := Env.add ident ty !scheme;
       MVar { ident; ty; span }
   | LLocalVar { ident; ty; span } ->
-      let scheme = SchemeEnv.find_opt ident env in
-      Option.iter (fun scheme -> scheme := TypeEnv.add ident ty !scheme) scheme;
+      let scheme = Env.find ident env in
+      scheme := Env.add ident ty !scheme;
       MLocalVar { ident; ty; span }
   | LFloat { value; ty; span } -> MFloat { value; ty; span }
   | LString { value; ty; span } -> MString { value; ty; span }
@@ -155,21 +148,21 @@ let rec monomorphize_expr env = function
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> SchemeEnv.of_list
+        |> Env.of_list
       in
       let e1 = monomorphize_expr env e1 in
-      let e2 = monomorphize_expr (SchemeEnv.union instantiations env) e2 in
-      MLet { name; name_ty; e1; e2; ty; span; instantiations }
+      let e2 = monomorphize_expr (Env.union instantiations env) e2 in
+      MLet { name; name_ty; e1; e2; ty; span }
   | LLetRec { name; name_ty; e1; e2; ty; span } ->
       let instantiations =
         get_binders name
-        |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> SchemeEnv.of_list
+        |> List.map (fun name -> (name, ref Env.empty))
+        |> Env.of_list
       in
-      let env = SchemeEnv.union instantiations env in
+      let env = Env.union instantiations env in
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr env e2 in
-      MLetRec { name; name_ty; e1; e2; ty; span; instantiations }
+      MLetRec { name; name_ty; e1; e2; ty; span }
   | LIf { condition; consequent; alternative; ty; span } ->
       let condition = monomorphize_expr env condition in
       let consequent = monomorphize_expr env consequent in
@@ -184,7 +177,6 @@ let rec monomorphize_expr env = function
         List.map
           (fun { label; value } ->
             let value = monomorphize_expr env value in
-
             { value; label })
           new_fields
       in
@@ -205,7 +197,6 @@ let rec monomorphize_expr env = function
         List.map
           (fun { Ast.pattern; result } ->
             let result = monomorphize_expr env result in
-
             { Ast.pattern; result })
           cases
       in
@@ -222,22 +213,22 @@ let monomorphize_tl env = function
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> SchemeEnv.of_list
+        |> Env.of_list
       in
       let value = monomorphize_expr env value in
 
-      let env = SchemeEnv.union instantiations env in
-      (env, MBind { name; name_ty; value; span; instantiations })
+      let env = Env.union instantiations env in
+      (env, MBind { name; name_ty; value; span })
   | LRecBind { name; name_ty; value; span } ->
       let instantiations =
         get_binders name
         |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> SchemeEnv.of_list
+        |> Env.of_list
       in
-      let env = SchemeEnv.union instantiations env in
+      let env = Env.union instantiations env in
 
       let value = monomorphize_expr env value in
-      (env, MRecBind { name; name_ty; value; span; instantiations })
+      (env, MRecBind { name; name_ty; value; span })
   | LExpr expr ->
       let expr = monomorphize_expr env expr in
       (env, MExpr expr)

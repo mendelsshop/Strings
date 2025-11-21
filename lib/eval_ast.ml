@@ -16,9 +16,13 @@ type eval_expr =
     (* we could probably do the same thing in the other asts (not having to constructor types) and just put an optional id if its nominal *)
   | Constructor of { name : string; value : eval_expr; id : int option }
 
-module Env = Env.Make (struct
-  type t = eval_expr
-end)
+module Env = Env.Make (String)
+
+module EvalEnv = struct
+  include Env
+
+  type t = eval_expr Env.t
+end
 
 let print_ast expr =
   match expr with

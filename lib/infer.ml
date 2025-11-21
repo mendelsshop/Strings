@@ -2,25 +2,16 @@ open Types
 open Utils
 open Ast2
 open Typed_ast
+module ParsedTypeEnv = Env.Make (String)
+module TypeEnv = Env.Make (String)
+module ConstructorEnv = Env.Make (String)
+module SimpleTypeEnv = Env.Make (String)
 
-module ParsedTypeEnv = Env.Make (struct
-  type t = Parsed.ty type_decl
-end)
+type env = {
+  types : ty type_decl TypeEnv.t;
+  constructors : (unit -> ty texpr) ConstructorEnv.t;
+}
 
-module TypeEnv = Env.Make (struct
-  type t = ty type_decl
-end)
-
-module ConstructorEnv = Env.Make (struct
-  (* we thunk each type constructor so that the instantiation is unique for each time we look it up *)
-  type t = unit -> ty texpr
-end)
-
-module SimpleTypeEnv = Env.Make (struct
-  type t = ty
-end)
-
-type env = { types : TypeEnv.t; constructors : ConstructorEnv.t }
 type level = int
 
 let current_level = ref 1
@@ -180,7 +171,7 @@ let inline_type_alias instantiate env ty =
 
 (* converts parsed type into types for inference *)
 (* the inline flag says whether to inline type constructors that are aliases, it should be only used after the type envoirnemnt (nominal and type aliases) are fully resolved *)
-let to_inference_type inline (env : TypeEnv.t) inner_env =
+let to_inference_type inline (env : ty type_decl TypeEnv.t) inner_env =
   let inner_env =
     inner_env |> StringSet.to_list
     |> List.map (fun v ->
