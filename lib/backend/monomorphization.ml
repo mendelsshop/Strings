@@ -33,6 +33,8 @@ type 't mexpr =
   | MInteger of { value : int; ty : 't; span : AMPCL.span }
   | MBoolean of { value : bool; ty : 't; span : AMPCL.span }
   | MLambda of { name : int; ty : 't; span : AMPCL.span }
+  | MMulti of 't mexpr list
+  | MSelect of { value : 't mexpr; selector : int }
   | MApplication of {
       lambda : 't mexpr;
       arguement : 't mexpr;
