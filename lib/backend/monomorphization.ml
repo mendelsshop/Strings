@@ -22,6 +22,7 @@ module Env = Env.Make (String)
 type scheme = ty list ref
 type scheme_env = scheme Env.t
 
+(* its fine to use Env.union (whick picks the first when unioning) because everything is alpha renamed so no shadowing *)
 type 't mexpr =
   | MVar of { ident : string; ty : 't; span : AMPCL.span }
   | MLocalVar of { ident : string; ty : 't; span : AMPCL.span }
@@ -127,13 +128,26 @@ type 't top_level =
 
 let rec monomorphize_expr env = function
   | LVar { ident; ty; span } ->
-      let scheme = Env.find ident env in
-      scheme := Env.add ident ty !scheme;
-      MVar { ident; ty; span }
+      (Env.find_opt ident env
+      |> Option.fold
+           ~some:(fun scheme v ->
+             let len = List.length !scheme in
+             scheme := ty :: !scheme;
+             MSelect { value = v; selector = len })
+             (* if variable not refenecinig a scheme then if its reference a variable thats type is polymorphic (bound by a scheme) than when copy the function the variable will be monoorphized *)
+             (* so no need to use selector *)
+           ~none:Fun.id)
+        (MVar { ident; ty; span })
+      (* local vars are variables captured by lambdas, and thus could be polymorphic *)
   | LLocalVar { ident; ty; span } ->
-      let scheme = Env.find ident env in
-      scheme := Env.add ident ty !scheme;
-      MLocalVar { ident; ty; span }
+      (Env.find_opt ident env
+      |> Option.fold
+           ~some:(fun scheme v ->
+             let len = List.length !scheme in
+             scheme := ty :: !scheme;
+             MSelect { value = v; selector = len })
+           ~none:Fun.id)
+        (MLocalVar { ident; ty; span })
   | LFloat { value; ty; span } -> MFloat { value; ty; span }
   | LString { value; ty; span } -> MString { value; ty; span }
   | LInteger { value; ty; span } -> MInteger { value; ty; span }
@@ -144,20 +158,17 @@ let rec monomorphize_expr env = function
       let lambda = monomorphize_expr env lambda in
       let arguement = monomorphize_expr env arguement in
       MApplication { lambda; arguement; ty; span }
+      (* to make lets we are going to need a way to specify what the last statments should be wrapped in *)
   | LLet { name; name_ty; e1; e2; ty; span } ->
       let instantiations =
-        get_binders name
-        |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> Env.of_list
+        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
       in
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr (Env.union instantiations env) e2 in
       MLet { name; name_ty; e1; e2; ty; span }
   | LLetRec { name; name_ty; e1; e2; ty; span } ->
       let instantiations =
-        get_binders name
-        |> List.map (fun name -> (name, ref Env.empty))
-        |> Env.of_list
+        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
       in
       let env = Env.union instantiations env in
       let e1 = monomorphize_expr env e1 in
@@ -211,9 +222,7 @@ let rec monomorphize_expr env = function
 let monomorphize_tl env = function
   | LBind { name; name_ty; value; span } ->
       let instantiations =
-        get_binders name
-        |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> Env.of_list
+        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
       in
       let value = monomorphize_expr env value in
 
@@ -221,9 +230,7 @@ let monomorphize_tl env = function
       (env, MBind { name; name_ty; value; span })
   | LRecBind { name; name_ty; value; span } ->
       let instantiations =
-        get_binders name
-        |> List.map (fun name -> (name, ref TypeEnv.empty))
-        |> Env.of_list
+        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
       in
       let env = Env.union instantiations env in
 
