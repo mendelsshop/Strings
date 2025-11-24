@@ -29,5 +29,6 @@ let () =
       Letrec_checking.check_program exprs';
       if not (List.is_empty errors) then
         failwith ("errors: " ^ string_of_int (List.length errors))
-      else Strings.Eval.eval exprs' |> fst)
+      else Strings.Eval.eval exprs' |> fst;
+      Backend.Lib.run exprs')
     result ()

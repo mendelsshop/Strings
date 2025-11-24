@@ -261,7 +261,7 @@ let closure_convert_tl immediate_env functions = function
       ((immediate_env, functions), LExpr expr)
   | TPrintString s -> ((immediate_env, functions), LPrintString s)
 
-let closure_convert_tls immediate_env tls =
+let closure_convert_tls ?(immediate_env = []) tls =
   let (functions, _), tls =
     List.fold_left_map
       (fun (immediate_env, functions) tl ->

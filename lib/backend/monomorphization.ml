@@ -32,7 +32,7 @@ type 't mexpr =
   | MBoolean of { value : bool; ty : 't; span : AMPCL.span }
   | MLambda of { name : int; ty : 't; span : AMPCL.span }
   | MMulti of { types : scheme; value : 't mexpr }
-  | MSelect of { value : 't mexpr; selector : 't }
+  | MSelect of { value : 't mexpr; selector : int }
   | MApplication of {
       lambda : 't mexpr;
       arguement : 't mexpr;
@@ -106,6 +106,8 @@ type 't func = {
   span : AMPCL.span;
 }
 
+type 't mfunc = 't func list
+
 module FunctionEnv = Utils.Env.Make (Int)
 
 type 't functions = ty func Env.t
@@ -126,6 +128,93 @@ type 't top_level =
   | MPrintString of string
   | MExpr of 't mexpr
 
+let rec mexpr_to_string indent : ty mexpr -> string =
+  let next_level = indent + 1 in
+  let indent_string = String.make (next_level * 2) ' ' in
+  function
+  | MUnit _ -> "()"
+  | MVar { ident; _ } -> ident
+  | MLocalVar { ident; _ } -> ident
+  | MSelect { selector; value } ->
+      mexpr_to_string indent value ^ "[" ^ string_of_int selector ^ "]"
+  | MMulti _ -> "multi"
+  | MString { value; _ } -> value
+  | MInteger { value; _ } -> string_of_int value
+  | MFloat { value; _ } -> string_of_float value
+  | MBoolean { value; _ } -> string_of_bool value
+  | MIf { condition; consequent; alternative; _ } ->
+      "if ( "
+      ^ mexpr_to_string indent condition
+      ^ " )\n" ^ indent_string ^ "then ( "
+      ^ mexpr_to_string next_level consequent
+      ^ " )\n" ^ indent_string ^ "else ( "
+      ^ mexpr_to_string next_level alternative
+      ^ " )"
+  | MLet { name; e1; e2; _ } ->
+      "let " ^ tpattern_to_string name ^ " = ( " ^ mexpr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ mexpr_to_string next_level e2
+      ^ " )"
+  | MLetRec { name; e1; e2; _ } ->
+      "let rec " ^ tpattern_to_string name ^ " = ( " ^ mexpr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
+      ^ mexpr_to_string next_level e2
+      ^ " )"
+  | MLambda _ -> "lambda"
+  | MApplication { lambda; arguement; _ } ->
+      "( "
+      ^ mexpr_to_string indent lambda
+      ^ " ) ( "
+      ^ mexpr_to_string indent arguement
+      ^ " )"
+  | MRecord { fields; _ } ->
+      "{\n"
+      ^ (fields
+        |> List.map (fun { label; value } ->
+            indent_string ^ label ^ " = " ^ mexpr_to_string next_level value)
+        |> String.concat ";\n")
+      ^ "\n}"
+  | MRecordAccess { record; projector; _ } ->
+      mexpr_to_string indent record ^ "." ^ projector
+  | MConstructor { name; value; _ } ->
+      "`" ^ name ^ " (" ^ mexpr_to_string indent value ^ ")"
+  | MNominalConstructor { name; value; _ } ->
+      name ^ " (" ^ mexpr_to_string indent value ^ ")"
+  | MMatch { value; cases; _ } ->
+      "match ( "
+      ^ mexpr_to_string indent value
+      ^ " ) with \n"
+      ^ indent_string
+        (* we have an indent before the first case as it does not get indented by concat *)
+      ^ (cases
+        |> List.map (fun { Ast.pattern; result } ->
+            tpattern_to_string pattern ^ " -> "
+            ^ mexpr_to_string next_level result)
+        |> String.concat ("\n" ^ indent_string ^ "|"))
+  | MRecordExtend { record; new_fields; _ } ->
+      "{"
+      ^ mexpr_to_string indent record
+      ^ " with "
+      ^ (new_fields
+        |> List.map (fun { label; value } ->
+            indent_string ^ label ^ " = " ^ mexpr_to_string indent value)
+        |> String.concat "; ")
+      ^ "\n" ^ indent_string ^ "}"
+
+let texpr_to_string = mexpr_to_string 0
+
+let top_level_to_string exp =
+  match exp with
+  | MExpr expr -> texpr_to_string expr
+  | MRecBind { name; value; _ } ->
+      "let rec " ^ tpattern_to_string name ^ " = " ^ texpr_to_string value
+  | MBind { name; value; _ } ->
+      "let (" ^ tpattern_to_string name ^ ") = " ^ texpr_to_string value
+  | MPrintString s -> s
+
+let program_to_string program =
+  String.concat "\n" (List.map top_level_to_string program)
+
 let rec monomorphize_expr env = function
   | LVar { ident; ty; span } ->
       (Env.find_opt ident env
@@ -133,12 +222,13 @@ let rec monomorphize_expr env = function
            ~some:(fun scheme v ->
              let len = List.length !scheme in
              scheme := ty :: !scheme;
+             (* what if only one instantiation or let is monomorphic *)
              MSelect { value = v; selector = len })
              (* if variable not refenecinig a scheme then if its reference a variable thats type is polymorphic (bound by a scheme) than when copy the function the variable will be monoorphized *)
              (* so no need to use selector *)
            ~none:Fun.id)
         (MVar { ident; ty; span })
-      (* local vars are variables captured by lambdas, and thus could be polymorphic *)
+  (* local vars are variables captured by lambdas, and thus could be polymorphic *)
   | LLocalVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
@@ -241,4 +331,5 @@ let monomorphize_tl env = function
       (env, MExpr expr)
   | LPrintString s -> (env, MPrintString s)
 
-let monomorphize_tls env tls = List.fold_left_map monomorphize_tl env tls |> snd
+let monomorphize_tls ?(env = Env.empty) tls =
+  List.fold_left_map monomorphize_tl env tls |> snd

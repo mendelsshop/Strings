@@ -126,4 +126,5 @@ let alpha_rename_tl env = function
       (env, TExpr expr)
   | TPrintString s -> (env, TPrintString s)
 
-let alpha_rename_tls env tls = List.fold_left_map alpha_rename_tl env tls |> snd
+let alpha_rename_tls ?(env = StringEnv.empty) tls =
+  List.fold_left_map alpha_rename_tl env tls |> snd
