@@ -103,6 +103,27 @@ type 't top_level =
   | LPrintString of string
   | LExpr of 't lexpr
 
+let type_of_expr = function
+  | LLocalVar { ty; _ }
+  | LVar { ty; _ }
+  | LFloat { ty; _ }
+  | LString { ty; _ }
+  | LInteger { ty; _ }
+  | LBoolean { ty; _ }
+  | LLambda { ty; _ }
+  | LApplication { ty; _ }
+  | LUnit { ty; _ }
+  | LLet { ty; _ }
+  | LLetRec { ty; _ }
+  | LIf { ty; _ }
+  | LRecordAccess { ty; _ }
+  | LRecordExtend { ty; _ }
+  | LRecord { ty; _ }
+  | LMatch { ty; _ }
+  | LConstructor { ty; _ }
+  | LNominalConstructor { ty; _ } ->
+      ty
+
 let rec closure_convert_expr immediate_env functions = function
   | TVar { ident; ty; span } ->
       ( (if List.mem ident immediate_env then LLocalVar { ident; ty; span }

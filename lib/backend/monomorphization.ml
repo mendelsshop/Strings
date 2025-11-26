@@ -44,7 +44,8 @@ type 't mexpr =
   | MLet of {
       name : 't tpattern;
       name_ty : 't;
-      instances : ('t * 't) list ref;
+      (* if this is none than its monomorphic *)
+      instances : ('t * 't) list ref option;
       e1 : 't mexpr;
       e2 : 't mexpr;
       ty : 't;
@@ -53,7 +54,7 @@ type 't mexpr =
   | MLetRec of {
       name : 't tpattern;
       name_ty : 't;
-      instances : ('t * 't) list ref;
+      instances : ('t * 't) list ref option;
       e1 : 't mexpr;
       e2 : 't mexpr;
       ty : 't;
@@ -154,9 +155,16 @@ let rec mexpr_to_string indent : ty mexpr -> string =
       ^ " )\n" ^ indent_string ^ "else ( "
       ^ mexpr_to_string next_level alternative
       ^ " )"
-  | MLet { name; e1; e2; _ } ->
-      "let " ^ tpattern_to_string name ^ " = ( " ^ mexpr_to_string indent e1
-      ^ " )\n" ^ indent_string ^ "in ( "
+  | MLet { name; e1; e2; instances; _ } ->
+      "let " ^ tpattern_to_string name
+      ^ Option.fold
+          ~some:(fun instances ->
+            "["
+            ^ (!instances |> List.map snd |> List.map type_to_string
+             |> String.concat ", ")
+            ^ "]")
+          ~none:"" instances
+      ^ " = ( " ^ mexpr_to_string indent e1 ^ " )\n" ^ indent_string ^ "in ( "
       ^ mexpr_to_string next_level e2
       ^ " )"
   | MLetRec { name; e1; e2; _ } ->
@@ -219,7 +227,23 @@ let top_level_to_string exp =
 let program_to_string program =
   String.concat "\n" (List.map top_level_to_string program)
 
-let rec monomorphize_expr env = function
+let update_references e1 _ _ = e1
+
+let get_instantiations ty tvs pat env =
+  (* all type variables bound by a specicific let should in the type of expression being let bound or else they would not be accesable *)
+  let tvs' = Types.ftv_ty ty in
+  let instances = if StringSet.subset tvs' tvs then None else Some (ref []) in
+  let instantiations =
+    Option.map
+      (fun instances ->
+        get_binders_with_type pat
+        |> List.map (fun (name, ty) -> (name, (ty, instances)))
+        |> Env.of_list)
+      instances
+  in
+  (instances, tvs, Option.fold ~some:(Env.union env) ~none:env instantiations)
+
+let rec monomorphize_expr env tvs = function
   | LVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
@@ -250,45 +274,39 @@ let rec monomorphize_expr env = function
   | LUnit { ty; span } -> MUnit { ty; span }
   | LLambda { name; ty; span } -> MLambda { name; ty; span }
   | LApplication { lambda; arguement; ty; span } ->
-      let lambda = monomorphize_expr env lambda in
-      let arguement = monomorphize_expr env arguement in
+      let lambda = monomorphize_expr env tvs lambda in
+      let arguement = monomorphize_expr env tvs arguement in
       MApplication { lambda; arguement; ty; span }
       (* to make lets we are going to need a way to specify what the last statments should be wrapped in *)
   | LLet { name; name_ty; e1; e2; ty; span } ->
-      let instances = ref [] in
-      let instantiations =
-        get_binders_with_type name
-        |> List.map (fun (name, ty) -> (name, (ty, instances)))
-        |> Env.of_list
+      let instances, tvs', env' =
+        get_instantiations (Closure_conversion.type_of_expr e1) tvs name env
       in
-      let e1 = monomorphize_expr env e1 in
-      let e2 = monomorphize_expr (Env.union instantiations env) e2 in
+      let e1 = monomorphize_expr env (StringSet.union tvs' tvs) e1 in
+      let e2 = monomorphize_expr env' tvs e2 in
+      let e1 = update_references e1 instances env in
       MLet { name; name_ty; e1; e2; ty; span; instances }
   | LLetRec { name; name_ty; e1; e2; ty; span } ->
-      let instances = ref [] in
-      let instantiations =
-        get_binders_with_type name
-        |> List.map (fun (name, ty) -> (name, (ty, instances)))
-        |> Env.of_list
+      let instances, tvs', env' =
+        get_instantiations (Closure_conversion.type_of_expr e1) tvs name env
       in
-      let env = Env.union instantiations env in
-      let e1 = monomorphize_expr env e1 in
-      let e2 = monomorphize_expr env e2 in
+      let e1 = monomorphize_expr env' (StringSet.union tvs' tvs) e1 in
+      let e2 = monomorphize_expr env' tvs e2 in
       MLetRec { name; name_ty; e1; e2; ty; span; instances }
   | LIf { condition; consequent; alternative; ty; span } ->
-      let condition = monomorphize_expr env condition in
-      let consequent = monomorphize_expr env consequent in
-      let alternative = monomorphize_expr env alternative in
+      let condition = monomorphize_expr env tvs condition in
+      let consequent = monomorphize_expr env tvs consequent in
+      let alternative = monomorphize_expr env tvs alternative in
       MIf { condition; consequent; alternative; ty; span }
   | LRecordAccess { record; projector; ty; span } ->
-      let record = monomorphize_expr env record in
+      let record = monomorphize_expr env tvs record in
       MRecordAccess { record; projector; ty; span }
   | LRecordExtend { record; new_fields; ty; span } ->
-      let record = monomorphize_expr env record in
+      let record = monomorphize_expr env tvs record in
       let new_fields =
         List.map
           (fun { label; value } ->
-            let value = monomorphize_expr env value in
+            let value = monomorphize_expr env tvs value in
             { value; label })
           new_fields
       in
@@ -297,27 +315,27 @@ let rec monomorphize_expr env = function
       let fields =
         List.map
           (fun { label; value } ->
-            let value = monomorphize_expr env value in
+            let value = monomorphize_expr env tvs value in
 
             { value; label })
           fields
       in
       MRecord { fields; ty; span }
   | LMatch { value; cases; ty; span } ->
-      let value = monomorphize_expr env value in
+      let value = monomorphize_expr env tvs value in
       let cases =
         List.map
           (fun { Ast.pattern; result } ->
-            let result = monomorphize_expr env result in
+            let result = monomorphize_expr env tvs result in
             { Ast.pattern; result })
           cases
       in
       MMatch { value; cases; ty; span }
   | LConstructor { name; value; ty; span } ->
-      let value = monomorphize_expr env value in
+      let value = monomorphize_expr env tvs value in
       MConstructor { name; value; ty; span }
   | LNominalConstructor { name; value; ty; span; id } ->
-      let value = monomorphize_expr env value in
+      let value = monomorphize_expr env tvs value in
       MNominalConstructor { name; value; ty; span; id }
 
 let monomorphize_tl env = function
@@ -329,12 +347,14 @@ let monomorphize_tl env = function
         |> Env.of_list
       in
 
-      let value = monomorphize_expr env value in
+      let tvs = Types.ftv_ty (Closure_conversion.type_of_expr value) in
+      let value = monomorphize_expr env tvs value in
 
       let env = Env.union instantiations env in
       (env, MBind { name; name_ty; value; span; instances })
   | LRecBind { name; name_ty; value; span } ->
       let instances = ref [] in
+      let tvs = Types.ftv_ty (Closure_conversion.type_of_expr value) in
       let instantiations =
         get_binders_with_type name
         |> List.map (fun (name, ty) -> (name, (ty, instances)))
@@ -342,10 +362,10 @@ let monomorphize_tl env = function
       in
       let env = Env.union instantiations env in
 
-      let value = monomorphize_expr env value in
+      let value = monomorphize_expr env tvs value in
       (env, MRecBind { name; name_ty; value; span; instances })
   | LExpr expr ->
-      let expr = monomorphize_expr env expr in
+      let expr = monomorphize_expr env StringSet.empty expr in
       (env, MExpr expr)
   | LPrintString s -> (env, MPrintString s)
 
