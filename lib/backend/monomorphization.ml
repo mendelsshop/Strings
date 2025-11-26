@@ -44,6 +44,7 @@ type 't mexpr =
   | MLet of {
       name : 't tpattern;
       name_ty : 't;
+      instances : ('t * 't) list ref;
       e1 : 't mexpr;
       e2 : 't mexpr;
       ty : 't;
@@ -52,6 +53,7 @@ type 't mexpr =
   | MLetRec of {
       name : 't tpattern;
       name_ty : 't;
+      instances : ('t * 't) list ref;
       e1 : 't mexpr;
       e2 : 't mexpr;
       ty : 't;
@@ -114,12 +116,14 @@ type 't functions = ty func Env.t
 
 type 't top_level =
   | MBind of {
+      instances : ('t * 't) list ref;
       name : 't tpattern;
       name_ty : 't;
       value : 't mexpr;
       span : AMPCL.span;
     }
   | MRecBind of {
+      instances : ('t * 't) list ref;
       name : 't tpattern;
       name_ty : 't;
       value : 't mexpr;
@@ -219,9 +223,10 @@ let rec monomorphize_expr env = function
   | LVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
-           ~some:(fun (ty, scheme) v ->
+           ~some:(fun (pat_ty, scheme) v ->
              let len = List.length !scheme in
-             scheme := ty :: !scheme;
+             (* we put the pat_ty the ty of the bound variable (might not be the whole scheme i.e a in let (a, b)..., along ty the instance of that part of the scheme *)
+             scheme := (pat_ty, ty) :: !scheme;
              (* what if only one instantiation or let is monomorphic *)
              MSelect { value = v; selector = len })
              (* if variable not refenecinig a scheme then if its reference a variable thats type is polymorphic (bound by a scheme) than when copy the function the variable will be monoorphized *)
@@ -232,9 +237,9 @@ let rec monomorphize_expr env = function
   | LLocalVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
-           ~some:(fun (ty, scheme) v ->
+           ~some:(fun (pat_ty, scheme) v ->
              let len = List.length !scheme in
-             scheme := ty :: !scheme;
+             scheme := (pat_ty, ty) :: !scheme;
              MSelect { value = v; selector = len })
            ~none:Fun.id)
         (MLocalVar { ident; ty; span })
@@ -258,7 +263,7 @@ let rec monomorphize_expr env = function
       in
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr (Env.union instantiations env) e2 in
-      MLet { name; name_ty; e1; e2; ty; span }
+      MLet { name; name_ty; e1; e2; ty; span; instances }
   | LLetRec { name; name_ty; e1; e2; ty; span } ->
       let instances = ref [] in
       let instantiations =
@@ -269,7 +274,7 @@ let rec monomorphize_expr env = function
       let env = Env.union instantiations env in
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr env e2 in
-      MLetRec { name; name_ty; e1; e2; ty; span }
+      MLetRec { name; name_ty; e1; e2; ty; span; instances }
   | LIf { condition; consequent; alternative; ty; span } ->
       let condition = monomorphize_expr env condition in
       let consequent = monomorphize_expr env consequent in
@@ -327,7 +332,7 @@ let monomorphize_tl env = function
       let value = monomorphize_expr env value in
 
       let env = Env.union instantiations env in
-      (env, MBind { name; name_ty; value; span })
+      (env, MBind { name; name_ty; value; span; instances })
   | LRecBind { name; name_ty; value; span } ->
       let instances = ref [] in
       let instantiations =
@@ -338,7 +343,7 @@ let monomorphize_tl env = function
       let env = Env.union instantiations env in
 
       let value = monomorphize_expr env value in
-      (env, MRecBind { name; name_ty; value; span })
+      (env, MRecBind { name; name_ty; value; span; instances })
   | LExpr expr ->
       let expr = monomorphize_expr env expr in
       (env, MExpr expr)
@@ -346,3 +351,4 @@ let monomorphize_tl env = function
 
 let monomorphize_tls ?(env = Env.empty) tls =
   List.fold_left_map monomorphize_tl env tls |> snd
+(* once we gather up each let/bind instances we can think modify the let *)
