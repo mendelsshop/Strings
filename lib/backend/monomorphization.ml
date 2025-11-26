@@ -31,8 +31,8 @@ type 't mexpr =
   | MInteger of { value : int; ty : 't; span : AMPCL.span }
   | MBoolean of { value : bool; ty : 't; span : AMPCL.span }
   | MLambda of { name : int; ty : 't; span : AMPCL.span }
-  | MMulti of { types : scheme; value : 't mexpr }
-  | MSelect of { value : 't mexpr; selector : int }
+  | MMulti of { types : 't mexpr list; original : 't mexpr; ty : 't }
+  | MSelect of { value : 't mexpr; selector : int; ty : 't }
   | MApplication of {
       lambda : 't mexpr;
       arguement : 't mexpr;
@@ -133,6 +133,29 @@ type 't top_level =
   | MPrintString of string
   | MExpr of 't mexpr
 
+let type_of_expr = function
+  | MSelect { ty; _ }
+  | MMulti { ty; _ }
+  | MLocalVar { ty; _ }
+  | MVar { ty; _ }
+  | MFloat { ty; _ }
+  | MString { ty; _ }
+  | MInteger { ty; _ }
+  | MBoolean { ty; _ }
+  | MLambda { ty; _ }
+  | MApplication { ty; _ }
+  | MUnit { ty; _ }
+  | MLet { ty; _ }
+  | MLetRec { ty; _ }
+  | MIf { ty; _ }
+  | MRecordAccess { ty; _ }
+  | MRecordExtend { ty; _ }
+  | MRecord { ty; _ }
+  | MMatch { ty; _ }
+  | MConstructor { ty; _ }
+  | MNominalConstructor { ty; _ } ->
+      ty
+
 let rec mexpr_to_string indent : ty mexpr -> string =
   let next_level = indent + 1 in
   let indent_string = String.make (next_level * 2) ' ' in
@@ -140,7 +163,7 @@ let rec mexpr_to_string indent : ty mexpr -> string =
   | MUnit _ -> "()"
   | MVar { ident; _ } -> ident
   | MLocalVar { ident; _ } -> ident
-  | MSelect { selector; value } ->
+  | MSelect { selector; value; _ } ->
       mexpr_to_string indent value ^ "[" ^ string_of_int selector ^ "]"
   | MMulti _ -> "multi"
   | MString { value; _ } -> value
@@ -227,7 +250,12 @@ let top_level_to_string exp =
 let program_to_string program =
   String.concat "\n" (List.map top_level_to_string program)
 
-let update_references e1 _ _ = e1
+let monomorphize_let e1 instances _env =
+  let _ty = type_of_expr e1 in
+  let substitute_instance (pat_ty, _instance) = pat_ty in
+  let _instances = List.map substitute_instance !instances in
+  (* don't have to worry about recursive types because we are going through the type along with tye term which if finite *)
+  e1
 
 let get_instantiations ty tvs pat env =
   (* all type variables bound by a specicific let should in the type of expression being let bound or else they would not be accesable *)
@@ -252,7 +280,7 @@ let rec monomorphize_expr env tvs = function
              (* we put the pat_ty the ty of the bound variable (might not be the whole scheme i.e a in let (a, b)..., along ty the instance of that part of the scheme *)
              scheme := (pat_ty, ty) :: !scheme;
              (* what if only one instantiation or let is monomorphic *)
-             MSelect { value = v; selector = len })
+             MSelect { value = v; selector = len; ty })
              (* if variable not refenecinig a scheme then if its reference a variable thats type is polymorphic (bound by a scheme) than when copy the function the variable will be monoorphized *)
              (* so no need to use selector *)
            ~none:Fun.id)
@@ -264,7 +292,7 @@ let rec monomorphize_expr env tvs = function
            ~some:(fun (pat_ty, scheme) v ->
              let len = List.length !scheme in
              scheme := (pat_ty, ty) :: !scheme;
-             MSelect { value = v; selector = len })
+             MSelect { value = v; selector = len; ty })
            ~none:Fun.id)
         (MLocalVar { ident; ty; span })
   | LFloat { value; ty; span } -> MFloat { value; ty; span }
@@ -284,7 +312,11 @@ let rec monomorphize_expr env tvs = function
       in
       let e1 = monomorphize_expr env (StringSet.union tvs' tvs) e1 in
       let e2 = monomorphize_expr env' tvs e2 in
-      let e1 = update_references e1 instances env in
+      let e1 =
+        Option.fold
+          ~some:(fun instances -> monomorphize_let e1 instances env)
+          ~none:e1 instances
+      in
       MLet { name; name_ty; e1; e2; ty; span; instances }
   | LLetRec { name; name_ty; e1; e2; ty; span } ->
       let instances, tvs', env' =
