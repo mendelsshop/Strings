@@ -41,6 +41,21 @@ let rec get_binders = function
   | PTOr { patterns; _ } -> List.concat_map get_binders patterns
   | PTUnit _ -> []
 
+let rec get_binders_with_type = function
+  | PTVar { ident; ty; _ } -> [ (ident, ty) ]
+  | PTString _ -> []
+  | PTWildcard _ -> []
+  | PTInteger _ -> []
+  | PTFloat _ -> []
+  | PTBoolean _ -> []
+  | PTRecord { fields; _ } ->
+      List.concat_map (fun { value; _ } -> get_binders_with_type value) fields
+  | PTConstructor { value; _ } -> get_binders_with_type value
+  | PTNominalConstructor { value; _ } -> get_binders_with_type value
+  | PTAs { name; value; ty; _ } -> (name, ty) :: get_binders_with_type value
+  | PTOr { patterns; _ } -> List.concat_map get_binders_with_type patterns
+  | PTUnit _ -> []
+
 type 't texpr =
   | TVar of { ident : string; ty : 't; span : AMPCL.span }
   | TFloat of { value : float; ty : 't; span : AMPCL.span }

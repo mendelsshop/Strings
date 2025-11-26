@@ -219,7 +219,7 @@ let rec monomorphize_expr env = function
   | LVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
-           ~some:(fun scheme v ->
+           ~some:(fun (ty, scheme) v ->
              let len = List.length !scheme in
              scheme := ty :: !scheme;
              (* what if only one instantiation or let is monomorphic *)
@@ -232,7 +232,7 @@ let rec monomorphize_expr env = function
   | LLocalVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
-           ~some:(fun scheme v ->
+           ~some:(fun (ty, scheme) v ->
              let len = List.length !scheme in
              scheme := ty :: !scheme;
              MSelect { value = v; selector = len })
@@ -250,15 +250,21 @@ let rec monomorphize_expr env = function
       MApplication { lambda; arguement; ty; span }
       (* to make lets we are going to need a way to specify what the last statments should be wrapped in *)
   | LLet { name; name_ty; e1; e2; ty; span } ->
+      let instances = ref [] in
       let instantiations =
-        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
+        get_binders_with_type name
+        |> List.map (fun (name, ty) -> (name, (ty, instances)))
+        |> Env.of_list
       in
       let e1 = monomorphize_expr env e1 in
       let e2 = monomorphize_expr (Env.union instantiations env) e2 in
       MLet { name; name_ty; e1; e2; ty; span }
   | LLetRec { name; name_ty; e1; e2; ty; span } ->
+      let instances = ref [] in
       let instantiations =
-        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
+        get_binders_with_type name
+        |> List.map (fun (name, ty) -> (name, (ty, instances)))
+        |> Env.of_list
       in
       let env = Env.union instantiations env in
       let e1 = monomorphize_expr env e1 in
@@ -311,16 +317,23 @@ let rec monomorphize_expr env = function
 
 let monomorphize_tl env = function
   | LBind { name; name_ty; value; span } ->
+      let instances = ref [] in
       let instantiations =
-        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
+        get_binders_with_type name
+        |> List.map (fun (name, ty) -> (name, (ty, instances)))
+        |> Env.of_list
       in
+
       let value = monomorphize_expr env value in
 
       let env = Env.union instantiations env in
       (env, MBind { name; name_ty; value; span })
   | LRecBind { name; name_ty; value; span } ->
+      let instances = ref [] in
       let instantiations =
-        get_binders name |> List.map (fun name -> (name, ref [])) |> Env.of_list
+        get_binders_with_type name
+        |> List.map (fun (name, ty) -> (name, (ty, instances)))
+        |> Env.of_list
       in
       let env = Env.union instantiations env in
 
