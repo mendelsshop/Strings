@@ -83,7 +83,7 @@ type 't func = {
   span : AMPCL.span;
 }
 
-module FunctionEnv = Map.Make (Int)
+module FunctionEnv = Env.Make (Int)
 
 type 't functions = ty func StringMap.t
 
@@ -129,16 +129,16 @@ let rec closure_convert_expr immediate_env functions = function
       ( (if List.mem ident immediate_env then LLocalVar { ident; ty; span }
          else LVar { ident; ty; span }),
         TypeEnv.singleton ident ty,
-        FunctionEnv.empty )
+        functions )
   | TFloat { value; ty; span } ->
-      (LFloat { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+      (LFloat { value; ty; span }, TypeEnv.empty, functions)
   | TString { value; ty; span } ->
-      (LString { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+      (LString { value; ty; span }, TypeEnv.empty, functions)
   | TInteger { value; ty; span } ->
-      (LInteger { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
+      (LInteger { value; ty; span }, TypeEnv.empty, functions)
   | TBoolean { value; ty; span } ->
-      (LBoolean { value; ty; span }, TypeEnv.empty, FunctionEnv.empty)
-  | TUnit { ty; span } -> (LUnit { ty; span }, TypeEnv.empty, FunctionEnv.empty)
+      (LBoolean { value; ty; span }, TypeEnv.empty, functions)
+  | TUnit { ty; span } -> (LUnit { ty; span }, TypeEnv.empty, functions)
   | TLambda { parameter; parameter_ty; body; ty; span } ->
       let body, ftv, functions =
         closure_convert_expr (get_binders parameter) functions body
@@ -283,7 +283,7 @@ let closure_convert_tl immediate_env functions = function
   | TPrintString s -> ((immediate_env, functions), LPrintString s)
 
 let closure_convert_tls ?(immediate_env = []) tls =
-  let (functions, _), tls =
+  let (_, functions), tls =
     List.fold_left_map
       (fun (immediate_env, functions) tl ->
         closure_convert_tl immediate_env functions tl)
