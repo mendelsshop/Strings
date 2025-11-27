@@ -24,7 +24,6 @@ type scheme_env = scheme Env.t
 (* its fine to use Env.union (whick picks the first when unioning) because everything is alpha renamed so no shadowing *)
 type 't mexpr =
   | MVar of { ident : string; ty : 't; span : AMPCL.span }
-  | MLocalVar of { ident : string; ty : 't; span : AMPCL.span }
   | MFloat of { value : float; ty : 't; span : AMPCL.span }
   | MString of { value : string; ty : 't; span : AMPCL.span }
   | MInteger of { value : int; ty : 't; span : AMPCL.span }
@@ -135,7 +134,6 @@ type 't top_level =
 let type_of_expr = function
   | MSelect { ty; _ }
   | MMulti { ty; _ }
-  | MLocalVar { ty; _ }
   | MVar { ty; _ }
   | MFloat { ty; _ }
   | MString { ty; _ }
@@ -161,7 +159,6 @@ let rec mexpr_to_string indent : ty mexpr -> string =
   function
   | MUnit _ -> "()"
   | MVar { ident; _ } -> ident
-  | MLocalVar { ident; _ } -> ident
   | MSelect { selector; value; _ } ->
       mexpr_to_string indent value ^ "[" ^ string_of_int selector ^ "]"
   | MMulti _ -> "multi"
@@ -257,9 +254,7 @@ let monomorphize_let e1 instances _env =
   let rec inner e _instances =
     match e with
     | MLet _ | MLetRec _ -> e
-    | MVar _ | MLocalVar _ | MFloat _ | MString _ | MInteger _ | MBoolean _
-    | MUnit _ ->
-        e
+    | MVar _ | MFloat _ | MString _ | MInteger _ | MBoolean _ | MUnit _ -> e
     | MLambda { ty; _ } as m ->
         MMulti
           {
