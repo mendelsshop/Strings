@@ -161,7 +161,10 @@ let rec mexpr_to_string indent : ty mexpr -> string =
   | MVar { ident; _ } -> ident
   | MSelect { selector; value; _ } ->
       mexpr_to_string indent value ^ "[" ^ string_of_int selector ^ "]"
-  | MMulti _ -> "multi"
+  | MMulti { types; _ } ->
+      "<"
+      ^ (types |> List.map (mexpr_to_string indent) |> String.concat ",")
+      ^ ">"
   | MString { value; _ } -> value
   | MInteger { value; _ } -> string_of_int value
   | MFloat { value; _ } -> string_of_float value
@@ -174,16 +177,9 @@ let rec mexpr_to_string indent : ty mexpr -> string =
       ^ " )\n" ^ indent_string ^ "else ( "
       ^ mexpr_to_string next_level alternative
       ^ " )"
-  | MLet { name; e1; e2; instances; _ } ->
-      "let " ^ tpattern_to_string name
-      ^ Option.fold
-          ~some:(fun instances ->
-            "["
-            ^ (!instances |> List.map snd |> List.map type_to_string
-             |> String.concat ", ")
-            ^ "]")
-          ~none:"" instances
-      ^ " = ( " ^ mexpr_to_string indent e1 ^ " )\n" ^ indent_string ^ "in ( "
+  | MLet { name; e1; e2; _ } ->
+      "let " ^ tpattern_to_string name ^ " = ( " ^ mexpr_to_string indent e1
+      ^ " )\n" ^ indent_string ^ "in ( "
       ^ mexpr_to_string next_level e2
       ^ " )"
   | MLetRec { name; e1; e2; _ } ->
@@ -191,7 +187,12 @@ let rec mexpr_to_string indent : ty mexpr -> string =
       ^ " )\n" ^ indent_string ^ "in ( "
       ^ mexpr_to_string next_level e2
       ^ " )"
-  | MLambda _ -> "lambda"
+  | MLambda { parameter; body; _ } ->
+      "\\"
+      ^ tpattern_to_string parameter
+      ^ ".( "
+      ^ mexpr_to_string indent body
+      ^ " )"
   | MApplication { lambda; arguement; _ } ->
       "( "
       ^ mexpr_to_string indent lambda
@@ -246,32 +247,41 @@ let top_level_to_string exp =
 let program_to_string program =
   String.concat "\n" (List.map top_level_to_string program)
 
-let monomorphize_let e1 instances _env =
-  let _ty = type_of_expr e1 in
-  let substitute_instance (pat_ty, _instance) = pat_ty in
+let monomorphize_let e1 instances _env tvs =
+  let ty = type_of_expr e1 in
+  let substitute_instance (pat_ty, instance) =
+    if pat_ty == ty then instance
+    else
+      failwith
+        "todo: need to substitute instance into whole ty, because this \
+         variable was bound by pattern"
+  in
   let instances = List.map substitute_instance !instances in
   (* don't have to worry about recursive types because we are going through the type along with tye term which if finite *)
-  let rec inner e _instances =
+  let rec inner e _instances tvs =
     match e with
     | MLet _ | MLetRec _ -> e
     | MVar _ | MFloat _ | MString _ | MInteger _ | MBoolean _ | MUnit _ -> e
-    | MLambda { ty; _ } as m ->
-        MMulti
-          {
-            ty;
-            types = (fun _ -> m) |> List.init (List.length _instances);
-            original = m;
-          }
+    | MLambda { ty; parameter_ty; _ } as m ->
+        let ftv_ty = StringSet.diff (ftv_ty parameter_ty) tvs in
+        if StringSet.is_empty ftv_ty then m
+        else
+          MMulti
+            {
+              ty;
+              types = (fun _ -> m) |> List.init (List.length _instances);
+              original = m;
+            }
     | MApplication ({ lambda; arguement; _ } as a) ->
-        let lambda = inner lambda _instances in
-        let arguement = inner arguement _instances in
+        let lambda = inner lambda _instances tvs in
+        let arguement = inner arguement _instances tvs in
         MApplication { a with lambda; arguement }
     | MMulti _ | MSelect _ -> e
     | MIf _ | MRecordAccess _ | MRecordExtend _ | MRecord _ | MMatch _
     | MConstructor _ | MNominalConstructor _ ->
         failwith ""
   in
-  inner e1 instances
+  inner e1 instances tvs
 
 let get_instantiations ty tvs pat env =
   (* all type variables bound by a specicific let should in the type of expression being let bound or else they would not be accesable *)
@@ -333,7 +343,7 @@ let rec monomorphize_expr env tvs = function
       let e2 = monomorphize_expr env' tvs e2 in
       let e1 =
         Option.fold
-          ~some:(fun instances -> monomorphize_let e1 instances env)
+          ~some:(fun instances -> monomorphize_let e1 instances env tvs)
           ~none:e1 instances
       in
       MLet { name; name_ty; e1; e2; ty; span; instances }
