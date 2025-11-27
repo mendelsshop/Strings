@@ -1,4 +1,3 @@
-open Closure_conversion
 open Typed_ast
 open Types
 open Utils
@@ -30,7 +29,13 @@ type 't mexpr =
   | MString of { value : string; ty : 't; span : AMPCL.span }
   | MInteger of { value : int; ty : 't; span : AMPCL.span }
   | MBoolean of { value : bool; ty : 't; span : AMPCL.span }
-  | MLambda of { name : int; ty : 't; span : AMPCL.span }
+  | MLambda of {
+      parameter : 't tpattern;
+      parameter_ty : 't;
+      body : 't mexpr;
+      ty : 't;
+      span : AMPCL.span;
+    }
   | MMulti of { types : 't mexpr list; original : 't mexpr; ty : 't }
   | MSelect of { value : 't mexpr; selector : int; ty : 't }
   | MApplication of {
@@ -108,12 +113,6 @@ type 't func = {
   ty : 't;
   span : AMPCL.span;
 }
-
-type 't mfunc = 't func list
-
-module FunctionEnv = Utils.Env.Make (Int)
-
-type 't functions = ty func Env.t
 
 type 't top_level =
   | MBind of {
@@ -253,9 +252,31 @@ let program_to_string program =
 let monomorphize_let e1 instances _env =
   let _ty = type_of_expr e1 in
   let substitute_instance (pat_ty, _instance) = pat_ty in
-  let _instances = List.map substitute_instance !instances in
+  let instances = List.map substitute_instance !instances in
   (* don't have to worry about recursive types because we are going through the type along with tye term which if finite *)
-  e1
+  let rec inner e _instances =
+    match e with
+    | MLet _ | MLetRec _ -> e
+    | MVar _ | MLocalVar _ | MFloat _ | MString _ | MInteger _ | MBoolean _
+    | MUnit _ ->
+        e
+    | MLambda { ty; _ } as m ->
+        MMulti
+          {
+            ty;
+            types = (fun _ -> m) |> List.init (List.length _instances);
+            original = m;
+          }
+    | MApplication ({ lambda; arguement; _ } as a) ->
+        let lambda = inner lambda _instances in
+        let arguement = inner arguement _instances in
+        MApplication { a with lambda; arguement }
+    | MMulti _ | MSelect _ -> e
+    | MIf _ | MRecordAccess _ | MRecordExtend _ | MRecord _ | MMatch _
+    | MConstructor _ | MNominalConstructor _ ->
+        failwith ""
+  in
+  inner e1 instances
 
 let get_instantiations ty tvs pat env =
   (* all type variables bound by a specicific let should in the type of expression being let bound or else they would not be accesable *)
@@ -272,7 +293,7 @@ let get_instantiations ty tvs pat env =
   (instances, tvs, Option.fold ~some:(Env.union env) ~none:env instantiations)
 
 let rec monomorphize_expr env tvs = function
-  | LVar { ident; ty; span } ->
+  | TVar { ident; ty; span } ->
       (Env.find_opt ident env
       |> Option.fold
            ~some:(fun (pat_ty, scheme) v ->
@@ -286,29 +307,32 @@ let rec monomorphize_expr env tvs = function
            ~none:Fun.id)
         (MVar { ident; ty; span })
   (* local vars are variables captured by lambdas, and thus could be polymorphic *)
-  | LLocalVar { ident; ty; span } ->
-      (Env.find_opt ident env
-      |> Option.fold
-           ~some:(fun (pat_ty, scheme) v ->
-             let len = List.length !scheme in
-             scheme := (pat_ty, ty) :: !scheme;
-             MSelect { value = v; selector = len; ty })
-           ~none:Fun.id)
-        (MLocalVar { ident; ty; span })
-  | LFloat { value; ty; span } -> MFloat { value; ty; span }
-  | LString { value; ty; span } -> MString { value; ty; span }
-  | LInteger { value; ty; span } -> MInteger { value; ty; span }
-  | LBoolean { value; ty; span } -> MBoolean { value; ty; span }
-  | LUnit { ty; span } -> MUnit { ty; span }
-  | LLambda { name; ty; span } -> MLambda { name; ty; span }
-  | LApplication { lambda; arguement; ty; span } ->
+  (* | LLocalVar { ident; ty; span } -> *)
+  (*     ( (Env.find_opt ident env *)
+  (*       |> Option.fold *)
+  (*            ~some:(fun (pat_ty, scheme) v -> *)
+  (*              let len = List.length !scheme in *)
+  (*              scheme := (pat_ty, ty) :: !scheme; *)
+  (*              MSelect { value = v; selector = len; ty }) *)
+  (*            ~none:Fun.id) *)
+  (*         (MLocalVar { ident; ty; span }), *)
+  (*       FunctionEnv.empty ) *)
+  | TFloat { value; ty; span } -> MFloat { value; ty; span }
+  | TString { value; ty; span } -> MString { value; ty; span }
+  | TInteger { value; ty; span } -> MInteger { value; ty; span }
+  | TBoolean { value; ty; span } -> MBoolean { value; ty; span }
+  | TUnit { ty; span } -> MUnit { ty; span }
+  | TLambda { body; ty; span; parameter; parameter_ty } ->
+      let body = monomorphize_expr env tvs body in
+      MLambda { body; ty; span; parameter_ty; parameter }
+  | TApplication { lambda; arguement; ty; span } ->
       let lambda = monomorphize_expr env tvs lambda in
       let arguement = monomorphize_expr env tvs arguement in
       MApplication { lambda; arguement; ty; span }
       (* to make lets we are going to need a way to specify what the last statments should be wrapped in *)
-  | LLet { name; name_ty; e1; e2; ty; span } ->
+  | TLet { name; name_ty; e1; e2; ty; span } ->
       let instances, tvs', env' =
-        get_instantiations (Closure_conversion.type_of_expr e1) tvs name env
+        get_instantiations (Typed_ast.type_of_expr e1) tvs name env
       in
       let e1 = monomorphize_expr env (StringSet.union tvs' tvs) e1 in
       let e2 = monomorphize_expr env' tvs e2 in
@@ -318,60 +342,61 @@ let rec monomorphize_expr env tvs = function
           ~none:e1 instances
       in
       MLet { name; name_ty; e1; e2; ty; span; instances }
-  | LLetRec { name; name_ty; e1; e2; ty; span } ->
-      let instances, tvs', env' =
-        get_instantiations (Closure_conversion.type_of_expr e1) tvs name env
-      in
-      let e1 = monomorphize_expr env' (StringSet.union tvs' tvs) e1 in
-      let e2 = monomorphize_expr env' tvs e2 in
-      MLetRec { name; name_ty; e1; e2; ty; span; instances }
-  | LIf { condition; consequent; alternative; ty; span } ->
-      let condition = monomorphize_expr env tvs condition in
-      let consequent = monomorphize_expr env tvs consequent in
-      let alternative = monomorphize_expr env tvs alternative in
-      MIf { condition; consequent; alternative; ty; span }
-  | LRecordAccess { record; projector; ty; span } ->
-      let record = monomorphize_expr env tvs record in
-      MRecordAccess { record; projector; ty; span }
-  | LRecordExtend { record; new_fields; ty; span } ->
-      let record = monomorphize_expr env tvs record in
-      let new_fields =
-        List.map
-          (fun { label; value } ->
-            let value = monomorphize_expr env tvs value in
-            { value; label })
-          new_fields
-      in
-      MRecordExtend { record; new_fields; ty; span }
-  | LRecord { fields; ty; span } ->
-      let fields =
-        List.map
-          (fun { label; value } ->
-            let value = monomorphize_expr env tvs value in
-
-            { value; label })
-          fields
-      in
-      MRecord { fields; ty; span }
-  | LMatch { value; cases; ty; span } ->
-      let value = monomorphize_expr env tvs value in
-      let cases =
-        List.map
-          (fun { Ast.pattern; result } ->
-            let result = monomorphize_expr env tvs result in
-            { Ast.pattern; result })
-          cases
-      in
-      MMatch { value; cases; ty; span }
-  | LConstructor { name; value; ty; span } ->
-      let value = monomorphize_expr env tvs value in
-      MConstructor { name; value; ty; span }
-  | LNominalConstructor { name; value; ty; span; id } ->
-      let value = monomorphize_expr env tvs value in
-      MNominalConstructor { name; value; ty; span; id }
+  | _ -> failwith ""
+(* | LLetRec { name; name_ty; e1; e2; ty; span } -> *)
+(*     let instances, tvs', env' = *)
+(*       get_instantiations (Closure_conversion.type_of_expr e1) tvs name env *)
+(*     in *)
+(*     let e1 = monomorphize_expr env' (StringSet.union tvs' tvs) e1 in *)
+(*     let e2 = monomorphize_expr env' tvs e2 in *)
+(*     MLetRec { name; name_ty; e1; e2; ty; span; instances } *)
+(* | LIf { condition; consequent; alternative; ty; span } -> *)
+(*     let condition = monomorphize_expr env tvs condition in *)
+(*     let consequent = monomorphize_expr env tvs consequent in *)
+(*     let alternative = monomorphize_expr env tvs alternative in *)
+(*     MIf { condition; consequent; alternative; ty; span } *)
+(* | LRecordAccess { record; projector; ty; span } -> *)
+(*     let record = monomorphize_expr env tvs record in *)
+(*     MRecordAccess { record; projector; ty; span } *)
+(* | LRecordExtend { record; new_fields; ty; span } -> *)
+(*     let record = monomorphize_expr env tvs record in *)
+(*     let new_fields = *)
+(*       List.map *)
+(*         (fun { label; value } -> *)
+(*           let value = monomorphize_expr env tvs value in *)
+(*           { value; label }) *)
+(*         new_fields *)
+(*     in *)
+(*     MRecordExtend { record; new_fields; ty; span } *)
+(* | LRecord { fields; ty; span } -> *)
+(*     let fields = *)
+(*       List.map *)
+(*         (fun { label; value } -> *)
+(*           let value = monomorphize_expr env tvs value in *)
+(**)
+(*           { value; label }) *)
+(*         fields *)
+(*     in *)
+(*     MRecord { fields; ty; span } *)
+(* | LMatch { value; cases; ty; span } -> *)
+(*     let value = monomorphize_expr env tvs value in *)
+(*     let cases = *)
+(*       List.map *)
+(*         (fun { Ast.pattern; result } -> *)
+(*           let result = monomorphize_expr env tvs result in *)
+(*           { Ast.pattern; result }) *)
+(*         cases *)
+(*     in *)
+(*     MMatch { value; cases; ty; span } *)
+(* | LConstructor { name; value; ty; span } -> *)
+(*     let value = monomorphize_expr env tvs value in *)
+(*     MConstructor { name; value; ty; span } *)
+(* | LNominalConstructor { name; value; ty; span; id } -> *)
+(*     let value = monomorphize_expr env tvs value in *)
+(*     MNominalConstructor { name; value; ty; span; id } *)
 
 let monomorphize_tl env = function
-  | LBind { name; name_ty; value; span } ->
+  | TBind { name; name_ty; value; span } ->
       let instances = ref [] in
       let instantiations =
         get_binders_with_type name
@@ -379,14 +404,14 @@ let monomorphize_tl env = function
         |> Env.of_list
       in
 
-      let tvs = Types.ftv_ty (Closure_conversion.type_of_expr value) in
+      let tvs = Types.ftv_ty (Typed_ast.type_of_expr value) in
       let value = monomorphize_expr env tvs value in
 
       let env = Env.union instantiations env in
       (env, MBind { name; name_ty; value; span; instances })
-  | LRecBind { name; name_ty; value; span } ->
+  | TRecBind { name; name_ty; value; span } ->
       let instances = ref [] in
-      let tvs = Types.ftv_ty (Closure_conversion.type_of_expr value) in
+      let tvs = Types.ftv_ty (Typed_ast.type_of_expr value) in
       let instantiations =
         get_binders_with_type name
         |> List.map (fun (name, ty) -> (name, (ty, instances)))
@@ -396,10 +421,10 @@ let monomorphize_tl env = function
 
       let value = monomorphize_expr env tvs value in
       (env, MRecBind { name; name_ty; value; span; instances })
-  | LExpr expr ->
+  | TExpr expr ->
       let expr = monomorphize_expr env StringSet.empty expr in
       (env, MExpr expr)
-  | LPrintString s -> (env, MPrintString s)
+  | TPrintString s -> (env, MPrintString s)
 
 let monomorphize_tls ?(env = Env.empty) tls =
   List.fold_left_map monomorphize_tl env tls |> snd
