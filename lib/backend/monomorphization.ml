@@ -262,14 +262,21 @@ let monomorphize_let e1 instances _env tvs =
     match e with
     | MLet _ | MLetRec _ -> e
     | MVar _ | MFloat _ | MString _ | MInteger _ | MBoolean _ | MUnit _ -> e
-    | MLambda { ty; parameter_ty; _ } as m ->
+    | MLambda ({ ty; parameter_ty; body; _ } as m') as m ->
         let ftv_ty = StringSet.diff (ftv_ty parameter_ty) tvs in
-        if StringSet.is_empty ftv_ty then m
+        let lambda =
+          MLambda
+            {
+              m' with
+              body = inner body _instances (StringSet.union ftv_ty tvs);
+            }
+        in
+        if StringSet.is_empty ftv_ty then lambda
         else
           MMulti
             {
               ty;
-              types = (fun _ -> m) |> List.init (List.length _instances);
+              types = (fun _ -> lambda) |> List.init (List.length _instances);
               original = m;
             }
     | MApplication ({ lambda; arguement; _ } as a) ->
