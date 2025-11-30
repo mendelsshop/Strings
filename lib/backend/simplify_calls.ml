@@ -18,13 +18,13 @@ let rec expand_cond_app k = function
       TMatch { m with cases }
   | t -> k t
 
-type 'a state = [ `None | `Lambda of 'a -> 'a | `If of 'a -> 'a ]
+type 'a state = [ `None | `Lambda of 'a -> 'a | `Cond of 'a -> 'a ]
 
 let apply_k default = function
   | `None | `Lambda _ -> (default, false)
-  | `If f -> (f default, true)
+  | `Cond f -> (f default, true)
 
-let upgrade = function `Lambda f -> `If f | default -> default
+let upgrade = function `Lambda f -> `Cond f | default -> default
 
 let rec simplify k = function
   | (TVar _ | TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _) as t ->
@@ -45,12 +45,12 @@ let rec simplify k = function
                       lambda
                   in
                   lambda')
-          | `If f ->
-              `If
+          | `Cond f ->
+              `Cond
                 (fun inner_lambda ->
                   let lambda', _ =
                     simplify
-                      (`If
+                      (`Cond
                          (fun lambda ->
                            f
                              (TApplication
@@ -82,8 +82,8 @@ let rec simplify k = function
                 `Lambda
                   (fun lambda ->
                     f (TApplication { w with arguement = arguement'; lambda }))
-            | `If f ->
-                `If
+            | `Cond f ->
+                `Cond
                   (fun lambda ->
                     f (TApplication { w with arguement = arguement'; lambda }))
             | `None ->
@@ -120,8 +120,18 @@ let rec simplify k = function
         inlined || inlined' )
       (* in *)
       (* (if inlined || inlined' then apply_k var_name k else var_name, inlined || inlined') *)
-  | TLetRec _ | TRecordAccess _ | TRecordExtend _ | TRecord _ | TMatch _
-  | TConstructor _ | TNominalConstructor _ ->
+  | TMatch ({ cases; value; _ } as m) ->
+      let value, _ = simplify `None value in
+      let inlined, cases =
+        List.fold_left_map
+          (fun inline { Ast.pattern; result } ->
+            let result, inline' = simplify (upgrade k) result in
+            (inline || inline', { Ast.pattern; result }))
+          false cases
+      in
+      (TMatch { m with value; cases }, inlined)
+  | TLetRec _ | TRecordAccess _ | TRecordExtend _ | TRecord _ | TConstructor _
+  | TNominalConstructor _ ->
       failwith ""
 
 let simplify e = simplify `None e
