@@ -30,53 +30,86 @@ let rec simplify k = function
   | (TVar _ | TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _) as t ->
       apply_k t k
   | TApplication ({ lambda; arguement; _ } as w) ->
-      (* TODO: might need to also run f when k is `If *)
       let arguement', inlined =
         simplify
-          (`Lambda
-             (fun inner_lambda ->
-               let lambda', _ =
-                 simplify
-                   (`Lambda
-                      (fun lambda ->
-                        match k with
-                        | `Lambda f ->
-                            f
-                              (TApplication
-                                 { w with arguement = inner_lambda; lambda })
-                        | _ ->
-                            TApplication
-                              { w with arguement = inner_lambda; lambda }))
-                   lambda
-               in
-               lambda'))
+          (match k with
+          | `None ->
+              `Lambda
+                (fun inner_lambda ->
+                  let lambda', _ =
+                    simplify
+                      (`Lambda
+                         (fun lambda ->
+                           TApplication
+                             { w with arguement = inner_lambda; lambda }))
+                      lambda
+                  in
+                  lambda')
+          | `If f ->
+              `If
+                (fun inner_lambda ->
+                  let lambda', _ =
+                    simplify
+                      (`If
+                         (fun lambda ->
+                           f
+                             (TApplication
+                                { w with arguement = inner_lambda; lambda })))
+                      lambda
+                  in
+                  lambda')
+          | `Lambda f ->
+              `Lambda
+                (fun inner_lambda ->
+                  let lambda', _ =
+                    simplify
+                      (`Lambda
+                         (fun lambda ->
+                           f
+                             (TApplication
+                                { w with arguement = inner_lambda; lambda })))
+                      lambda
+                  in
+                  lambda'))
           arguement
       in
       if inlined then (arguement', true)
       else
         let lambda', inlined =
           simplify
-            (`Lambda
-               (fun lambda ->
-                 match k with
-                 | `Lambda f ->
-                     f (TApplication { w with arguement = arguement'; lambda })
-                 | _ -> TApplication { w with arguement = arguement'; lambda }))
+            (match k with
+            | `Lambda f ->
+                `Lambda
+                  (fun lambda ->
+                    f (TApplication { w with arguement = arguement'; lambda }))
+            | `If f ->
+                `If
+                  (fun lambda ->
+                    f (TApplication { w with arguement = arguement'; lambda }))
+            | `None ->
+                `Lambda
+                  (fun lambda ->
+                    TApplication { w with arguement = arguement'; lambda }))
             lambda
         in
         if inlined then (lambda', inlined)
-        else
-          ( TApplication { w with arguement = arguement'; lambda = lambda' },
-            false )
+        (* have bug most inner application arguement is if but none of the outer applicaations is in which case we shouldn't do anything i think *)
+        (* but right now it just straight of removes the arguement for some reason *)
+          else
+          apply_k
+            (TApplication { w with arguement = arguement'; lambda = lambda' })
+            k
   | TLambda ({ body; _ } as l) ->
       apply_k (TLambda { l with body = simplify `None body |> fst }) k
   | TLet ({ e1; e2; _ } as l) ->
       let e1, _ = simplify `None e1 in
       let e2, inlined = simplify k e2 in
+      (* maybe don't inline through lets *)
       (TLet { l with e1; e2 }, inlined)
   | TIf ({ condition; consequent; alternative; _ } as i) ->
       let consequent, inlined = simplify (upgrade k) consequent in
       let alternative, inlined' = simplify (upgrade k) alternative in
+      (* let var_name = *)
       ( TIf
           {
             i with
@@ -85,6 +118,8 @@ let rec simplify k = function
             alternative;
           },
         inlined || inlined' )
+      (* in *)
+      (* (if inlined || inlined' then apply_k var_name k else var_name, inlined || inlined') *)
   | TLetRec _ | TRecordAccess _ | TRecordExtend _ | TRecord _ | TMatch _
   | TConstructor _ | TNominalConstructor _ ->
       failwith ""
