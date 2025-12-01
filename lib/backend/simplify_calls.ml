@@ -103,6 +103,11 @@ let rec simplify k = function
             k
   | TLambda ({ body; _ } as l) ->
       apply_k (TLambda { l with body = simplify `None body |> fst }) k
+  | TLetRec ({ e1; e2; _ } as l) ->
+      let e1, _ = simplify `None e1 in
+      let e2, inlined = simplify k e2 in
+      (* maybe don't inline through lets *)
+      (TLetRec { l with e1; e2 }, inlined)
   | TLet ({ e1; e2; _ } as l) ->
       let e1, _ = simplify `None e1 in
       let e2, inlined = simplify k e2 in
@@ -132,9 +137,34 @@ let rec simplify k = function
           false cases
       in
       (TMatch { m with value; cases }, inlined)
-  | TLetRec _ | TRecordAccess _ | TRecordExtend _ | TRecord _ | TConstructor _
-  | TNominalConstructor _ ->
-      failwith ""
+  | TRecordAccess ({ record; _ } as r) ->
+      apply_k (TRecordAccess { r with record = simplify `None record |> fst }) k
+  | TRecordExtend ({ record; new_fields; _ } as r) ->
+      apply_k
+        (TRecordExtend
+           {
+             r with
+             record = simplify `None record |> fst;
+             new_fields =
+               List.map
+                 (fun { Utils.label; value } ->
+                   { Utils.label; value = simplify `None value |> fst })
+                 new_fields;
+           })
+        k
+  | TRecord ({ fields; _ } as r) ->
+      apply_k
+        (TRecord
+           {
+             r with
+             fields =
+               List.map
+                 (fun { Utils.label; value } ->
+                   { Utils.label; value = simplify `None value |> fst })
+                 fields;
+           })
+        k
+  | TConstructor _ | TNominalConstructor _ -> failwith ""
 
 let simplify e = simplify `None e
 
