@@ -22,7 +22,9 @@ type 'a state = [ `None | `Lambda of 'a -> 'a | `Cond of 'a -> 'a ]
 
 let apply_k default = function
   | `None | `Lambda _ -> (default, false)
-  | `Cond f -> (f default, true)
+  | `Cond f ->
+      let ty = type_of_expr default in
+      if Types.is_function ty then (f default, true) else (default, false)
 
 let upgrade = function `Lambda f -> `Cond f | default -> default
 

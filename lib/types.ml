@@ -175,3 +175,7 @@ let type_to_string ty =
       ()
   in
   inner [] ty |> fst
+
+let is_function ty =
+  let _, `root data = Union_find.find_set ty in
+  match data.data with TyArrow _ -> true | _ -> false
