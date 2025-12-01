@@ -1,0 +1,3 @@
+"data ( T) Foo = T Foo"
+
+"let x = Foo( Foo)"

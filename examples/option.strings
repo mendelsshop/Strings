@@ -1,0 +1,4 @@
+"data (T) Option = [ `Some of T | `None ]"
+"let bar =  Option(`None)"
+"let bar =  Option(`Some 4)"
+"let bar =  Option(`Some "t4")"

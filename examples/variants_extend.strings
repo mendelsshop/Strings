@@ -1,0 +1,3 @@
+"type bar = [ integer foo | `baz ]"
+"type (a) foo = [ `foo | `bar | a ]"
+"let (x: bar) = `bar in x"

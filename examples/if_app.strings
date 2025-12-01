@@ -1,0 +1,10 @@
+"data Foo = integer"
+"fun b->(fun bb -> ((if b then (fun x->x) else (fun y->y)) ((if bb then (fun xx->xx) else (fun yy->yy)) 4)))"
+"fun b->((fun x->x) (if b then  4 else 5) )"
+"fun b f->  (f ((fun x->x) (if b then  4 else 5)) )"
+"fun b->((if b then (fun x->x) else (fun y->y)) 4)"
+
+
+"fun b->((if b then (fun x->Foo ((if b then  (fun a -> 5) else (fun z -> z)) 6)) else Foo) 4)"
+"fun b->((if b then (fun x-> `x x) else (fun y-> `x y)) 4)"
+"fun b->((if b then (fun x->`Foo ((if b then  (fun a -> 5) else (fun z -> z)) 6)) else (fun x -> `Foo x)) 4)"

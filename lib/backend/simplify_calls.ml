@@ -160,7 +160,14 @@ let rec simplify k = function
                  fields;
            })
         k
-  | TConstructor _ | TNominalConstructor _ -> failwith ""
+  | TConstructor ({ value; _ } as c) ->
+      (* we could simplify constructors, but that would mean we would also need `Constructor *)
+      let value, _ = simplify k value in
+      apply_k (TConstructor { c with value }) k
+  | TNominalConstructor ({ value; _ } as c) ->
+      (* nominal constructors are always behind a lambda like (\x. Con x) so no point in simplifing unless we inlined the function in some cases *)
+      let value, _ = simplify k value in
+      apply_k (TNominalConstructor { c with value }) k
 
 let simplify e = simplify `None e
 
