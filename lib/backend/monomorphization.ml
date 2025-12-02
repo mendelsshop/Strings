@@ -1,7 +1,106 @@
 open Typed_ast
 open Types
+module PolyTypes = Types
 open Utils
 
+module Types = struct
+  type 't ty_f =
+    | TyVar of { name : string; level : int }
+    | TyUnit
+    | TyInteger
+    | TyString
+    | TyFloat
+    | TyBoolean
+    | TyArrow of { domain : 't; range : 't }
+    | TyRowEmpty
+    | TyRowExtend of { label : string; field : 't; rest_row : 't }
+    | TyRecord of 't
+    | TyVariant of 't * 't list
+    | TyGenVar of string
+    | TyMulti of 't list
+    | TyNominal of {
+        name : string;
+        id : int;
+        ty : 't;
+        type_arguements : 't list;
+      }
+    | TyConstructor of { ty : 't; type_arguements : 't StringMap.t }
+
+  type ty = 'a ty_f Union_find.elem as 'a
+
+  let type_to_string ty =
+    let rec inner used ?(type_delim = ": ") ?(delim = "; ") ?(unit = "{}") ty =
+      let root, `root node = Union_find.find_set ty in
+      (List.assq_opt root used
+      |> Option.fold
+           ~some:(fun t () -> (t, [ ty ]))
+           ~none:(fun () ->
+             let sym = gensym () in
+             let string, used =
+               match node.data with
+               | TyVar { name; _ } -> (name, [])
+               | TyNominal { name; ty; id; _ } ->
+                   let ty, used' = inner ((root, sym) :: used) ty in
+                   (name ^ string_of_int id ^ "(" ^ ty ^ ")", used')
+               | TyGenVar v -> ("V(" ^ v ^ ")", [])
+               | TyUnit -> ("()", [])
+               | TyInteger -> ("integer", [])
+               | TyString -> ("string", [])
+               | TyFloat -> ("float", [])
+               | TyBoolean -> ("boolean", [])
+               | TyRowEmpty -> (unit, [])
+               | TyConstructor { ty; type_arguements } ->
+                   let type_arguements, used' =
+                     type_arguements |> StringMap.to_list |> List.split |> snd
+                     |> List.map (inner used)
+                     |> List.split
+                   in
+                   let type_arguements = String.concat ", " type_arguements in
+                   let ty', used'' = inner ((root, sym) :: used) ty in
+
+                   ( "tycon(" ^ type_arguements ^ ")" ^ ty',
+                     (used' |> List.concat) @ used'' )
+               | TyRecord t ->
+                   let t, used' = inner ((root, sym) :: used) ~unit:"" t in
+                   ("{ " ^ t ^ " }", used')
+               | TyRowExtend { label; field; rest_row } ->
+                   let field, used' = inner ((root, sym) :: used) field in
+                   let row_extension, used'' =
+                     inner ((root, sym) :: used) rest_row
+                   in
+                   ( label ^ type_delim ^ field ^ delim ^ row_extension,
+                     used' @ used'' )
+               | TyVariant (row, others) ->
+                   let _count = List.length others in
+                   let t, used' =
+                     inner ((root, sym) :: used) ~unit:"" ~delim:"| "
+                       ~type_delim:" " row
+                   in
+                   (* ("(" ^ t ^ "others " ^ string_of_int count ^ ")", used') *)
+                   ("(" ^ t ^ ")", used')
+               | TyArrow { domain; range } ->
+                   let x_string, used' = inner ((root, sym) :: used) domain in
+                   let y_string, used'' = inner ((root, sym) :: used) range in
+                   let used' = used' @ used'' in
+                   (x_string ^ " -> " ^ y_string, used')
+               | TyMulti tys ->
+                   let used', tys =
+                     List.fold_left_map
+                       (fun used' ty ->
+                         let ty_str, used'' = inner ((root, sym) :: used) ty in
+                         (used' @ used'', ty_str))
+                       [] tys
+                   in
+                   ("<" ^ String.concat ", " tys ^ ">", used')
+             in
+             let recursive_prefix =
+               if List.memq root used then "recursive " ^ sym ^ ". " else ""
+             in
+             (recursive_prefix ^ string, used)))
+        ()
+    in
+    inner [] ty |> fst
+end
 (* TODO: issues
    how to monomorphize letrecs - (polymorphic recursion issues?) - fix each let(rec) whether at the top level or not will have multiple copies of the `let pat = expr`
    something like:
@@ -292,7 +391,7 @@ let monomorphize_let e1 instances _env tvs =
 
 let get_instantiations ty tvs pat env =
   (* all type variables bound by a specicific let should in the type of expression being let bound or else they would not be accesable *)
-  let tvs' = Types.ftv_ty ty in
+  let tvs' = PolyTypes.ftv_ty ty in
   let instances = if StringSet.subset tvs' tvs then None else Some (ref []) in
   let instantiations =
     Option.map
@@ -416,14 +515,14 @@ let monomorphize_tl env = function
         |> Env.of_list
       in
 
-      let tvs = Types.ftv_ty (Typed_ast.type_of_expr value) in
+      let tvs = PolyTypes.ftv_ty (Typed_ast.type_of_expr value) in
       let value = monomorphize_expr env tvs value in
 
       let env = Env.union instantiations env in
       (env, MBind { name; name_ty; value; span; instances })
   | TRecBind { name; name_ty; value; span } ->
       let instances = ref [] in
-      let tvs = Types.ftv_ty (Typed_ast.type_of_expr value) in
+      let tvs = PolyTypes.ftv_ty (Typed_ast.type_of_expr value) in
       let instantiations =
         get_binders_with_type name
         |> List.map (fun (name, ty) -> (name, (ty, instances)))
