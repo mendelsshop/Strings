@@ -22,9 +22,7 @@ type 'a state = [ `None | `Lambda of 'a -> 'a | `Cond of 'a -> 'a ]
 
 let apply_k default = function
   | `None | `Lambda _ -> (default, false)
-  | `Cond f ->
-      let ty = type_of_expr default in
-      if Types.is_function ty then (f default, true) else (default, false)
+  | `Cond f -> (f default, true)
 
 let upgrade = function `Lambda f -> `Cond f | default -> default
 
@@ -38,7 +36,7 @@ let rec simplify k = function
           | `None ->
               `Lambda
                 (fun inner_lambda ->
-                  let lambda', _ =
+                  let lambda', inlined =
                     simplify
                       (`Lambda
                          (fun lambda ->
@@ -46,11 +44,12 @@ let rec simplify k = function
                              { w with arguement = inner_lambda; lambda }))
                       lambda
                   in
-                  lambda')
+                  if inlined then lambda'
+                  else TApplication { w with arguement = inner_lambda; lambda })
           | `Cond f ->
               `Cond
                 (fun inner_lambda ->
-                  let lambda', _ =
+                  let lambda', inlined =
                     simplify
                       (`Cond
                          (fun lambda ->
@@ -59,11 +58,13 @@ let rec simplify k = function
                                 { w with arguement = inner_lambda; lambda })))
                       lambda
                   in
-                  lambda')
+                  if inlined then lambda'
+                  else
+                    f (TApplication { w with arguement = inner_lambda; lambda }))
           | `Lambda f ->
               `Lambda
                 (fun inner_lambda ->
-                  let lambda', _ =
+                  let lambda', inlined =
                     simplify
                       (`Lambda
                          (fun lambda ->
@@ -72,7 +73,9 @@ let rec simplify k = function
                                 { w with arguement = inner_lambda; lambda })))
                       lambda
                   in
-                  lambda'))
+                  if inlined then lambda'
+                  else
+                    f (TApplication { w with arguement = inner_lambda; lambda })))
           arguement
       in
       if inlined then (arguement', true)
@@ -95,10 +98,7 @@ let rec simplify k = function
             lambda
         in
         if inlined then (lambda', inlined)
-        (* potential bug if most inner application arguement is if but none of the outer applicaations is in which case we shouldn't do anything i think *)
-        (* but right now it just straight of removes the arguement for some reason *)
-        (* we mostly prevent it by checking that the thing passed into k is actually a function, but doesn't work if last arguement is a function (when you have hof) *)
-          else
+        else
           apply_k
             (TApplication { w with arguement = arguement'; lambda = lambda' })
             k
@@ -113,8 +113,9 @@ let rec simplify k = function
       let e2, inlined = simplify k e2 in
       (TLet { l with e1; e2 }, inlined)
   | TIf ({ condition; consequent; alternative; _ } as i) ->
-      let consequent, inlined = simplify (upgrade k) consequent in
-      let alternative, inlined' = simplify (upgrade k) alternative in
+      let k' = upgrade k in
+      let consequent, inlined = simplify k' consequent in
+      let alternative, inlined' = simplify k' alternative in
       ( TIf
           {
             i with
@@ -125,10 +126,11 @@ let rec simplify k = function
         inlined || inlined' )
   | TMatch ({ cases; value; _ } as m) ->
       let value, _ = simplify `None value in
+      let k' = upgrade k in
       let inlined, cases =
         List.fold_left_map
           (fun inline { Ast.pattern; result } ->
-            let result, inline' = simplify (upgrade k) result in
+            let result, inline' = simplify k' result in
             (inline || inline', { Ast.pattern; result }))
           false cases
       in
