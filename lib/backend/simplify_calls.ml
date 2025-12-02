@@ -164,12 +164,34 @@ let rec simplify k = function
         k
   | TConstructor ({ value; _ } as c) ->
       (* we could simplify constructors, but that would mean we would also need `Constructor *)
-      let value, _ = simplify k value in
-      apply_k (TConstructor { c with value }) k
+      let k' =
+        match k with
+        | `Lambda f ->
+            `Lambda (fun lambda -> f (TConstructor { c with value = lambda }))
+        | `Cond f ->
+            `Cond (fun lambda -> f (TConstructor { c with value = lambda }))
+        | `None ->
+            `Lambda (fun lambda -> TConstructor { c with value = lambda })
+      in
+      let value, inlined = simplify k' value in
+      if inlined then (value, true) else (TConstructor { c with value }, false)
   | TNominalConstructor ({ value; _ } as c) ->
       (* nominal constructors are always behind a lambda like (\x. Con x) so no point in simplifing unless we inlined the function in some cases *)
-      let value, _ = simplify k value in
-      apply_k (TNominalConstructor { c with value }) k
+      let k' =
+        match k with
+        | `Lambda f ->
+            `Lambda
+              (fun lambda -> f (TNominalConstructor { c with value = lambda }))
+        | `Cond f ->
+            `Cond
+              (fun lambda -> f (TNominalConstructor { c with value = lambda }))
+        | `None ->
+            `Lambda
+              (fun lambda -> TNominalConstructor { c with value = lambda })
+      in
+      let value, inlined = simplify k' value in
+      if inlined then (value, true)
+      else (TNominalConstructor { c with value }, false)
 
 let simplify e = simplify `None e
 

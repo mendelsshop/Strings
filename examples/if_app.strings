@@ -9,3 +9,4 @@
 "fun b bb f ff fg->  (ff ( (if b then ((if bb then fg else f)  5) else 4)) )"
 "fun b ff f -> (ff ((if b then f else f) 4))"
 "fun b->((if b then (fun x->x) else (fun y->y)) 4)"
+"fun b f g h -> f (`foo (h (if b then g "a" else 4)))"
