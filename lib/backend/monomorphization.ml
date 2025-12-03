@@ -120,6 +120,8 @@ module Env = Env.Make (String)
 type scheme = ty list ref
 type scheme_env = scheme Env.t
 
+open Types
+
 (* its fine to use Env.union (whick picks the first when unioning) because everything is alpha renamed so no shadowing *)
 type 't mexpr =
   | MVar of { ident : string; ty : 't; span : AMPCL.span }
@@ -134,7 +136,7 @@ type 't mexpr =
       ty : 't;
       span : AMPCL.span;
     }
-  | MMulti of { types : 't mexpr list; original : 't mexpr; ty : 't }
+  | MMulti of { types : 't mexpr list; original : 't texpr; ty : 't }
   | MSelect of { value : 't mexpr; selector : int; ty : 't }
   | MApplication of {
       lambda : 't mexpr;
@@ -361,7 +363,7 @@ let monomorphize_let e1 instances _env tvs =
     match e with
     | MLet _ | MLetRec _ -> e
     | MVar _ | MFloat _ | MString _ | MInteger _ | MBoolean _ | MUnit _ -> e
-    | MLambda ({ ty; parameter_ty; body; _ } as m') as m ->
+    | MLambda ({ ty; parameter_ty; body; _ } as m') as _m ->
         let ftv_ty = StringSet.diff (ftv_ty parameter_ty) tvs in
         let lambda =
           MLambda
@@ -376,7 +378,7 @@ let monomorphize_let e1 instances _env tvs =
             {
               ty;
               types = (fun _ -> lambda) |> List.init (List.length _instances);
-              original = m;
+              original = failwith "";
             }
     | MApplication ({ lambda; arguement; _ } as a) ->
         let lambda = inner lambda _instances tvs in
@@ -436,10 +438,52 @@ let rec monomorphize_expr env tvs = function
   | TBoolean { value; ty; span } ->
       fun _target_ty -> MBoolean { value; ty; span }
   | TUnit { ty; span } -> fun _target_ty -> MUnit { ty; span }
-  | TLambda { body; ty; span; parameter; parameter_ty } ->
-      let body = monomorphize_expr env tvs body in
+  | TLambda { body; ty; span; parameter; parameter_ty } as l -> (
+      let body' = monomorphize_expr env tvs body in
       fun _target_ty ->
-        MLambda { body = body (failwith ""); ty; span; parameter_ty; parameter }
+        let _, `root _target_ty = Union_find.find_set _target_ty in
+        match _target_ty.data with
+        | TyMulti tys
+          when StringSet.diff (ftv_ty parameter_ty) tvs |> StringSet.is_empty ->
+            let tys =
+              tys
+              |> List.map Union_find.find_set
+              |> List.map (function
+                | ( _,
+                    `root { Union_find.data = TyArrow { domain = _; range }; _ }
+                  ) ->
+                    range
+                | _ -> failwith "unreachable")
+            in
+            let tys = Union_find.make (TyMulti tys) in
+
+            MLambda { body = body' tys; ty; span; parameter_ty; parameter }
+        | TyMulti tys ->
+            MMulti
+              {
+                original = l;
+                ty;
+                types =
+                  tys
+                  |> List.map Union_find.find_set
+                  |> List.map (function
+                    | ( _,
+                        `root
+                          { Union_find.data = TyArrow { domain = _; range }; _ }
+                      ) ->
+                        MLambda
+                          {
+                            body = body' range;
+                            ty;
+                            span;
+                            parameter_ty;
+                            parameter;
+                          }
+                    | _ -> failwith "unreachable");
+              }
+        | TyArrow { domain = _; range } ->
+            MLambda { body = body' range; ty; span; parameter_ty; parameter }
+        | _ -> failwith "unreachable")
   | TApplication { lambda; arguement; ty; span } ->
       let lambda = monomorphize_expr env tvs lambda in
       let arguement = monomorphize_expr env tvs arguement in
@@ -469,7 +513,7 @@ let rec monomorphize_expr env tvs = function
             name;
             name_ty;
             e1 = e1 (failwith "");
-            e2 = e2 (failwith "");
+            e2 = e2 _target_ty;
             ty;
             span;
             instances;

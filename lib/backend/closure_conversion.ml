@@ -12,7 +12,7 @@ type 't lexpr =
   | LInteger of { value : int; ty : 't; span : AMPCL.span }
   | LBoolean of { value : bool; ty : 't; span : AMPCL.span }
   | LLambda of { name : int; ty : 't; span : AMPCL.span }
-  | LMulti of { types : 't lexpr list; original : 't mexpr; ty : 't }
+  | LMulti of { types : 't lexpr list; original : 't texpr; ty : 't }
   | LSelect of { value : 't lexpr; selector : int; ty : 't }
   | LApplication of {
       lambda : 't lexpr;
