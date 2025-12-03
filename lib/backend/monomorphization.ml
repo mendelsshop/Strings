@@ -252,7 +252,7 @@ let type_of_expr = function
   | MNominalConstructor { ty; _ } ->
       ty
 
-let rec mexpr_to_string indent : ty mexpr -> string =
+let rec mexpr_to_string indent : _ mexpr -> string =
   let next_level = indent + 1 in
   let indent_string = String.make (next_level * 2) ' ' in
   function
@@ -408,14 +408,15 @@ let rec monomorphize_expr env tvs = function
       (Env.find_opt ident env
       |> Option.fold
            ~some:(fun (pat_ty, scheme) v ->
-             let len = List.length !scheme in
+             (* let len = List.length !scheme in *)
              (* we put the pat_ty the ty of the bound variable (might not be the whole scheme i.e a in let (a, b)..., along ty the instance of that part of the scheme *)
              scheme := (pat_ty, ty) :: !scheme;
              (* what if only one instantiation or let is monomorphic *)
-             MSelect { value = v; selector = len; ty })
+             (* MSelect { value = v; selector = len; ty } *)
+             fun _target_ty -> v)
              (* if variable not refenecinig a scheme then if its reference a variable thats type is polymorphic (bound by a scheme) than when copy the function the variable will be monoorphized *)
              (* so no need to use selector *)
-           ~none:Fun.id)
+           ~none:(fun v _target_ty -> v))
         (MVar { ident; ty; span })
   (* local vars are variables captured by lambdas, and thus could be polymorphic *)
   (* | LLocalVar { ident; ty; span } -> *)
@@ -428,18 +429,28 @@ let rec monomorphize_expr env tvs = function
   (*            ~none:Fun.id) *)
   (*         (MLocalVar { ident; ty; span }), *)
   (*       FunctionEnv.empty ) *)
-  | TFloat { value; ty; span } -> MFloat { value; ty; span }
-  | TString { value; ty; span } -> MString { value; ty; span }
-  | TInteger { value; ty; span } -> MInteger { value; ty; span }
-  | TBoolean { value; ty; span } -> MBoolean { value; ty; span }
-  | TUnit { ty; span } -> MUnit { ty; span }
+  | TFloat { value; ty; span } -> fun _target_ty -> MFloat { value; ty; span }
+  | TString { value; ty; span } -> fun _target_ty -> MString { value; ty; span }
+  | TInteger { value; ty; span } ->
+      fun _target_ty -> MInteger { value; ty; span }
+  | TBoolean { value; ty; span } ->
+      fun _target_ty -> MBoolean { value; ty; span }
+  | TUnit { ty; span } -> fun _target_ty -> MUnit { ty; span }
   | TLambda { body; ty; span; parameter; parameter_ty } ->
       let body = monomorphize_expr env tvs body in
-      MLambda { body; ty; span; parameter_ty; parameter }
+      fun _target_ty ->
+        MLambda { body = body (failwith ""); ty; span; parameter_ty; parameter }
   | TApplication { lambda; arguement; ty; span } ->
       let lambda = monomorphize_expr env tvs lambda in
       let arguement = monomorphize_expr env tvs arguement in
-      MApplication { lambda; arguement; ty; span }
+      fun _target_ty ->
+        MApplication
+          {
+            lambda = lambda (failwith "");
+            arguement = arguement (failwith "");
+            ty;
+            span;
+          }
       (* to make lets we are going to need a way to specify what the last statments should be wrapped in *)
   | TLet { name; name_ty; e1; e2; ty; span } ->
       let instances, tvs', env' =
@@ -447,12 +458,22 @@ let rec monomorphize_expr env tvs = function
       in
       let e1 = monomorphize_expr env (StringSet.union tvs' tvs) e1 in
       let e2 = monomorphize_expr env' tvs e2 in
-      let e1 =
-        Option.fold
-          ~some:(fun instances -> monomorphize_let e1 instances env tvs)
-          ~none:e1 instances
-      in
-      MLet { name; name_ty; e1; e2; ty; span; instances }
+      (* let e1 = *)
+      (*   Option.fold *)
+      (*     ~some:(fun instances -> monomorphize_let e1 instances env tvs) *)
+      (*     ~none:e1 instances *)
+      (* in *)
+      fun _target_ty ->
+        MLet
+          {
+            name;
+            name_ty;
+            e1 = e1 (failwith "");
+            e2 = e2 (failwith "");
+            ty;
+            span;
+            instances;
+          }
   | _ -> failwith ""
 (* | LLetRec { name; name_ty; e1; e2; ty; span } -> *)
 (*     let instances, tvs', env' = *)
@@ -516,7 +537,7 @@ let monomorphize_tl env = function
       in
 
       let tvs = PolyTypes.ftv_ty (Typed_ast.type_of_expr value) in
-      let value = monomorphize_expr env tvs value in
+      let value = monomorphize_expr env tvs value (failwith "") in
 
       let env = Env.union instantiations env in
       (env, MBind { name; name_ty; value; span; instances })
@@ -530,10 +551,10 @@ let monomorphize_tl env = function
       in
       let env = Env.union instantiations env in
 
-      let value = monomorphize_expr env tvs value in
+      let value = monomorphize_expr env tvs value (failwith "") in
       (env, MRecBind { name; name_ty; value; span; instances })
   | TExpr expr ->
-      let expr = monomorphize_expr env StringSet.empty expr in
+      let expr = monomorphize_expr env StringSet.empty expr (failwith "") in
       (env, MExpr expr)
   | TPrintString s -> (env, MPrintString s)
 
