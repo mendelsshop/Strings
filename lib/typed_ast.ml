@@ -184,30 +184,35 @@ let span_of_pattern : 't tpattern -> AMPCL.span = function
   | PTOr { span; _ }
   | PTAs { span; _ } ->
       span
-(* we can make this non recursive if we make poly ast node store their type *)
 
-let rec tpattern_to_string = function
-  | PTVar { ident; ty; _ } -> ident ^ " : " ^ type_to_string ty
-  | PTString { value; _ } -> value
-  | PTUnit _ -> "()"
-  | PTBoolean { value; _ } -> string_of_bool value
-  | PTFloat { value; _ } -> string_of_float value
-  | PTInteger { value; _ } -> string_of_int value
-  | PTWildcard _ -> "_"
-  | PTRecord { fields; _ } ->
-      "{ "
-      ^ (fields
-        |> List.map (fun { label; value } ->
-            label ^ " = " ^ tpattern_to_string value)
-        |> String.concat "; ")
-      ^ " }"
-  | PTConstructor { name; value; _ } ->
-      "`" ^ name ^ " (" ^ tpattern_to_string value ^ ")"
-  | PTNominalConstructor { name; value; _ } ->
-      name ^ " (" ^ tpattern_to_string value ^ ")"
-  | PTAs { name; value; _ } -> name ^ " as " ^ tpattern_to_string value
-  | PTOr { patterns; _ } ->
-      List.map tpattern_to_string patterns |> String.concat " | "
+(* we can make this non recursive if we make poly ast node store their type *)
+let tpattern_to_string' type_to_string =
+  let rec tpattern_to_string = function
+    | PTVar { ident; ty; _ } -> ident ^ " : " ^ type_to_string ty
+    | PTString { value; _ } -> value
+    | PTUnit _ -> "()"
+    | PTBoolean { value; _ } -> string_of_bool value
+    | PTFloat { value; _ } -> string_of_float value
+    | PTInteger { value; _ } -> string_of_int value
+    | PTWildcard _ -> "_"
+    | PTRecord { fields; _ } ->
+        "{ "
+        ^ (fields
+          |> List.map (fun { label; value } ->
+              label ^ " = " ^ tpattern_to_string value)
+          |> String.concat "; ")
+        ^ " }"
+    | PTConstructor { name; value; _ } ->
+        "`" ^ name ^ " (" ^ tpattern_to_string value ^ ")"
+    | PTNominalConstructor { name; value; _ } ->
+        name ^ " (" ^ tpattern_to_string value ^ ")"
+    | PTAs { name; value; _ } -> name ^ " as " ^ tpattern_to_string value
+    | PTOr { patterns; _ } ->
+        List.map tpattern_to_string patterns |> String.concat " | "
+  in
+  tpattern_to_string
+
+let tpattern_to_string = tpattern_to_string' type_to_string
 
 let rec texpr_to_string indent =
   let next_level = indent + 1 in
