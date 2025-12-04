@@ -1038,5 +1038,22 @@ let infer program env =
   let cos, program' = generate_constraints_top env program in
   print_endline (constraints_to_string cos);
   print_endline (program_to_string program');
-  solve_constraints [] cos;
+  let print_type = gensym () in
+  solve_constraints []
+    [
+      CLet
+        ( [
+            ( "print",
+              `for_all
+                ( [ print_type ],
+                  Union_find.make
+                    (TyArrow
+                       {
+                         domain = Union_find.make (ty_var print_type);
+                         range = Union_find.make TyUnit;
+                       }) ) );
+          ],
+          [],
+          cos );
+    ];
   program'

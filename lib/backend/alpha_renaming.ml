@@ -43,7 +43,12 @@ let rec alpha_rename_pattern = function
       (env, PTOr { p with patterns })
 
 let rec alpha_rename_expr env = function
-  | TVar ({ ident; _ } as e) -> TVar { e with ident = StringEnv.find ident env }
+  | TVar ({ ident; _ } as e) ->
+      TVar
+        {
+          e with
+          ident = StringEnv.find_opt ident env |> Option.value ~default:ident;
+        }
   | (TFloat _ | TString _ | TInteger _ | TBoolean _ | TUnit _) as e -> e
   | TLambda { parameter; parameter_ty; body; ty; span } ->
       let env', parameter = alpha_rename_pattern parameter in
